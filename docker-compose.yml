@@ -1,0 +1,14 @@
+services:
+  ytm-downloader:
+    image: ray-manalang/ytm-downloader:latest
+    container_name: ytm-downloader
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /share:/share
+      - ./data:/data
+    environment:
+      DOWNLOADS_DIR: /share
+      DB_PATH: /data/downloads.db
+      MAX_CONCURRENT_DOWNLOADS: "2"
