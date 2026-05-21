@@ -7,7 +7,11 @@ services:
       - "8503:8080"
     volumes:
       - /share:/share
+      - ytm_data:/data
     environment:
       DOWNLOADS_DIR: /share
-      DB_PATH: /share/ytm-downloader/downloads.db
+      DB_PATH: /data/downloads.db
       MAX_CONCURRENT_DOWNLOADS: "2"
+
+volumes:
+  ytm_data:
