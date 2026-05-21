@@ -6,7 +6,7 @@ services:
     ports:
       - "8503:8080"
     volumes:
-      - /root/share:/share
+      - /mnt/data/supervisor/share:/share
       - ytm_data:/data
     environment:
       DOWNLOADS_DIR: /share
