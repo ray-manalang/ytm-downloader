@@ -4,7 +4,7 @@ services:
     container_name: ytm-downloader
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8503:8080"
     volumes:
       - /share:/share
     environment:
