@@ -83,6 +83,11 @@
   .current-file .cf-name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
   .current-file .cf-pos { color: var(--accent); font-weight: 600; white-space: nowrap; flex-shrink: 0; }
 
+  /* Completed tracks list within a queue card */
+  .track-done-list { margin-top: 8px; display: flex; flex-direction: column; gap: 1px; }
+  .track-done-item { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 2px; }
+  .track-done-item::before { content: '✓ '; color: var(--accent); font-weight: 700; }
+
   /* Error */
   .error-msg { color: var(--danger); font-size: 12px; margin-top: 6px; word-break: break-all; }
 
@@ -179,10 +184,11 @@
 
 <script>
 // ── State ────────────────────────────────────────────────────────────────────
-const downloads = {};   // id -> download object
+const downloads = {};    // id -> download object
+const tracksDone = {};   // id -> [track name, ...]
 let filesData = [];
-const albumOpen = {};   // album name -> bool
-let albumsList = [];    // ordered album names (for index→name lookup)
+const albumOpen = {};    // album name -> bool
+let albumsList = [];     // ordered album names (for index→name lookup)
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
 function switchTab(name) {
@@ -278,6 +284,13 @@ function cardHTML(d, isQueue) {
   const errorMsg = d.error ? `<div class="error-msg">${escHtml(d.error)}</div>` : '';
   const dateStr = d.status !== 'pending' && d.status !== 'downloading' ? `<span style="color:var(--muted);font-size:12px">${fmtDate(d.created_at)}</span>` : '';
 
+  let trackListHtml = '';
+  if (isQueue && d.status === 'downloading') {
+    const done = tracksDone[d.id] || [];
+    const items = done.map(t => `<div class="track-done-item">${escHtml(t)}</div>`).join('');
+    trackListHtml = `<div class="track-done-list" id="tdl-${d.id}">${items}</div>`;
+  }
+
   return `
     <div class="card" id="card-${d.id}">
       <div class="card-header">
@@ -294,6 +307,7 @@ function cardHTML(d, isQueue) {
       </div>
       ${currentFileHtml}
       ${progressBar}
+      ${trackListHtml}
       ${errorMsg}
     </div>`;
 }
@@ -421,6 +435,7 @@ async function cancelDownload(id, status) {
 async function removeDownload(id) {
   await fetch('/api/downloads/' + id, { method: 'DELETE' });
   delete downloads[id];
+  delete tracksDone[id];
   renderAll();
 }
 
@@ -465,12 +480,23 @@ function handleWS(msg) {
       downloads[id].current_file = msg.current_file;
       downloads[id].playlist_index = msg.playlist_index;
       downloads[id].playlist_count = msg.playlist_count;
-      // Update card in place if it exists (avoid full re-render while downloading)
       updateCardInPlace(id);
       return;
     }
+  } else if (type === 'track_done') {
+    if (!tracksDone[id]) tracksDone[id] = [];
+    tracksDone[id].push(msg.track);
+    const el = document.getElementById('tdl-' + id);
+    if (el) {
+      const div = document.createElement('div');
+      div.className = 'track-done-item';
+      div.textContent = msg.track;
+      el.appendChild(div);
+    }
+    return;
   } else if (type === 'removed') {
     delete downloads[id];
+    delete tracksDone[id];
   }
 
   renderAll();

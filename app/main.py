@@ -101,10 +101,12 @@ def make_progress_cb(download_id: str):
             current_file = idict.get("title")
             playlist_index = idict.get("playlist_index")
             playlist_count = idict.get("playlist_count")
-            coro = _handle_progress(download_id, pct, speed, eta, current_file, playlist_index, playlist_count)
+            album = idict.get("playlist_title") or idict.get("album")
+            coro = _handle_progress(download_id, pct, speed, eta, current_file, playlist_index, playlist_count, album)
         elif status == "finished":
-            title = idict.get("title")
-            coro = _handle_finished(download_id, title)
+            track = idict.get("title") or idict.get("track")
+            album = idict.get("playlist_title") or idict.get("album")
+            coro = _handle_finished(download_id, track, album)
         else:
             return
         asyncio.run_coroutine_threadsafe(coro, _loop)
@@ -115,14 +117,15 @@ def make_progress_cb(download_id: str):
 async def _handle_progress(
     dl_id: str, pct: float, speed: str, eta: str,
     current_file: str | None, playlist_index: int | None, playlist_count: int | None,
+    album: str | None,
 ):
     await db_update(dl_id, progress=pct, speed=speed, eta=eta)
-    # Set title once from the first track seen
-    if current_file:
+    label = album or current_file
+    if label:
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
                 "UPDATE downloads SET title=? WHERE id=? AND title IS NULL",
-                (current_file, dl_id),
+                (label, dl_id),
             )
             await db.commit()
     await broadcast({
@@ -134,12 +137,18 @@ async def _handle_progress(
     })
 
 
-async def _handle_finished(dl_id: str, title: str | None):
-    update: dict = {}
-    if title:
-        update["title"] = title
-    if update:
-        await db_update(dl_id, **update)
+async def _handle_finished(dl_id: str, track: str | None, album: str | None):
+    if album:
+        await db_update(dl_id, title=album)
+    elif track:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "UPDATE downloads SET title=? WHERE id=? AND title IS NULL",
+                (track, dl_id),
+            )
+            await db.commit()
+    if track:
+        await broadcast({"type": "track_done", "id": dl_id, "track": track})
 
 
 # ── Download worker ──────────────────────────────────────────────────────────

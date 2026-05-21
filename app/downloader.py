@@ -16,16 +16,19 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
     def progress_hook(d):
         if should_cancel():
             raise yt_dlp.utils.DownloadCancelled()
+        idict = d.get("info_dict", {})
         if d.get("status") == "downloading":
-            idict = d.get("info_dict", {})
-            title = idict.get("title") or idict.get("track")
-            if title and not info.get("title"):
-                info["title"] = title
+            album = idict.get("playlist_title") or idict.get("album")
+            track = idict.get("title") or idict.get("track")
+            if not info.get("title"):
+                info["title"] = album or track
         if d.get("status") == "finished":
-            idict = d.get("info_dict", {})
-            title = idict.get("title") or idict.get("track") or info.get("title")
-            if title:
-                info["title"] = title
+            album = idict.get("playlist_title") or idict.get("album")
+            track = idict.get("title") or idict.get("track")
+            if album:
+                info["title"] = album
+            elif not info.get("title"):
+                info["title"] = track
         progress_callback(d)
 
     ydl_opts = {
