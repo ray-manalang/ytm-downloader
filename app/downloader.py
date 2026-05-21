@@ -1,30 +1,14 @@
+import contextlib
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Callable
 
 import yt_dlp
-from yt_dlp.postprocessor.common import PostProcessor
+from mutagen.mp4 import MP4, MP4Cover
 
 DOWNLOADS_DIR = os.environ.get("DOWNLOADS_DIR", "./downloads")
-
-
-class _CropThumbnailPP(PostProcessor):
-    """Crop and resize each track thumbnail to a 600x600 square."""
-
-    def run(self, info):
-        for thumb in reversed(info.get("thumbnails") or []):
-            filepath = thumb.get("filepath")
-            if filepath and os.path.exists(filepath) and filepath.lower().endswith((".jpg", ".jpeg")):
-                tmp = filepath + ".tmp"
-                r = subprocess.run(
-                    ["ffmpeg", "-y", "-i", filepath, "-vf", "crop=ih:ih,scale=600:600", tmp],
-                    capture_output=True,
-                )
-                if r.returncode == 0 and os.path.exists(tmp):
-                    os.replace(tmp, filepath)
-                break
-        return [], info
 
 
 def run_download(url: str, progress_callback: Callable, should_cancel: Callable) -> dict:
@@ -61,8 +45,9 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
                 "key": "FFmpegThumbnailsConvertor",
                 "format": "jpg",
             },
-            # EmbedThumbnail is added manually after _CropThumbnailPP
-            # to guarantee crop runs before embedding
+            {
+                "key": "EmbedThumbnail",
+            },
         ],
         "writethumbnail": True,
         "parse_metadata": [
@@ -80,15 +65,53 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
         "no_warnings": True,
     }
 
-    from yt_dlp.postprocessor import EmbedThumbnailPP
+    base = Path(DOWNLOADS_DIR)
+    files_before = set(base.rglob("*.m4a")) if base.exists() else set()
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.add_post_processor(_CropThumbnailPP(ydl), when="post_process")
-        ydl.add_post_processor(EmbedThumbnailPP(ydl), when="post_process")
         ydl.download([url])
+
+    # Resize cover art in every newly created m4a
+    files_after = set(base.rglob("*.m4a")) if base.exists() else set()
+    for path in files_after - files_before:
+        _resize_cover(path)
 
     _cleanup_stray_thumbnails()
     return info
+
+
+def _resize_cover(path: Path):
+    """Replace the embedded cover art with a 600x600 square crop."""
+    tmp_in = tmp_out = None
+    try:
+        audio = MP4(str(path))
+        covers = audio.get("covr", [])
+        if not covers:
+            return
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+            f.write(bytes(covers[0]))
+            tmp_in = f.name
+
+        tmp_out = tmp_in + ".out.jpg"
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", tmp_in, "-vf", "crop=ih:ih,scale=600:600", tmp_out],
+            capture_output=True,
+        )
+        if r.returncode == 0 and os.path.exists(tmp_out):
+            with open(tmp_out, "rb") as f:
+                new_cover = f.read()
+            audio["covr"] = [MP4Cover(new_cover, imageformat=MP4Cover.FORMAT_JPEG)]
+            audio.save()
+    except Exception:
+        pass
+    finally:
+        with contextlib.suppress(Exception):
+            if tmp_in:
+                os.unlink(tmp_in)
+        with contextlib.suppress(Exception):
+            if tmp_out:
+                os.unlink(tmp_out)
 
 
 _THUMB_EXTS = {".jpg", ".jpeg", ".webp", ".png"}
@@ -106,7 +129,5 @@ def _cleanup_stray_thumbnails():
         if children and all(f.suffix.lower() in _THUMB_EXTS for f in children):
             for f in children:
                 f.unlink(missing_ok=True)
-            try:
+            with contextlib.suppress(OSError):
                 d.rmdir()
-            except OSError:
-                pass
