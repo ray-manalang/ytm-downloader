@@ -1,6 +1,6 @@
 services:
   ytm-downloader:
-    image: ray-manalang/ytm-downloader:latest
+    image: raymanalang/ytm-downloader:latest
     container_name: ytm-downloader
     restart: unless-stopped
     ports:
