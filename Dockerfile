@@ -1,7 +1,9 @@
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
+    ffmpeg curl unzip \
+    && curl -fsSL https://deno.land/x/install/install.sh | DENO_INSTALL=/usr/local sh \
+    && apt-get purge -y --auto-remove curl unzip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /ytm

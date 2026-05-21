@@ -29,7 +29,7 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
         progress_callback(d)
 
     ydl_opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio/best/b",
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -61,8 +61,9 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
         ),
         "progress_hooks": [progress_hook],
         "extractor_args": {
-            "youtube": {"player_client": ["web_music", "web", "ios"]},
+            "youtube": {"player_client": ["web_music", "web"]},
         },
+        "remote_components": ["ejs:github"],
         "quiet": True,
         "no_warnings": True,
         **({"cookiefile": COOKIES_FILE} if COOKIES_FILE and os.path.exists(COOKIES_FILE) else {}),
