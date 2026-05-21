@@ -60,6 +60,9 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
             "%(album,playlist_title)s/%(playlist_index)02d %(title)s.%(ext)s",
         ),
         "progress_hooks": [progress_hook],
+        "extractor_args": {
+            "youtube": {"player_client": ["web", "tv_embedded"]},
+        },
         "quiet": True,
         "no_warnings": True,
         **({"cookiefile": COOKIES_FILE} if COOKIES_FILE and os.path.exists(COOKIES_FILE) else {}),
