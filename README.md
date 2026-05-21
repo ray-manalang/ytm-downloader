@@ -93,7 +93,7 @@ If you see _"Sign in to confirm your age"_ errors, export your YouTube cookies a
 
 ```yaml
 volumes:
-  - /mnt/data/supervisor/share/cookies.txt:/cookies.txt:ro
+  - /mnt/data/supervisor/share/cookies.txt:/cookies.txt
 environment:
   COOKIES_FILE: /cookies.txt
 ```
