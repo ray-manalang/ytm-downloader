@@ -52,7 +52,7 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
             "%(playlist_uploader,uploader)s:%(meta_artist)s",
         ],
         "postprocessor_args": {
-            "ThumbnailsConvertor": ["-vf", "crop=ih:ih,scale=600:600"],
+            "FFmpegThumbnailsConvertor": ["-vf", "crop=ih:ih,scale=600:600"],
         },
         "outtmpl": os.path.join(
             DOWNLOADS_DIR,
