@@ -1,12 +1,10 @@
 import contextlib
 import os
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Callable
 
 import yt_dlp
-from mutagen.mp4 import MP4, MP4Cover
 
 DOWNLOADS_DIR = os.environ.get("DOWNLOADS_DIR", "./downloads")
 
@@ -82,36 +80,50 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
 
 def _resize_cover(path: Path):
     """Replace the embedded cover art with a 600x600 square crop."""
-    tmp_in = tmp_out = None
+    tmp_cover = tmp_resized = tmp_out = None
     try:
-        audio = MP4(str(path))
-        covers = audio.get("covr", [])
-        if not covers:
+        tmp_cover = str(path) + ".cover.jpg"
+        tmp_resized = str(path) + ".resized.jpg"
+        tmp_out = str(path) + ".tmp.m4a"
+
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(path), "-map", "0:v", "-frames:v", "1", tmp_cover],
+            capture_output=True,
+        )
+        if r.returncode != 0 or not os.path.exists(tmp_cover):
             return
 
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
-            f.write(bytes(covers[0]))
-            tmp_in = f.name
-
-        tmp_out = tmp_in + ".out.jpg"
         r = subprocess.run(
-            ["ffmpeg", "-y", "-i", tmp_in, "-vf", "crop=ih:ih,scale=600:600", tmp_out],
+            ["ffmpeg", "-y", "-i", tmp_cover, "-vf", "crop=ih:ih,scale=600:600", tmp_resized],
+            capture_output=True,
+        )
+        if r.returncode != 0 or not os.path.exists(tmp_resized):
+            return
+
+        r = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-i", str(path),
+                "-i", tmp_resized,
+                "-map", "0:a",
+                "-map", "1:v",
+                "-map_metadata", "0",
+                "-c:a", "copy",
+                "-disposition:v:0", "attached_pic",
+                tmp_out,
+            ],
             capture_output=True,
         )
         if r.returncode == 0 and os.path.exists(tmp_out):
-            with open(tmp_out, "rb") as f:
-                new_cover = f.read()
-            audio["covr"] = [MP4Cover(new_cover, imageformat=MP4Cover.FORMAT_JPEG)]
-            audio.save()
+            os.replace(tmp_out, path)
+            tmp_out = None
     except Exception:
         pass
     finally:
-        with contextlib.suppress(Exception):
-            if tmp_in:
-                os.unlink(tmp_in)
-        with contextlib.suppress(Exception):
-            if tmp_out:
-                os.unlink(tmp_out)
+        for f in [tmp_cover, tmp_resized, tmp_out]:
+            with contextlib.suppress(Exception):
+                if f and os.path.exists(f):
+                    os.unlink(f)
 
 
 _THUMB_EXTS = {".jpg", ".jpeg", ".webp", ".png"}
