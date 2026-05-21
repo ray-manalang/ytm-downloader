@@ -1,9 +1,30 @@
-import yt_dlp
 import os
+import subprocess
 from pathlib import Path
 from typing import Callable
 
+import yt_dlp
+from yt_dlp.postprocessor.common import PostProcessor
+
 DOWNLOADS_DIR = os.environ.get("DOWNLOADS_DIR", "./downloads")
+
+
+class _CropThumbnailPP(PostProcessor):
+    """Crop and resize each track thumbnail to a 600x600 square."""
+
+    def run(self, info):
+        for thumb in reversed(info.get("thumbnails") or []):
+            filepath = thumb.get("filepath")
+            if filepath and os.path.exists(filepath) and filepath.lower().endswith((".jpg", ".jpeg")):
+                tmp = filepath + ".tmp"
+                r = subprocess.run(
+                    ["ffmpeg", "-y", "-i", filepath, "-vf", "crop=ih:ih,scale=600:600", tmp],
+                    capture_output=True,
+                )
+                if r.returncode == 0 and os.path.exists(tmp):
+                    os.replace(tmp, filepath)
+                break
+        return [], info
 
 
 def run_download(url: str, progress_callback: Callable, should_cancel: Callable) -> dict:
@@ -40,9 +61,8 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
                 "key": "FFmpegThumbnailsConvertor",
                 "format": "jpg",
             },
-            {
-                "key": "EmbedThumbnail",
-            },
+            # EmbedThumbnail is added manually after _CropThumbnailPP
+            # to guarantee crop runs before embedding
         ],
         "writethumbnail": True,
         "parse_metadata": [
@@ -51,9 +71,6 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
             "%(playlist_uploader,uploader)s:%(meta_album_artist)s",
             "%(playlist_uploader,uploader)s:%(meta_artist)s",
         ],
-        "postprocessor_args": {
-            "FFmpegThumbnailsConvertor": ["-vf", "crop=ih:ih,scale=600:600"],
-        },
         "outtmpl": os.path.join(
             DOWNLOADS_DIR,
             "%(album,playlist_title)s/%(playlist_index)02d %(title)s.%(ext)s",
@@ -63,19 +80,22 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
         "no_warnings": True,
     }
 
+    from yt_dlp.postprocessor import EmbedThumbnailPP
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.add_post_processor(_CropThumbnailPP(ydl), when="post_process")
+        ydl.add_post_processor(EmbedThumbnailPP(ydl), when="post_process")
         ydl.download([url])
 
     _cleanup_stray_thumbnails()
     return info
 
 
-_AUDIO_EXTS = {".m4a", ".mp3", ".opus", ".flac", ".wav"}
 _THUMB_EXTS = {".jpg", ".jpeg", ".webp", ".png"}
 
 
 def _cleanup_stray_thumbnails():
-    """Delete dirs that contain only thumbnail files (playlist-level art with no audio)."""
+    """Delete dirs that contain only thumbnail files (leftover playlist-level art)."""
     base = Path(DOWNLOADS_DIR)
     if not base.exists():
         return
