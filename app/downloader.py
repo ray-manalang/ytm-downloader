@@ -7,6 +7,7 @@ from typing import Callable
 import yt_dlp
 
 DOWNLOADS_DIR = os.environ.get("DOWNLOADS_DIR", "./downloads")
+COOKIES_FILE = os.environ.get("COOKIES_FILE", "")
 
 
 def run_download(url: str, progress_callback: Callable, should_cancel: Callable) -> dict:
@@ -61,6 +62,7 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
         "progress_hooks": [progress_hook],
         "quiet": True,
         "no_warnings": True,
+        **({"cookiefile": COOKIES_FILE} if COOKIES_FILE and os.path.exists(COOKIES_FILE) else {}),
     }
 
     base = Path(DOWNLOADS_DIR)

@@ -80,6 +80,23 @@ This maps the native HAOS `/share` directory into the container so downloaded fi
 | `DOWNLOADS_DIR` | `./downloads` | Where yt-dlp saves files |
 | `DB_PATH` | `./data/downloads.db` | SQLite database path |
 | `MAX_CONCURRENT_DOWNLOADS` | `2` | Parallel download workers |
+| `COOKIES_FILE` | _(unset)_ | Path to a Netscape-format cookies.txt for age-restricted or authenticated downloads |
+
+## Cookies (age-restricted videos)
+
+If you see _"Sign in to confirm your age"_ errors, export your YouTube cookies and mount them into the container:
+
+1. Install the [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) extension (Chrome) or equivalent for Firefox.
+2. Log in to YouTube Music in that browser, then export cookies for `youtube.com` — save as `cookies.txt`.
+3. Copy `cookies.txt` to a stable path on the host (e.g. `/mnt/data/supervisor/share/cookies.txt` on HAOS).
+4. Mount it and set the env var:
+
+```yaml
+volumes:
+  - /mnt/data/supervisor/share/cookies.txt:/cookies.txt:ro
+environment:
+  COOKIES_FILE: /cookies.txt
+```
 
 ## Local development
 
