@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+  <!-- Green circle background -->
+  <circle cx="20" cy="20" r="20" fill="#1db954"/>
+  <!-- Equalizer bars — represent audio -->
+  <rect x="8"    y="16" width="5" height="9"  rx="2" fill="#052e12"/>
+  <rect x="17.5" y="11" width="5" height="14" rx="2" fill="#052e12"/>
+  <rect x="27"   y="13" width="5" height="12" rx="2" fill="#052e12"/>
+  <!-- Download arrow — V chevron + baseline -->
+  <path d="M13 27 L20 33 L27 27" fill="none" stroke="#052e12" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="13" y1="36" x2="27" y2="36" stroke="#052e12" stroke-width="2.5" stroke-linecap="round"/>
+</svg>
