@@ -80,7 +80,6 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
     for path in files_after - files_before:
         _resize_cover(path)
 
-    _cleanup_stray_thumbnails()
     return info
 
 
@@ -132,20 +131,3 @@ def _resize_cover(path: Path):
                     os.unlink(f)
 
 
-_THUMB_EXTS = {".jpg", ".jpeg", ".webp", ".png"}
-
-
-def _cleanup_stray_thumbnails():
-    """Delete dirs that contain only thumbnail files (leftover playlist-level art)."""
-    base = Path(DOWNLOADS_DIR)
-    if not base.exists():
-        return
-    for d in sorted(base.rglob("*"), reverse=True):
-        if not d.is_dir():
-            continue
-        children = [f for f in d.iterdir() if f.is_file()]
-        if children and all(f.suffix.lower() in _THUMB_EXTS for f in children):
-            for f in children:
-                f.unlink(missing_ok=True)
-            with contextlib.suppress(OSError):
-                d.rmdir()
