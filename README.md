@@ -4,7 +4,7 @@ A self-hosted web app for downloading YouTube Music albums and playlists as high
 
 Built as a replacement for MeTube with a focus on audio quality — uses the same yt-dlp settings as a hand-tuned CLI alias.
 
-![Dark mode UI with queue, history, and file browser](https://img.shields.io/badge/UI-dark%20mode-1db954?style=flat-square) ![Multi-arch](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-blue?style=flat-square)
+![Dark mode UI with queue, history, and file browser](https://img.shields.io/badge/UI-dark%20mode-ff0033?style=flat-square) ![Multi-arch](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-blue?style=flat-square)
 
 ## Features
 
