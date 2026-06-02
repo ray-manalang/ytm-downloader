@@ -26,10 +26,92 @@ Single-process FastAPI app. No test suite.
 |---|---|
 | `app/main.py` | FastAPI app, SQLite via aiosqlite, WebSocket broadcast, download queue, REST API |
 | `app/downloader.py` | yt-dlp wrapper, post-download cover-art resize, stray-thumbnail cleanup |
+| `app/ytm.py` | YouTube Music integration — auth, playlist/liked-songs browsing, auto-sync background task |
 | `app/static/index.html` | Single-file dark-mode SPA — all JS inline, no build step, no external deps |
 | `app/static/logo.svg` | App icon (also used as browser favicon) |
 
-### Download flow
+## Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DOWNLOADS_DIR` | `./downloads` | Output directory for all music files |
+| `DB_PATH` | `./data/downloads.db` | SQLite database path |
+| `MAX_CONCURRENT_DOWNLOADS` | `2` | Parallel download worker count |
+| `YTM_AUTH_PATH` | `./data/ytm_auth.json` | YouTube Music credentials file (written by the app on first auth) |
+| `COOKIES_FILE` | *(empty)* | Netscape-format cookies.txt for age-restricted videos; mount **without `:ro`** — yt-dlp writes back to refresh token expiry |
+
+## Database schema
+
+**`downloads`** — download queue and history
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | TEXT PK | 8-char UUID |
+| `url` | TEXT | Original URL |
+| `title` | TEXT | Album/playlist name set at download time |
+| `status` | TEXT | `pending` \| `downloading` \| `done` \| `error` \| `cancelled` |
+| `progress` | REAL | 0–100 |
+| `speed` | TEXT | e.g. `5.2MiB/s` |
+| `eta` | TEXT | e.g. `0:12` |
+| `error` | TEXT | Set when status=error |
+| `created_at` | REAL | Unix timestamp |
+
+**`ytm_liked`** — tracks liked songs for auto-sync
+
+| Column | Type | Notes |
+|---|---|---|
+| `video_id` | TEXT PK | YouTube video ID |
+| `title` | TEXT | Track title |
+| `artist` | TEXT | Comma-separated artist names |
+| `added_at` | REAL | Unix timestamp from YTM |
+| `downloaded_at` | REAL | Unix timestamp when enqueued, or NULL |
+
+## API endpoints
+
+### Download management (`main.py`)
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/downloads` | Enqueue one or more URLs |
+| GET | `/api/downloads` | List all downloads |
+| DELETE | `/api/downloads/{id}` | Cancel or remove a download |
+
+### File management (`main.py`)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/files` | List downloaded files grouped by folder |
+| DELETE | `/api/files` | Delete a file or entire folder by path |
+
+### YouTube Music auth (`ytm.py`)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/ytm/status` | Check connection status |
+| POST | `/api/ytm/setup` | Authenticate via pasted request headers |
+| DELETE | `/api/ytm/setup` | Disconnect and delete credentials |
+
+### YouTube Music browse (`ytm.py`)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/ytm/library` | Playlists list + liked song count |
+| GET | `/api/ytm/playlist/{id}` | All tracks in a playlist |
+| GET | `/api/ytm/liked` | All liked songs (up to 2500) |
+
+Auto-generated YTM playlists ("Liked Music", "Episodes for Later") are filtered out of the `/api/ytm/library` response.
+
+### Auto-sync (`ytm.py`)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/ytm/sync/config` | Get enabled flag + interval |
+| PUT | `/api/ytm/sync/config` | Update config (interval: 15/60/360/1440 min) |
+| GET | `/api/ytm/sync/status` | Downloaded count vs. total liked |
+| DELETE | `/api/ytm/sync/status` | Clear sync history |
+| POST | `/api/ytm/sync/run` | Trigger immediate sync |
+
+## Download flow
 
 1. `POST /api/downloads` enqueues `(id, url)` into `asyncio.Queue`
 2. `_worker` coroutines (one per `MAX_CONCURRENT_DOWNLOADS`) dequeue and call `run_in_executor` → `run_download()` (blocking)
@@ -38,17 +120,30 @@ Single-process FastAPI app. No test suite.
 5. Those coroutines write to SQLite and broadcast JSON over WebSocket to all connected clients
 6. After yt-dlp finishes, `_resize_cover()` re-embeds the cover art at 600×600 via three sequential ffmpeg calls
 
-### WebSocket message types
+## WebSocket message types
 
-| Type | Direction | Meaning |
-|---|---|---|
-| `added` | server→client | new download enqueued |
-| `status` | server→client | status change (pending/downloading/done/error/cancelled) |
-| `progress` | server→client | per-chunk progress update (pct, speed, ETA, current_file, playlist_index/count) |
-| `track_done` | server→client | one track in a playlist finished (used to build the ✓ list in the queue UI) |
-| `removed` | server→client | history entry deleted |
+| Type | Direction | Fields | Meaning |
+|---|---|---|---|
+| `added` | server→client | `id, url, status, progress, created_at` | New download enqueued |
+| `status` | server→client | `id, status, [title], [error]` | Status change (pending/downloading/done/error/cancelled) |
+| `progress` | server→client | `id, progress, speed, eta, current_file, playlist_index, playlist_count` | Per-chunk progress update |
+| `track_done` | server→client | `id, track` | One track in a playlist finished |
+| `removed` | server→client | `id` | History entry deleted |
 
-### Key yt-dlp settings — do not change without explicit approval
+## YouTube Music integration (`app/ytm.py`)
+
+Authentication uses the `ytmusicapi` library with browser-header auth. Credentials are saved to `YTM_AUTH_PATH` on first setup and loaded on startup.
+
+### Auto-sync flow
+1. `start_sync_task()` is called at startup (from `main.py`)
+2. `_sync_loop()` runs as a background asyncio task, sleeping between runs per the configured interval
+3. Each run calls `yt.get_liked_songs(limit=2500)`, diffs against `ytm_liked`, and enqueues any new tracks via the injected `_enqueue_fn`
+4. Sync config (`enabled`, `interval_minutes`) is persisted to `ytm_sync.json` alongside the auth file
+
+### Key constraint
+All content must be music-only. Never surface or enqueue YouTube video content. The "Episodes for Later" podcast playlist is filtered at the API layer.
+
+## Key yt-dlp settings — do not change without explicit approval
 
 - `format`: `bestaudio/best` — no codec restriction; picks ~265 kbps opus then converts to m4a
 - `postprocessors`: FFmpegExtractAudio → FFmpegMetadata → FFmpegThumbnailsConvertor → EmbedThumbnail (order matters)
@@ -56,25 +151,35 @@ Single-process FastAPI app. No test suite.
 - **Never add `extractor_args` with a custom `player_client` list** — it restricts the format list and causes lower-bitrate streams to be selected
 - `outtmpl`: `%(album,playlist_title)s/%(playlist_index)02d %(title)s.%(ext)s`
 
-### Cover-art resize (`_resize_cover`)
+## Cover-art resize (`_resize_cover`)
 
 yt-dlp embeds the thumbnail as an **ffmpeg video stream** (not a mutagen `covr` tag). The resize uses three sequential `subprocess.run` ffmpeg calls:
 1. Extract: `-map 0:v -frames:v 1` → temp jpg
 2. Resize: `-vf crop=ih:ih,scale=600:600` → resized jpg
 3. Re-embed: `-map 0:a -map 1:v -c:a copy -disposition:v:0 attached_pic` → replaces original file
 
-### History title vs. track title
+## History title vs. track title
 
 The DB `title` column stores the **album/playlist name** (from `playlist_title` or `album` in yt-dlp's `info_dict`), not the individual track filename. Individual track names are broadcast via `track_done` and held only in frontend memory (`tracksDone` JS object).
 
-### Cookies (age-restricted videos)
+## Frontend SPA (`app/static/index.html`)
 
-Set `COOKIES_FILE` env var to a Netscape-format `cookies.txt` path. Mount the file **without `:ro`** — yt-dlp writes back to it to refresh token expiry.
+Single-file, no build step. Five tabs: **Add**, **Queue**, **History**, **Library**, **Files**.
+
+Key JS state:
+- `downloads` — map of id → download object (source of truth for queue/history cards)
+- `tracksDone` — map of id → completed track title array
+- `albumOpen` / `albumsList` — collapsed state for Files tab folders (default collapsed)
+- `ytmPlaylistTracks` / `ytmPlaylistOpen` — lazy-loaded playlist track cache and expand state
+- `likedOpen` / `likedTracksCache` — expand state and cache for Liked Songs section
+
+WebSocket reconnects automatically with a 3-second retry (`connectWS()`). Progress updates use `updateCardInPlace()` to avoid full list re-renders.
 
 ## Deployment target
 
 HAOS Portainer. Key constraints:
 - Host root filesystem is read-only; only `/mnt/data` is writable
 - Downloads volume: `/mnt/data/supervisor/share` mounted as `/share` in container
-- DB: Docker named volume `ytm_data` at `/data/downloads.db`
+- DB and YTM auth: Docker named volume `ytm_data` at `/data`
+- Cookies: bind-mount from `/mnt/data/supervisor/share/cookies.txt` (no `:ro` — yt-dlp writes back)
 - Port: host `8503` → container `8080`
