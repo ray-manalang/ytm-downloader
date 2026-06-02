@@ -115,6 +115,27 @@
   .track-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .track-size { color: var(--muted); font-size: 12px; white-space: nowrap; }
 
+  /* Library panel */
+  .lib-section { margin-bottom: 24px; }
+  .lib-section-title { font-size: 15px; font-weight: 700; margin-bottom: 12px; }
+  .lib-connected-bar { display: flex; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 20px; }
+  .lib-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+  .lib-playlist { margin-bottom: 10px; }
+  .lib-playlist-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; user-select: none; }
+  .lib-playlist-header:hover .album-name { color: var(--accent); }
+  .lib-playlist-tracks { border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; }
+  .lib-track-row { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-top: 1px solid var(--border); background: var(--surface2); }
+  .lib-track-row:first-child { border-top: none; }
+  .lib-track-info { flex: 1; min-width: 0; }
+  .lib-track-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+  .lib-track-artist { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lib-track-dur { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .lib-sync-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+  .lib-sync-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .lib-sync-row:last-child { margin-bottom: 0; }
+  select { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font-size: 13px; outline: none; cursor: pointer; }
+  select:focus { border-color: var(--accent); }
+
   /* Scrollbar */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
@@ -137,6 +158,7 @@
   <div class="tab" data-tab="history" onclick="switchTab('history')">
     History <span class="badge warn" id="histBadge" style="display:none"></span>
   </div>
+  <div class="tab" data-tab="library" onclick="switchTab('library')">Library</div>
   <div class="tab" data-tab="files" onclick="switchTab('files')">Files</div>
 </div>
 
@@ -171,6 +193,78 @@
     </div>
   </div>
 
+  <!-- LIBRARY -->
+  <div class="panel" id="panel-library">
+    <!-- Not connected -->
+    <div id="libSetup">
+      <div class="add-box">
+        <label>Connect YouTube Music</label>
+        <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.5">
+          Open <strong style="color:var(--text)">music.youtube.com</strong> in Chrome while logged in →
+          DevTools (F12) → Network tab → click any request to music.youtube.com →
+          right-click it → <strong style="color:var(--text)">Copy → Copy request headers</strong>.
+          Paste the headers below.
+        </p>
+        <textarea id="ytmHeaders" placeholder="Paste request headers here..." style="min-height:160px;font-size:12px;font-family:monospace"></textarea>
+        <div class="add-actions">
+          <button class="btn-primary" id="ytmConnectBtn" onclick="connectYTM()">Connect</button>
+        </div>
+        <div id="ytmSetupError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- Connected -->
+    <div id="libConnected" style="display:none">
+      <div class="lib-connected-bar">
+        <span class="lib-dot"></span>
+        <span style="font-weight:600">Connected to YouTube Music</span>
+        <button class="btn-ghost btn-sm" style="margin-left:auto" onclick="disconnectYTM()">Disconnect</button>
+      </div>
+
+      <!-- Liked Songs -->
+      <div class="lib-section">
+        <div class="lib-section-title">Liked Songs <span id="likedCount" style="color:var(--muted);font-weight:400;font-size:13px"></span></div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn-ghost btn-sm" id="syncNowBtn" onclick="syncNow()">⟳ Sync New Songs</button>
+          <span id="syncStatus" style="color:var(--muted);font-size:12px"></span>
+        </div>
+      </div>
+
+      <!-- Playlists -->
+      <div class="lib-section">
+        <div class="lib-section-title">Playlists</div>
+        <div id="libPlaylistsList">
+          <div class="empty" style="padding:30px 20px"><p style="color:var(--muted)">Loading playlists…</p></div>
+        </div>
+      </div>
+
+      <!-- Auto-Sync -->
+      <div class="lib-section">
+        <div class="lib-section-title">Auto-Sync</div>
+        <div class="lib-sync-box">
+          <div class="lib-sync-row">
+            <input type="checkbox" id="syncEnabled" onchange="updateSyncConfig()" style="width:16px;height:16px;cursor:pointer;accent-color:var(--accent)">
+            <label for="syncEnabled" style="cursor:pointer">Automatically download new liked songs</label>
+          </div>
+          <div class="lib-sync-row" style="color:var(--muted);font-size:13px">
+            <span>Check every</span>
+            <select id="syncInterval" onchange="updateSyncConfig()">
+              <option value="15">15 minutes</option>
+              <option value="60" selected>1 hour</option>
+              <option value="360">6 hours</option>
+              <option value="1440">24 hours</option>
+            </select>
+            <span id="lastSyncTime" style="margin-left:4px"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="empty" id="libLoading" style="display:none">
+      <p style="color:var(--muted)">Loading…</p>
+    </div>
+  </div>
+
   <!-- FILES -->
   <div class="panel" id="panel-files">
     <div class="files-toolbar">
@@ -198,6 +292,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
   document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
   if (name === 'files') loadFiles();
+  if (name === 'library') loadLibrary();
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -536,6 +631,195 @@ function updateCardInPlace(id) {
   const queueCount = all.filter(x => x.status === 'pending' || x.status === 'downloading').length;
   const qb = document.getElementById('queueBadge');
   if (queueCount > 0) { qb.textContent = queueCount; qb.style.display = ''; } else qb.style.display = 'none';
+}
+
+// ── Library ───────────────────────────────────────────────────────────────────
+let ytmConnected = false;
+const ytmPlaylistTracks = {};  // playlistId -> tracks[]
+const ytmPlaylistOpen = {};    // playlistId -> bool
+
+async function loadLibrary() {
+  const res = await fetch('/api/ytm/status');
+  const data = await res.json();
+  ytmConnected = data.connected;
+  document.getElementById('libSetup').style.display = ytmConnected ? 'none' : '';
+  document.getElementById('libConnected').style.display = ytmConnected ? '' : 'none';
+  if (ytmConnected) {
+    await Promise.all([fetchLibraryData(), loadSyncConfig()]);
+  }
+}
+
+async function fetchLibraryData() {
+  document.getElementById('libPlaylistsList').innerHTML = '<div style="color:var(--muted);font-size:13px;padding:10px 0">Loading playlists…</div>';
+  try {
+    const res = await fetch('/api/ytm/library');
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    document.getElementById('likedCount').textContent = data.liked_count ? `— ${data.liked_count} songs` : '';
+    renderPlaylists(data.playlists || []);
+  } catch (e) {
+    document.getElementById('libPlaylistsList').innerHTML = `<div style="color:var(--danger);font-size:13px">${escHtml(String(e))}</div>`;
+  }
+}
+
+function renderPlaylists(playlists) {
+  const el = document.getElementById('libPlaylistsList');
+  if (!playlists.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:10px 0">No playlists found.</div>';
+    return;
+  }
+  el.innerHTML = playlists.map(p => playlistHTML(p)).join('');
+}
+
+function playlistHTML(p) {
+  const open = ytmPlaylistOpen[p.id] === true;
+  const count = p.count ? `${p.count} track${p.count !== 1 ? 's' : ''}` : '';
+  const tracksHtml = open ? renderPlaylistTracks(p.id) : '';
+  return `
+    <div class="lib-playlist" id="libpl-${escHtml(p.id)}">
+      <div class="lib-playlist-header" onclick="togglePlaylist(${JSON.stringify(p.id)})">
+        <span class="album-chevron ${open ? 'open' : ''}" id="libchev-${escHtml(p.id)}">▶</span>
+        <span class="album-name" style="flex:1">${escHtml(p.title)}</span>
+        <span class="album-count">${escHtml(count)}</span>
+        <button class="btn-primary btn-sm" style="margin-left:10px" onclick="event.stopPropagation(); downloadPlaylist(${JSON.stringify(p.id)})">↓ Download</button>
+      </div>
+      <div class="lib-playlist-tracks" id="libtr-${escHtml(p.id)}" style="${open ? '' : 'display:none'}">${tracksHtml}</div>
+    </div>`;
+}
+
+function renderPlaylistTracks(playlistId) {
+  const tracks = ytmPlaylistTracks[playlistId];
+  if (!tracks) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">Loading…</div>';
+  if (!tracks.length) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">No tracks.</div>';
+  return tracks.map(t => `
+    <div class="lib-track-row">
+      <div class="lib-track-info">
+        <div class="lib-track-title">${escHtml(t.title)}</div>
+        ${t.artist ? `<div class="lib-track-artist">${escHtml(t.artist)}</div>` : ''}
+      </div>
+      <div class="lib-track-dur">${escHtml(t.duration || '')}</div>
+      <button class="btn-ghost btn-sm" onclick="downloadTrack(${JSON.stringify(t.videoId)})">↓</button>
+    </div>`).join('');
+}
+
+async function togglePlaylist(playlistId) {
+  ytmPlaylistOpen[playlistId] = !ytmPlaylistOpen[playlistId];
+  const chevEl = document.getElementById(`libchev-${playlistId}`);
+  const tracksEl = document.getElementById(`libtr-${playlistId}`);
+  if (!tracksEl) return;
+
+  const open = ytmPlaylistOpen[playlistId];
+  if (chevEl) chevEl.classList.toggle('open', open);
+  tracksEl.style.display = open ? '' : 'none';
+
+  if (open && !ytmPlaylistTracks[playlistId]) {
+    tracksEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px 14px">Loading…</div>';
+    try {
+      const res = await fetch(`/api/ytm/playlist/${encodeURIComponent(playlistId)}`);
+      const data = await res.json();
+      ytmPlaylistTracks[playlistId] = data.tracks || [];
+    } catch {
+      ytmPlaylistTracks[playlistId] = [];
+    }
+    tracksEl.innerHTML = renderPlaylistTracks(playlistId);
+  }
+}
+
+async function downloadPlaylist(playlistId) {
+  const url = `https://music.youtube.com/playlist?list=${encodeURIComponent(playlistId)}`;
+  await fetch('/api/downloads', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({urls: [url]}),
+  });
+  switchTab('queue');
+}
+
+async function downloadTrack(videoId) {
+  const url = `https://music.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+  await fetch('/api/downloads', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({urls: [url]}),
+  });
+  switchTab('queue');
+}
+
+async function connectYTM() {
+  const headers_raw = document.getElementById('ytmHeaders').value.trim();
+  if (!headers_raw) return;
+  const btn = document.getElementById('ytmConnectBtn');
+  const errEl = document.getElementById('ytmSetupError');
+  btn.disabled = true;
+  btn.textContent = 'Connecting…';
+  errEl.textContent = '';
+  try {
+    const res = await fetch('/api/ytm/setup', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({headers_raw}),
+    });
+    if (res.ok) {
+      document.getElementById('ytmHeaders').value = '';
+      await loadLibrary();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      errEl.textContent = data.detail || 'Connection failed.';
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Connect';
+  }
+}
+
+async function disconnectYTM() {
+  if (!confirm('Disconnect YouTube Music? This will remove your saved credentials.')) return;
+  await fetch('/api/ytm/setup', {method: 'DELETE'});
+  ytmConnected = false;
+  loadLibrary();
+}
+
+async function syncNow() {
+  const btn = document.getElementById('syncNowBtn');
+  const status = document.getElementById('syncStatus');
+  btn.disabled = true;
+  btn.textContent = '⟳ Syncing…';
+  status.textContent = '';
+  try {
+    const res = await fetch('/api/ytm/sync/run', {method: 'POST'});
+    if (res.ok) {
+      status.textContent = 'Sync started — new songs will appear in Queue';
+      setTimeout(() => { status.textContent = ''; }, 5000);
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⟳ Sync New Songs';
+  }
+}
+
+async function loadSyncConfig() {
+  try {
+    const res = await fetch('/api/ytm/sync/config');
+    const cfg = await res.json();
+    document.getElementById('syncEnabled').checked = !!cfg.enabled;
+    const iv = document.getElementById('syncInterval');
+    const opt = iv.querySelector(`option[value="${cfg.interval_minutes}"]`);
+    if (opt) opt.selected = true;
+    if (cfg.last_run) {
+      const ago = Math.round((Date.now() / 1000 - cfg.last_run) / 60);
+      document.getElementById('lastSyncTime').textContent = ago < 2 ? '· last sync: just now' : `· last sync: ${ago}m ago`;
+    }
+  } catch {}
+}
+
+async function updateSyncConfig() {
+  const enabled = document.getElementById('syncEnabled').checked;
+  const interval_minutes = parseInt(document.getElementById('syncInterval').value, 10);
+  await fetch('/api/ytm/sync/config', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({enabled, interval_minutes}),
+  });
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

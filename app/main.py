@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .downloader import DOWNLOADS_DIR, run_download
+from . import ytm as ytm_module
 
 DB_PATH = os.environ.get("DB_PATH", "./data/downloads.db")
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "2"))
@@ -61,6 +62,15 @@ async def db_init():
                 error      TEXT,
                 created_at REAL,
                 output_dir TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ytm_liked (
+                video_id     TEXT PRIMARY KEY,
+                title        TEXT,
+                artist       TEXT,
+                added_at     REAL,
+                downloaded_at REAL
             )
         """)
         await db.commit()
@@ -210,33 +220,34 @@ async def startup():
         await db.commit()
     for _ in range(MAX_CONCURRENT):
         asyncio.create_task(_worker())
+    ytm_module.set_dependencies(_enqueue_download, DB_PATH)
+    ytm_module.on_startup()
+    ytm_module.start_sync_task()
 
 
 # ── REST API ─────────────────────────────────────────────────────────────────
+
+async def _enqueue_download(url: str) -> dict:
+    dl_id = str(uuid.uuid4())[:8]
+    now = time.time()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO downloads (id,url,status,created_at) VALUES (?,?,'pending',?)",
+            (dl_id, url, now),
+        )
+        await db.commit()
+    entry = {"id": dl_id, "url": url, "status": "pending", "progress": 0, "created_at": now}
+    await _download_queue.put((dl_id, url))
+    await broadcast({"type": "added", **entry})
+    return entry
+
 
 @app.post("/api/downloads")
 async def add_downloads(body: dict):
     urls = [u.strip() for u in body.get("urls", []) if u.strip()]
     if not urls:
         raise HTTPException(400, "No URLs provided")
-
-    created = []
-    async with aiosqlite.connect(DB_PATH) as db:
-        for url in urls:
-            dl_id = str(uuid.uuid4())[:8]
-            now = time.time()
-            await db.execute(
-                "INSERT INTO downloads (id,url,status,created_at) VALUES (?,?,'pending',?)",
-                (dl_id, url, now),
-            )
-            entry = {"id": dl_id, "url": url, "status": "pending", "progress": 0, "created_at": now}
-            created.append(entry)
-            await _download_queue.put((dl_id, url))
-        await db.commit()
-
-    for entry in created:
-        await broadcast({"type": "added", **entry})
-
+    created = [await _enqueue_download(url) for url in urls]
     return {"downloads": created}
 
 
@@ -324,6 +335,8 @@ async def ws_endpoint(websocket: WebSocket):
         except ValueError:
             pass
 
+
+app.include_router(ytm_module.router)
 
 # ── Static files ─────────────────────────────────────────────────────────────
 
