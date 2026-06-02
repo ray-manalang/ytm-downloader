@@ -179,7 +179,13 @@
   <div class="panel" id="panel-queue">
     <div class="card-list" id="queueList"></div>
     <div class="empty" id="queueEmpty" style="display:none">
-      <div class="empty-icon">🎵</div>
+      <div class="empty-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 32" width="52" height="42" aria-hidden="true">
+          <rect x="2"  y="10" width="8" height="12" rx="4" fill="#aaaaaa" opacity="0.25"/>
+          <rect x="16" y="6"  width="8" height="20" rx="4" fill="#aaaaaa" opacity="0.25"/>
+          <rect x="30" y="10" width="8" height="12" rx="4" fill="#aaaaaa" opacity="0.25"/>
+        </svg>
+      </div>
       <p>No active downloads</p>
     </div>
   </div>
@@ -223,11 +229,16 @@
 
       <!-- Liked Songs -->
       <div class="lib-section">
-        <div class="lib-section-title">Liked Songs <span id="likedCount" style="color:var(--muted);font-weight:400;font-size:13px"></span></div>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <button class="btn-ghost btn-sm" id="syncNowBtn" onclick="syncNow()">⟳ Sync New Songs</button>
-          <span id="syncStatus" style="color:var(--muted);font-size:12px"></span>
+        <div class="lib-playlist-header" onclick="toggleLiked()" style="cursor:pointer">
+          <span class="album-chevron" id="liked-chevron">▶</span>
+          <span class="lib-section-title" style="margin:0">Liked Songs</span>
+          <span id="likedCount" style="color:var(--muted);font-weight:400;font-size:13px;margin-left:6px"></span>
+          <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+            <button class="btn-ghost btn-sm" id="syncNowBtn" onclick="event.stopPropagation(); syncNow()">⟳ Sync New Songs</button>
+            <span id="syncStatus" style="color:var(--muted);font-size:12px"></span>
+          </div>
         </div>
+        <div id="liked-tracks" style="display:none"></div>
       </div>
 
       <!-- Playlists -->
@@ -447,7 +458,7 @@ function renderFiles() {
   albumsList = albumEntries.map(([name]) => name);
 
   el.innerHTML = albumEntries.map(([album, tracks], idx) => {
-    const open = albumOpen[album] !== false; // default open
+    const open = albumOpen[album] === true; // default collapsed
     const totalSize = tracks.reduce((s, t) => s + t.size, 0);
     const tracksHtml = tracks.map(t => {
       const name = t.path.split('/').pop();
@@ -476,11 +487,11 @@ function renderFiles() {
 
 function toggleAlbum(idx) {
   const album = albumsList[idx];
-  albumOpen[album] = albumOpen[album] === false ? true : false;
+  albumOpen[album] = !albumOpen[album];
   const list = document.getElementById('album-' + idx);
   const chev = document.getElementById('chev-' + idx);
-  if (list) list.style.display = albumOpen[album] === false ? 'none' : '';
-  if (chev) chev.classList.toggle('open', albumOpen[album] !== false);
+  if (list) list.style.display = albumOpen[album] ? '' : 'none';
+  if (chev) chev.classList.toggle('open', !!albumOpen[album]);
 }
 
 async function deleteFile(path) {
@@ -637,6 +648,8 @@ function updateCardInPlace(id) {
 let ytmConnected = false;
 const ytmPlaylistTracks = {};  // playlistId -> tracks[]
 const ytmPlaylistOpen = {};    // playlistId -> bool
+let likedOpen = false;
+let likedTracksCache = null;
 
 async function loadLibrary() {
   const res = await fetch('/api/ytm/status');
@@ -677,11 +690,11 @@ function playlistHTML(p) {
   const tracksHtml = open ? renderPlaylistTracks(p.id) : '';
   return `
     <div class="lib-playlist" id="libpl-${escHtml(p.id)}">
-      <div class="lib-playlist-header" onclick="togglePlaylist(${JSON.stringify(p.id)})">
+      <div class="lib-playlist-header" onclick="togglePlaylist(${escHtml(JSON.stringify(p.id))})">
         <span class="album-chevron ${open ? 'open' : ''}" id="libchev-${escHtml(p.id)}">▶</span>
         <span class="album-name" style="flex:1">${escHtml(p.title)}</span>
         <span class="album-count">${escHtml(count)}</span>
-        <button class="btn-primary btn-sm" style="margin-left:10px" onclick="event.stopPropagation(); downloadPlaylist(${JSON.stringify(p.id)})">↓ Download</button>
+        <button class="btn-primary btn-sm" style="margin-left:10px" onclick="event.stopPropagation(); downloadPlaylist(${escHtml(JSON.stringify(p.id))})">↓ Download</button>
       </div>
       <div class="lib-playlist-tracks" id="libtr-${escHtml(p.id)}" style="${open ? '' : 'display:none'}">${tracksHtml}</div>
     </div>`;
@@ -722,6 +735,25 @@ async function togglePlaylist(playlistId) {
       ytmPlaylistTracks[playlistId] = [];
     }
     tracksEl.innerHTML = renderPlaylistTracks(playlistId);
+  }
+}
+
+async function toggleLiked() {
+  likedOpen = !likedOpen;
+  document.getElementById('liked-chevron').classList.toggle('open', likedOpen);
+  const el = document.getElementById('liked-tracks');
+  el.style.display = likedOpen ? '' : 'none';
+  if (likedOpen && !likedTracksCache) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px 14px">Loading…</div>';
+    try {
+      const res = await fetch('/api/ytm/liked');
+      const data = await res.json();
+      likedTracksCache = data.tracks || [];
+    } catch {
+      likedTracksCache = [];
+    }
+    ytmPlaylistTracks['__liked__'] = likedTracksCache;
+    el.innerHTML = renderPlaylistTracks('__liked__');
   }
 }
 
