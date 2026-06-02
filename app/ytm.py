@@ -191,6 +191,28 @@ async def update_sync_config(body: dict):
     return cfg
 
 
+@router.get("/sync/status")
+async def get_sync_status():
+    if not _db_path:
+        return {"total": 0, "downloaded": 0}
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute("SELECT COUNT(*) FROM ytm_liked") as cur:
+            total = (await cur.fetchone())[0]
+        async with db.execute("SELECT COUNT(*) FROM ytm_liked WHERE downloaded_at IS NOT NULL") as cur:
+            downloaded = (await cur.fetchone())[0]
+    return {"total": total, "downloaded": downloaded}
+
+
+@router.delete("/sync/status")
+async def clear_sync_history():
+    if not _db_path:
+        raise HTTPException(503, "db not ready")
+    async with aiosqlite.connect(_db_path) as db:
+        await db.execute("DELETE FROM ytm_liked")
+        await db.commit()
+    return {"ok": True}
+
+
 @router.post("/sync/run")
 async def trigger_sync():
     if _ytm_client is None:
@@ -231,15 +253,11 @@ async def _run_sync():
                 if await cur.fetchone() is None:
                     title = t.get("title") or ""
                     artist = ", ".join(a["name"] for a in (t.get("artists") or []))
-                    await db.execute(
-                        "INSERT OR IGNORE INTO ytm_liked (video_id, title, artist, added_at) VALUES (?,?,?,?)",
-                        (vid, title, artist, time.time()),
-                    )
                     try:
                         await _enqueue_fn(f"https://music.youtube.com/watch?v={vid}")
                         await db.execute(
-                            "UPDATE ytm_liked SET downloaded_at=? WHERE video_id=?",
-                            (time.time(), vid),
+                            "INSERT OR IGNORE INTO ytm_liked (video_id, title, artist, added_at, downloaded_at) VALUES (?,?,?,?,?)",
+                            (vid, title, artist, time.time(), time.time()),
                         )
                         new_count += 1
                     except Exception as e:

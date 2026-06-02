@@ -1,11 +1,14 @@
 import asyncio
 import json
+import logging
 import os
 import shutil
 import time
 import uuid
 from pathlib import Path
 from typing import List, Set
+
+logging.basicConfig(level=logging.INFO)
 
 import aiosqlite
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
