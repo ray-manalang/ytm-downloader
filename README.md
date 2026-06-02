@@ -11,6 +11,8 @@ A self-hosted web app for downloading YouTube Music albums and playlists as high
 - Queue management — cancel pending or active downloads
 - Download history with error reporting
 - File browser grouped by album — delete individual tracks or entire folders
+- **YouTube Music library** — browse and download your playlists and liked songs directly from the app
+- **Auto-sync** — automatically download new liked songs on a configurable schedule
 - Dark mode UI, no build step, no external JS dependencies
 
 ## Output format
@@ -32,6 +34,7 @@ docker run -d \
   -v ytm_data:/data \
   -e DOWNLOADS_DIR=/share \
   -e DB_PATH=/data/downloads.db \
+  -e YTM_AUTH_PATH=/data/ytm_auth.json \
   raymanalang/ytm-downloader:latest
 ```
 
@@ -53,6 +56,7 @@ services:
     environment:
       DOWNLOADS_DIR: /share
       DB_PATH: /data/downloads.db
+      YTM_AUTH_PATH: /data/ytm_auth.json
       MAX_CONCURRENT_DOWNLOADS: "2"
 
 volumes:
@@ -64,9 +68,26 @@ volumes:
 HAOS's root filesystem is read-only. Use these volume paths:
 
 ```yaml
+services:
+  ytm-downloader:
+    image: raymanalang/ytm-downloader:latest
+    container_name: ytm-downloader
+    restart: unless-stopped
+    ports:
+      - "8503:8080"
+    volumes:
+      - /mnt/data/supervisor/share:/share
+      - /mnt/data/supervisor/share/cookies.txt:/cookies.txt
+      - ytm_data:/data
+    environment:
+      DOWNLOADS_DIR: /share
+      DB_PATH: /data/downloads.db
+      YTM_AUTH_PATH: /data/ytm_auth.json
+      MAX_CONCURRENT_DOWNLOADS: "2"
+      COOKIES_FILE: /cookies.txt
+
 volumes:
-  - /mnt/data/supervisor/share:/share
-  - ytm_data:/data
+  ytm_data:
 ```
 
 This maps the native HAOS `/share` directory into the container so downloaded files are accessible from other HA add-ons and the Samba share.
@@ -77,24 +98,43 @@ This maps the native HAOS `/share` directory into the container so downloaded fi
 |---|---|---|
 | `DOWNLOADS_DIR` | `./downloads` | Where yt-dlp saves files |
 | `DB_PATH` | `./data/downloads.db` | SQLite database path |
+| `YTM_AUTH_PATH` | `./data/ytm_auth.json` | YouTube Music credentials (written by the app on first auth) |
 | `MAX_CONCURRENT_DOWNLOADS` | `2` | Parallel download workers |
 | `COOKIES_FILE` | _(unset)_ | Path to a Netscape-format cookies.txt for age-restricted or authenticated downloads |
 
+## YouTube Music library integration
+
+The **Library** tab lets you browse and download from your YouTube Music account without leaving the app.
+
+### Connecting
+
+1. Open the Library tab and click **Connect YouTube Music**.
+2. In your browser, open YouTube Music, open DevTools (F12), go to the Network tab, and find any request to `music.youtube.com`.
+3. Right-click the request → **Copy → Copy request headers**, then paste into the app.
+4. The app saves credentials to `YTM_AUTH_PATH` — they persist across restarts.
+
+### What you get
+
+- **Liked Songs** — expandable list of all your liked tracks with per-track download buttons
+- **Playlists** — browse all your playlists, expand to see tracks, download individual tracks or the full playlist
+- **Auto-sync** — enable to automatically download new liked songs; configurable interval (15 min / 1 hr / 6 hrs / 24 hrs)
+
 ## Cookies (age-restricted videos)
 
-If you see _"Sign in to confirm your age"_ errors, export your YouTube cookies and mount them into the container:
+If you see _"Sign in to confirm your age"_ errors, export your YouTube cookies and mount them into the container.
 
-1. Install the [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) extension (Chrome) or equivalent for Firefox.
-2. Log in to YouTube Music in that browser, then export cookies for `youtube.com` — save as `cookies.txt`.
-3. Copy `cookies.txt` to a stable path on the host (e.g. `/mnt/data/supervisor/share/cookies.txt` on HAOS).
-4. Mount it and set the env var:
+**Using yt-dlp (easiest):**
 
-```yaml
-volumes:
-  - /mnt/data/supervisor/share/cookies.txt:/cookies.txt
-environment:
-  COOKIES_FILE: /cookies.txt
+```bash
+yt-dlp --cookies-from-browser chrome --cookies cookies.txt --skip-download "https://music.youtube.com"
 ```
+
+Then copy `cookies.txt` to a stable path on the host and mount it (see the Compose examples above). Mount **without `:ro`** — yt-dlp writes back to the file to refresh token expiry.
+
+**Using a browser extension:**
+
+1. Install [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) (Chrome) or equivalent for Firefox.
+2. Log in to YouTube Music, then export cookies for `youtube.com` in Netscape format.
 
 ## Local development
 
