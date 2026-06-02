@@ -19,6 +19,8 @@ _ytm_client = None
 _enqueue_fn = None
 _db_path = ""
 
+_AUTO_PLAYLISTS = {"Liked Music", "Episodes for Later"}
+
 
 def set_dependencies(enqueue_fn, db_path: str):
     global _enqueue_fn, _db_path
@@ -140,6 +142,7 @@ async def get_library():
         "playlists": [
             {"id": p["playlistId"], "title": p["title"], "count": p.get("count", 0)}
             for p in playlists
+            if p.get("title") not in _AUTO_PLAYLISTS
         ],
     }
 
