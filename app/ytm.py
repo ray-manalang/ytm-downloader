@@ -1,11 +1,14 @@
 import asyncio
 import json
+import logging
 import os
 import time
 from pathlib import Path
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException
+
+logger = logging.getLogger(__name__)
 
 YTM_AUTH_PATH = os.environ.get("YTM_AUTH_PATH", "./data/ytm_auth.json")
 _SYNC_CONFIG_PATH = str(Path(YTM_AUTH_PATH).parent / "ytm_sync.json")
@@ -198,18 +201,29 @@ async def trigger_sync():
 
 async def _run_sync():
     yt = _ytm_client
-    if yt is None or not _enqueue_fn or not _db_path:
+    if yt is None:
+        logger.warning("sync: skipped — not connected")
+        return
+    if not _enqueue_fn:
+        logger.warning("sync: skipped — enqueue function not set")
+        return
+    if not _db_path:
+        logger.warning("sync: skipped — db path not set")
         return
 
+    logger.info("sync: fetching liked songs")
     try:
         liked = await asyncio.get_event_loop().run_in_executor(
             None, lambda: yt.get_liked_songs(limit=2500)
         )
-    except Exception:
+    except Exception as e:
+        logger.error("sync: failed to fetch liked songs: %s", e)
         return
 
     tracks = [t for t in (liked.get("tracks") or []) if t.get("videoId")]
+    logger.info("sync: fetched %d liked songs", len(tracks))
 
+    new_count = 0
     async with aiosqlite.connect(_db_path) as db:
         for t in tracks:
             vid = t["videoId"]
@@ -227,10 +241,12 @@ async def _run_sync():
                             "UPDATE ytm_liked SET downloaded_at=? WHERE video_id=?",
                             (time.time(), vid),
                         )
-                    except Exception:
-                        pass
+                        new_count += 1
+                    except Exception as e:
+                        logger.error("sync: failed to enqueue %s: %s", vid, e)
         await db.commit()
 
+    logger.info("sync: enqueued %d new songs", new_count)
     cfg = _load_sync_config()
     cfg["last_run"] = time.time()
     _save_sync_config(cfg)
