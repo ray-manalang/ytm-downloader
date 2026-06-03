@@ -804,6 +804,36 @@ function renderPlaylistTracks(playlistId) {
     </div>`).join('');
 }
 
+function renderLikedTracks(tracks) {
+  if (!tracks) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">Loading…</div>';
+  if (!tracks.length) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">No tracks.</div>';
+  return tracks.map(t => `
+    <div class="lib-track-row">
+      <div class="lib-track-info">
+        <div class="lib-track-title">${escHtml(t.title)}</div>
+        ${t.artist ? `<div class="lib-track-artist">${escHtml(t.artist)}</div>` : ''}
+      </div>
+      <div class="lib-track-dur">${escHtml(t.duration || '')}</div>
+      ${t.synced ? `<span style="color:var(--accent);font-size:11px;font-weight:700;padding:0 4px" title="Already synced">✓</span>` : ''}
+      <button class="btn-ghost btn-sm" onclick="downloadTrack(${JSON.stringify(t.videoId)})" title="Download now">↓</button>
+      ${t.synced ? `<button class="btn-ghost btn-sm" onclick="resetTrackSync(${JSON.stringify(t.videoId)})" title="Reset sync — will re-download on next sync">↺</button>` : ''}
+    </div>`).join('');
+}
+
+async function resetTrackSync(videoId) {
+  try {
+    const res = await fetch(`/api/ytm/sync/status/${encodeURIComponent(videoId)}`, {method: 'DELETE'});
+    if (!res.ok) return;
+    if (likedTracksCache) {
+      const t = likedTracksCache.find(x => x.videoId === videoId);
+      if (t) {
+        t.synced = false;
+        document.getElementById('liked-tracks').innerHTML = renderLikedTracks(likedTracksCache);
+      }
+    }
+  } catch (e) {}
+}
+
 async function togglePlaylist(playlistId) {
   ytmPlaylistOpen[playlistId] = !ytmPlaylistOpen[playlistId];
   const chevEl = document.getElementById(`libchev-${playlistId}`);
@@ -842,7 +872,7 @@ async function toggleLiked() {
       likedTracksCache = [];
     }
     ytmPlaylistTracks['__liked__'] = likedTracksCache;
-    el.innerHTML = renderPlaylistTracks('__liked__');
+    el.innerHTML = renderLikedTracks(likedTracksCache);
   }
 }
 

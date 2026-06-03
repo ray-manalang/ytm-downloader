@@ -553,6 +553,16 @@ async def get_liked_tracks():
         except Exception as e:
             raise HTTPException(502, str(e))
         tracks = [_fmt_track(t) for t in (liked.get("tracks") or []) if t.get("videoId")]
+
+    if _db_path:
+        synced_ids: set = set()
+        async with aiosqlite.connect(_db_path) as db:
+            async with db.execute("SELECT video_id FROM ytm_liked WHERE downloaded_at IS NOT NULL") as cur:
+                async for row in cur:
+                    synced_ids.add(row[0])
+        for t in tracks:
+            t["synced"] = t.get("videoId") in synced_ids
+
     return {"tracks": tracks}
 
 
@@ -593,6 +603,16 @@ async def clear_sync_history():
         raise HTTPException(503, "db not ready")
     async with aiosqlite.connect(_db_path) as db:
         await db.execute("DELETE FROM ytm_liked")
+        await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/sync/status/{video_id}")
+async def reset_track_sync(video_id: str):
+    if not _db_path:
+        raise HTTPException(503, "db not ready")
+    async with aiosqlite.connect(_db_path) as db:
+        await db.execute("DELETE FROM ytm_liked WHERE video_id=?", (video_id,))
         await db.commit()
     return {"ok": True}
 
