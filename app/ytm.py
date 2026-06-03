@@ -184,27 +184,40 @@ def _tvhtml5_consume_continuation(yt_client, cont_token, tracks, limit):
                         cont_token = nxt
 
 
-def _tvhtml5_get_liked_tracks(yt_client, limit=2500):
-    """Fetch YouTube Music liked songs via TVHTML5 FEmusic_liked_videos."""
-    response = _tvhtml5_browse(yt_client, "FEmusic_liked_videos")
+def _get_liked_tracks(yt_client, limit=2500):
+    """
+    Fetch YouTube Music liked songs.
+    Tries Data API playlistId=LM first (YouTube Music Liked Music playlist).
+    Falls back to TVHTML5 FEmusic_liked_videos if LM returns nothing.
+    """
+    # Primary: Data API with Liked Music playlist (LM = YouTube Music liked songs only)
     try:
+        tracks = _data_api_get_playlist_tracks(yt_client, "LM", limit=limit)
+        if tracks:
+            logger.info("Liked tracks via Data API LM: %d songs", len(tracks))
+            return tracks
+        logger.info("Data API LM returned 0 items, falling back to TVHTML5")
+    except Exception as e:
+        logger.warning("Data API LM failed (%s), falling back to TVHTML5", e)
+
+    # Fallback: TVHTML5 FEmusic_liked_videos browse
+    try:
+        response = _tvhtml5_browse(yt_client, "FEmusic_liked_videos")
         sections = response["contents"]["tvBrowseRenderer"]["content"]["tvSecondaryNavRenderer"]["sections"]
         tabs = sections[0]["tvSecondaryNavSectionRenderer"]["tabs"]
     except (KeyError, IndexError, TypeError) as e:
         top_keys = list(response.get("contents", response).keys()) if isinstance(response, dict) else []
-        raise ValueError(f"Unexpected TVHTML5 liked response (contents keys: {top_keys}): {e}")
+        raise ValueError(f"TVHTML5 liked response unexpected (contents keys: {top_keys}): {e}")
 
     tracks = []
     grid = None
     reload_cont = None
-
     for tab in tabs:
         t = tab.get("tabRenderer", {})
         if t.get("selected") or t.get("title") == "Liked songs":
             surf = t.get("content", {}).get("tvSurfaceContentRenderer", {})
             grid = surf.get("content", {}).get("gridRenderer", {})
             if not grid:
-                # Tab has no inline content — fetch via reload continuation
                 reload_cont = (surf.get("continuation", {})
                                .get("reloadContinuationData", {}).get("continuation"))
             break
@@ -223,7 +236,7 @@ def _tvhtml5_get_liked_tracks(yt_client, limit=2500):
     elif reload_cont:
         _tvhtml5_consume_continuation(yt_client, reload_cont, tracks, limit)
 
-    logger.info("TVHTML5 liked tracks: fetched %d songs", len(tracks))
+    logger.info("TVHTML5 liked tracks: %d songs", len(tracks))
     return tracks[:limit]
 
 
@@ -531,7 +544,7 @@ async def get_liked_tracks():
     loop = asyncio.get_event_loop()
     if _is_oauth():
         try:
-            tracks = await loop.run_in_executor(None, lambda: _tvhtml5_get_liked_tracks(yt, limit=2500))
+            tracks = await loop.run_in_executor(None, lambda: _get_liked_tracks(yt, limit=2500))
         except Exception as e:
             raise HTTPException(502, str(e))
     else:
@@ -608,7 +621,7 @@ async def _run_sync():
     try:
         if _is_oauth():
             tracks = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: _tvhtml5_get_liked_tracks(yt, limit=2500)
+                None, lambda: _get_liked_tracks(yt, limit=2500)
             )
         else:
             liked = await asyncio.get_event_loop().run_in_executor(
