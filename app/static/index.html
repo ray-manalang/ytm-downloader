@@ -532,7 +532,7 @@ function renderFiles() {
         <div class="track-row">
           <div class="track-name">${escHtml(name)}</div>
           <div class="track-size">${fmtSize(t.size)}</div>
-          <button class="btn-danger btn-sm" onclick="deleteFile(${JSON.stringify(t.path)})">✕</button>
+          <button class="btn-danger btn-sm" onclick="deleteFile(${escHtml(JSON.stringify(t.path))})">✕</button>
         </div>`;
     }).join('');
 
@@ -800,7 +800,7 @@ function renderPlaylistTracks(playlistId) {
         ${t.artist ? `<div class="lib-track-artist">${escHtml(t.artist)}</div>` : ''}
       </div>
       <div class="lib-track-dur">${escHtml(t.duration || '')}</div>
-      <button class="btn-ghost btn-sm" onclick="downloadTrack(${JSON.stringify(t.videoId)})">↓</button>
+      <button class="btn-ghost btn-sm" onclick="downloadTrack('${t.videoId}')">↓</button>
     </div>`).join('');
 }
 
@@ -815,8 +815,8 @@ function renderLikedTracks(tracks) {
       </div>
       <div class="lib-track-dur">${escHtml(t.duration || '')}</div>
       ${t.synced ? `<span style="color:var(--accent);font-size:11px;font-weight:700;padding:0 4px" title="Already synced">✓</span>` : ''}
-      <button class="btn-ghost btn-sm" onclick="downloadTrack(${JSON.stringify(t.videoId)})" title="Download now">↓</button>
-      ${t.synced ? `<button class="btn-ghost btn-sm" onclick="resetTrackSync(${JSON.stringify(t.videoId)})" title="Reset sync — will re-download on next sync">↺</button>` : ''}
+      <button class="btn-ghost btn-sm" onclick="downloadTrack('${t.videoId}')" title="Download now">↓</button>
+      ${t.synced ? `<button class="btn-ghost btn-sm" onclick="resetTrackSync('${t.videoId}')" title="Reset sync — will re-download on next sync">↺</button>` : ''}
     </div>`).join('');
 }
 
