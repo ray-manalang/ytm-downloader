@@ -151,69 +151,94 @@
 </header>
 
 <div class="tabs">
-  <div class="tab active" data-tab="add" onclick="switchTab('add')">Add</div>
+  <div class="tab active" data-tab="library" onclick="switchTab('library')">Library</div>
+  <div class="tab" data-tab="add" onclick="switchTab('add')">Add</div>
   <div class="tab" data-tab="queue" onclick="switchTab('queue')">
     Queue <span class="badge" id="queueBadge" style="display:none"></span>
   </div>
   <div class="tab" data-tab="history" onclick="switchTab('history')">
     History <span class="badge warn" id="histBadge" style="display:none"></span>
   </div>
-  <div class="tab" data-tab="library" onclick="switchTab('library')">Library</div>
   <div class="tab" data-tab="files" onclick="switchTab('files')">Files</div>
 </div>
 
 <main>
-  <!-- ADD -->
-  <div class="panel active" id="panel-add">
-    <div class="add-box">
-      <label>YouTube Music URLs — one per line, playlists supported</label>
-      <textarea id="urlInput" placeholder="https://music.youtube.com/playlist?list=...&#10;https://music.youtube.com/playlist?list=..."></textarea>
-      <div class="add-actions">
-        <button class="btn-primary" id="downloadBtn" onclick="submitDownloads()">Download</button>
-        <button class="btn-ghost" onclick="document.getElementById('urlInput').value=''">Clear</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- QUEUE -->
-  <div class="panel" id="panel-queue">
-    <div class="card-list" id="queueList"></div>
-    <div class="empty" id="queueEmpty" style="display:none">
-      <div class="empty-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 32" width="52" height="42" aria-hidden="true">
-          <rect x="2"  y="10" width="8" height="12" rx="4" fill="#aaaaaa" opacity="0.25"/>
-          <rect x="16" y="6"  width="8" height="20" rx="4" fill="#aaaaaa" opacity="0.25"/>
-          <rect x="30" y="10" width="8" height="12" rx="4" fill="#aaaaaa" opacity="0.25"/>
-        </svg>
-      </div>
-      <p>No active downloads</p>
-    </div>
-  </div>
-
-  <!-- HISTORY -->
-  <div class="panel" id="panel-history">
-    <div class="card-list" id="histList"></div>
-    <div class="empty" id="histEmpty" style="display:none">
-      <div class="empty-icon">📋</div>
-      <p>No download history</p>
-    </div>
-  </div>
-
   <!-- LIBRARY -->
-  <div class="panel" id="panel-library">
-    <!-- Not connected -->
+  <div class="panel active" id="panel-library">
+    <!-- Not connected: OAuth setup -->
     <div id="libSetup">
-      <div class="add-box">
-        <label>Connect YouTube Music</label>
+      <!-- Step 1: enter credentials -->
+      <div id="oauthStep1" class="add-box">
+        <label>Connect YouTube Music via OAuth</label>
+        <p style="color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.6">
+          OAuth auth is permanent — unlike browser headers, it never expires unless you revoke it.
+          You need a Google Cloud OAuth client (type: <strong style="color:var(--text)">TV and Limited Input devices</strong>):
+        </p>
+        <ol style="color:var(--muted);font-size:13px;line-height:2;margin-bottom:14px;padding-left:20px">
+          <li>Go to <strong style="color:var(--text)">console.cloud.google.com</strong> → APIs &amp; Services → Library → enable <strong style="color:var(--text)">YouTube Data API v3</strong></li>
+          <li>Go to Credentials → Create Credentials → OAuth client ID → type: <strong style="color:var(--text)">TV and Limited Input devices</strong></li>
+          <li>Copy the Client ID and Client Secret below</li>
+        </ol>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div>
+            <label style="display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Client ID</label>
+            <input id="oauthClientId" type="text" placeholder="…apps.googleusercontent.com"
+              style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
+          </div>
+          <div>
+            <label style="display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Client Secret</label>
+            <input id="oauthClientSecret" type="password" placeholder="Client secret"
+              style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
+          </div>
+        </div>
+        <div class="add-actions" style="margin-top:14px">
+          <button class="btn-primary" id="oauthInitBtn" onclick="oauthInit()">Get Authorization Code</button>
+        </div>
+        <div id="oauthStep1Error" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+          <span style="color:var(--muted);font-size:12px">Or </span>
+          <a href="#" onclick="showBrowserAuth(); return false" style="color:var(--muted);font-size:12px">connect with browser headers</a>
+          <span style="color:var(--muted);font-size:12px"> (expires periodically)</span>
+        </div>
+      </div>
+
+      <!-- Step 2: authorize at Google -->
+      <div id="oauthStep2" class="add-box" style="display:none">
+        <label>Authorize at Google</label>
+        <p style="color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.6">
+          Open the link below, sign in to your Google account, and enter the code shown.
+        </p>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div>
+            <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Authorization URL</div>
+            <a id="oauthUrl" href="#" target="_blank" rel="noopener"
+              style="color:var(--info);font-size:13px;word-break:break-all"></a>
+          </div>
+          <div>
+            <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Enter this code</div>
+            <div id="oauthUserCode" style="font-size:24px;font-weight:700;letter-spacing:4px;color:var(--text);font-family:monospace"></div>
+          </div>
+        </div>
+        <div class="add-actions" style="margin-top:18px">
+          <button class="btn-primary" id="oauthCompleteBtn" onclick="oauthComplete()">I've Authorized — Connect</button>
+          <button class="btn-ghost" onclick="oauthCancel()">Cancel</button>
+        </div>
+        <div id="oauthStep2Error" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+      </div>
+
+      <!-- Browser headers fallback -->
+      <div id="browserAuthBox" class="add-box" style="display:none">
+        <label>Connect with Browser Headers</label>
         <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.5">
           Open <strong style="color:var(--text)">music.youtube.com</strong> in Chrome while logged in →
           DevTools (F12) → Network tab → click any request to music.youtube.com →
           right-click it → <strong style="color:var(--text)">Copy → Copy request headers</strong>.
           Paste the headers below.
         </p>
-        <textarea id="ytmHeaders" placeholder="Paste request headers here..." style="min-height:160px;font-size:12px;font-family:monospace"></textarea>
+        <textarea id="ytmHeaders" placeholder="Paste request headers here..." style="min-height:140px;font-size:12px;font-family:monospace"></textarea>
         <div class="add-actions">
           <button class="btn-primary" id="ytmConnectBtn" onclick="connectYTM()">Connect</button>
+          <button class="btn-ghost" onclick="showOAuthSetup()">← Back to OAuth</button>
         </div>
         <div id="ytmSetupError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
       </div>
@@ -224,6 +249,7 @@
       <div class="lib-connected-bar">
         <span class="lib-dot"></span>
         <span style="font-weight:600">Connected to YouTube Music</span>
+        <span id="authTypeBadge" style="font-size:11px;color:var(--muted);margin-left:6px"></span>
         <button class="btn-ghost btn-sm" style="margin-left:auto" onclick="disconnectYTM()">Disconnect</button>
       </div>
 
@@ -273,6 +299,42 @@
 
     <div class="empty" id="libLoading" style="display:none">
       <p style="color:var(--muted)">Loading…</p>
+    </div>
+  </div>
+
+  <!-- ADD -->
+  <div class="panel" id="panel-add">
+    <div class="add-box">
+      <label>YouTube Music URLs — one per line, playlists supported</label>
+      <textarea id="urlInput" placeholder="https://music.youtube.com/playlist?list=...&#10;https://music.youtube.com/playlist?list=..."></textarea>
+      <div class="add-actions">
+        <button class="btn-primary" id="downloadBtn" onclick="submitDownloads()">Download</button>
+        <button class="btn-ghost" onclick="document.getElementById('urlInput').value=''">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- QUEUE -->
+  <div class="panel" id="panel-queue">
+    <div class="card-list" id="queueList"></div>
+    <div class="empty" id="queueEmpty" style="display:none">
+      <div class="empty-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 32" width="52" height="42" aria-hidden="true">
+          <rect x="2"  y="10" width="8" height="12" rx="4" fill="#aaaaaa" opacity="0.25"/>
+          <rect x="16" y="6"  width="8" height="20" rx="4" fill="#aaaaaa" opacity="0.25"/>
+          <rect x="30" y="10" width="8" height="12" rx="4" fill="#aaaaaa" opacity="0.25"/>
+        </svg>
+      </div>
+      <p>No active downloads</p>
+    </div>
+  </div>
+
+  <!-- HISTORY -->
+  <div class="panel" id="panel-history">
+    <div class="card-list" id="histList"></div>
+    <div class="empty" id="histEmpty" style="display:none">
+      <div class="empty-icon">📋</div>
+      <p>No download history</p>
     </div>
   </div>
 
@@ -651,6 +713,18 @@ const ytmPlaylistOpen = {};    // playlistId -> bool
 let likedOpen = false;
 let likedTracksCache = null;
 
+function showOAuthSetup() {
+  document.getElementById('oauthStep1').style.display = '';
+  document.getElementById('oauthStep2').style.display = 'none';
+  document.getElementById('browserAuthBox').style.display = 'none';
+}
+
+function showBrowserAuth() {
+  document.getElementById('oauthStep1').style.display = 'none';
+  document.getElementById('oauthStep2').style.display = 'none';
+  document.getElementById('browserAuthBox').style.display = '';
+}
+
 async function loadLibrary() {
   const res = await fetch('/api/ytm/status');
   const data = await res.json();
@@ -658,6 +732,8 @@ async function loadLibrary() {
   document.getElementById('libSetup').style.display = ytmConnected ? 'none' : '';
   document.getElementById('libConnected').style.display = ytmConnected ? '' : 'none';
   if (ytmConnected) {
+    const badge = document.getElementById('authTypeBadge');
+    badge.textContent = data.auth_type === 'oauth' ? '(OAuth)' : '(browser headers)';
     await Promise.all([fetchLibraryData(), loadSyncConfig()]);
   }
 }
@@ -777,6 +853,64 @@ async function downloadTrack(videoId) {
   switchTab('queue');
 }
 
+async function oauthInit() {
+  const client_id = document.getElementById('oauthClientId').value.trim();
+  const client_secret = document.getElementById('oauthClientSecret').value.trim();
+  const errEl = document.getElementById('oauthStep1Error');
+  const btn = document.getElementById('oauthInitBtn');
+  errEl.textContent = '';
+  if (!client_id || !client_secret) { errEl.textContent = 'Both fields are required.'; return; }
+  btn.disabled = true;
+  btn.textContent = 'Getting code…';
+  try {
+    const res = await fetch('/api/ytm/setup/oauth/init', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({client_id, client_secret}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { errEl.textContent = data.detail || 'Failed to start OAuth flow.'; return; }
+    const link = document.getElementById('oauthUrl');
+    link.href = data.url;
+    link.textContent = data.url;
+    document.getElementById('oauthUserCode').textContent = data.user_code;
+    document.getElementById('oauthStep2Error').textContent = '';
+    document.getElementById('oauthStep1').style.display = 'none';
+    document.getElementById('oauthStep2').style.display = '';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Get Authorization Code';
+  }
+}
+
+async function oauthComplete() {
+  const errEl = document.getElementById('oauthStep2Error');
+  const btn = document.getElementById('oauthCompleteBtn');
+  errEl.textContent = '';
+  btn.disabled = true;
+  btn.textContent = 'Connecting…';
+  try {
+    const res = await fetch('/api/ytm/setup/oauth/complete', {method: 'POST'});
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 202) {
+      errEl.textContent = 'Not authorized yet — finish the Google sign-in, then try again.';
+      return;
+    }
+    if (!res.ok) { errEl.textContent = data.detail || 'Authorization failed.'; return; }
+    document.getElementById('oauthClientId').value = '';
+    document.getElementById('oauthClientSecret').value = '';
+    showOAuthSetup();
+    await loadLibrary();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "I've Authorized — Connect";
+  }
+}
+
+function oauthCancel() {
+  showOAuthSetup();
+}
+
 async function connectYTM() {
   const headers_raw = document.getElementById('ytmHeaders').value.trim();
   if (!headers_raw) return;
@@ -793,6 +927,7 @@ async function connectYTM() {
     });
     if (res.ok) {
       document.getElementById('ytmHeaders').value = '';
+      showOAuthSetup();
       await loadLibrary();
     } else {
       const data = await res.json().catch(() => ({}));
@@ -861,6 +996,7 @@ async function updateSyncConfig() {
   for (const d of (data.downloads || [])) downloads[d.id] = d;
   renderAll();
   connectWS();
+  loadLibrary();
 })();
 </script>
 </body>

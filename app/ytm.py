@@ -12,14 +12,18 @@ logger = logging.getLogger(__name__)
 
 YTM_AUTH_PATH = os.environ.get("YTM_AUTH_PATH", "./data/ytm_auth.json")
 _SYNC_CONFIG_PATH = str(Path(YTM_AUTH_PATH).parent / "ytm_sync.json")
+_OAUTH_CREDS_PATH = str(Path(YTM_AUTH_PATH).parent / "ytm_oauth_creds.json")
 
 router = APIRouter(prefix="/api/ytm")
 
 _ytm_client = None
 _enqueue_fn = None
 _db_path = ""
+_auth_type = None  # "browser" | "oauth" | None
 
 _AUTO_PLAYLISTS = {"Liked Music", "Episodes for Later"}
+
+_oauth_pending = None  # {client_id, client_secret, device_code, expires_at}
 
 
 def set_dependencies(enqueue_fn, db_path: str):
@@ -29,13 +33,25 @@ def set_dependencies(enqueue_fn, db_path: str):
 
 
 def on_startup():
-    global _ytm_client
-    if os.path.exists(YTM_AUTH_PATH):
-        try:
-            from ytmusicapi import YTMusic
+    global _ytm_client, _auth_type
+    if not os.path.exists(YTM_AUTH_PATH):
+        return
+    try:
+        from ytmusicapi import YTMusic
+        if os.path.exists(_OAUTH_CREDS_PATH):
+            with open(_OAUTH_CREDS_PATH) as f:
+                creds_data = json.load(f)
+            from ytmusicapi.auth.oauth import OAuthCredentials
+            oauth_creds = OAuthCredentials(creds_data["client_id"], creds_data["client_secret"])
+            _ytm_client = YTMusic(YTM_AUTH_PATH, oauth_credentials=oauth_creds)
+            _auth_type = "oauth"
+        else:
             _ytm_client = YTMusic(YTM_AUTH_PATH)
-        except Exception:
-            _ytm_client = None
+            _auth_type = "browser"
+    except Exception as e:
+        logger.warning("YTMusic init failed: %s", e)
+        _ytm_client = None
+        _auth_type = None
 
 
 def start_sync_task():
@@ -77,12 +93,94 @@ def _fmt_track(t: dict) -> dict:
 
 @router.get("/status")
 async def get_status():
-    return {"connected": _ytm_client is not None}
+    return {"connected": _ytm_client is not None, "auth_type": _auth_type}
+
+
+@router.post("/setup/oauth/init")
+async def oauth_init(body: dict):
+    global _oauth_pending
+    client_id = (body.get("client_id") or "").strip()
+    client_secret = (body.get("client_secret") or "").strip()
+    if not client_id or not client_secret:
+        raise HTTPException(400, "client_id and client_secret are required")
+
+    from ytmusicapi.auth.oauth import OAuthCredentials
+    try:
+        creds = OAuthCredentials(client_id, client_secret)
+        loop = asyncio.get_event_loop()
+        code = await loop.run_in_executor(None, creds.get_code)
+    except Exception as e:
+        raise HTTPException(400, f"Failed to start OAuth flow: {e}")
+
+    _oauth_pending = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "device_code": code["device_code"],
+        "expires_at": time.time() + code.get("expires_in", 300),
+    }
+
+    url = f"{code['verification_url']}?user_code={code['user_code']}"
+    return {"url": url, "user_code": code["user_code"], "expires_in": code.get("expires_in", 300)}
+
+
+@router.post("/setup/oauth/complete")
+async def oauth_complete():
+    global _ytm_client, _auth_type, _oauth_pending
+    if not _oauth_pending:
+        raise HTTPException(400, "No OAuth flow in progress. Call /setup/oauth/init first.")
+    if time.time() > _oauth_pending["expires_at"]:
+        _oauth_pending = None
+        raise HTTPException(400, "OAuth code expired. Please start over.")
+
+    from ytmusicapi.auth.oauth import OAuthCredentials, RefreshingToken
+    from ytmusicapi import YTMusic
+
+    creds = OAuthCredentials(_oauth_pending["client_id"], _oauth_pending["client_secret"])
+    try:
+        device_code = _oauth_pending["device_code"]
+        loop = asyncio.get_event_loop()
+        raw_token = await loop.run_in_executor(None, lambda: creds.token_from_code(device_code))
+    except Exception as e:
+        raise HTTPException(401, f"Authorization failed: {e}")
+
+    if "error" in raw_token:
+        err = raw_token.get("error", "")
+        if err == "authorization_pending":
+            raise HTTPException(202, "Authorization not yet complete. Try again in a moment.")
+        _oauth_pending = None
+        raise HTTPException(401, raw_token.get("error_description", err))
+
+    os.makedirs(os.path.dirname(YTM_AUTH_PATH) or ".", exist_ok=True)
+    ref_token = RefreshingToken(credentials=creds, **raw_token)
+    ref_token.update(ref_token.as_dict())
+    ref_token.local_cache = Path(YTM_AUTH_PATH)
+
+    with open(_OAUTH_CREDS_PATH, "w") as f:
+        json.dump({"client_id": _oauth_pending["client_id"], "client_secret": _oauth_pending["client_secret"]}, f)
+
+    try:
+        oauth_creds = OAuthCredentials(_oauth_pending["client_id"], _oauth_pending["client_secret"])
+        client = YTMusic(YTM_AUTH_PATH, oauth_credentials=oauth_creds)
+        await asyncio.get_event_loop().run_in_executor(None, lambda: client.get_library_playlists(limit=1))
+        _ytm_client = client
+        _auth_type = "oauth"
+    except Exception as e:
+        _ytm_client = None
+        _auth_type = None
+        for p in [YTM_AUTH_PATH, _OAUTH_CREDS_PATH]:
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
+        raise HTTPException(401, f"Authentication failed: {e}")
+
+    _oauth_pending = None
+    return {"connected": True}
 
 
 @router.post("/setup")
 async def setup_auth(body: dict):
-    global _ytm_client
+    global _ytm_client, _auth_type
     headers_raw = (body.get("headers_raw") or "").strip()
     if not headers_raw:
         raise HTTPException(400, "headers_raw is required")
@@ -102,8 +200,10 @@ async def setup_auth(body: dict):
             None, lambda: client.get_library_playlists(limit=1)
         )
         _ytm_client = client
+        _auth_type = "browser"
     except Exception as e:
         _ytm_client = None
+        _auth_type = None
         try:
             os.unlink(YTM_AUTH_PATH)
         except Exception:
@@ -115,9 +215,10 @@ async def setup_auth(body: dict):
 
 @router.delete("/setup")
 async def disconnect_ytm():
-    global _ytm_client
+    global _ytm_client, _auth_type
     _ytm_client = None
-    for p in [YTM_AUTH_PATH, _SYNC_CONFIG_PATH]:
+    _auth_type = None
+    for p in [YTM_AUTH_PATH, _SYNC_CONFIG_PATH, _OAUTH_CREDS_PATH]:
         try:
             if os.path.exists(p):
                 os.unlink(p)
