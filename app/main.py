@@ -198,6 +198,17 @@ async def _worker():
                         update["title"] = title
                     await db_update(dl_id, **update)
                     await broadcast({"type": "status", "id": dl_id, "status": "done", "title": title})
+                    if "music.youtube.com/watch" in url and "?v=" in url:
+                        vid = url.split("?v=", 1)[1].split("&")[0].split("#")[0]
+                        try:
+                            async with aiosqlite.connect(DB_PATH) as db:
+                                await db.execute(
+                                    "UPDATE ytm_liked SET downloaded_at=? WHERE video_id=? AND downloaded_at IS NULL",
+                                    (time.time(), vid),
+                                )
+                                await db.commit()
+                        except Exception:
+                            pass
             except Exception as exc:
                 err = str(exc)
                 try:

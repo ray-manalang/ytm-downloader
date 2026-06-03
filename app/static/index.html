@@ -654,7 +654,20 @@ function handleWS(msg) {
       downloads[id].status = msg.status;
       if (msg.title) downloads[id].title = msg.title;
       if (msg.error) downloads[id].error = msg.error;
-      if (msg.status === 'done') downloads[id].progress = 100;
+      if (msg.status === 'done') {
+        downloads[id].progress = 100;
+        const url = downloads[id].url || '';
+        const m = url.match(/[?&]v=([A-Za-z0-9_-]+)/);
+        if (m && url.includes('music.youtube.com') && likedTracksCache) {
+          const track = likedTracksCache.find(t => t.videoId === m[1]);
+          if (track && !track.synced) {
+            track.synced = true;
+            if (likedOpen) {
+              document.getElementById('liked-tracks').innerHTML = renderLikedTracks(likedTracksCache);
+            }
+          }
+        }
+      }
     }
   } else if (type === 'progress') {
     if (downloads[id]) {
