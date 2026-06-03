@@ -2,10 +2,12 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
 import aiosqlite
+import requests as _requests
 from fastapi import APIRouter, HTTPException
 
 logger = logging.getLogger(__name__)
@@ -21,9 +23,170 @@ _enqueue_fn = None
 _db_path = ""
 _auth_type = None  # "browser" | "oauth" | None
 
-_AUTO_PLAYLISTS = {"Liked Music", "Episodes for Later"}
+_AUTO_PLAYLISTS = {"Liked Music", "Episodes for Later", "New Episodes"}
 
 _oauth_pending = None  # {client_id, client_secret, device_code, expires_at}
+
+# ── TVHTML5 / Data API helpers (used for OAuth sessions) ─────────────────────
+
+_TVHTML5_CTX = {"clientName": "TVHTML5", "clientVersion": "7.20231206.13.00", "hl": "en"}
+
+
+def _tvhtml5_browse(yt_client, browse_id=None, continuation=None):
+    from ytmusicapi.constants import YTM_PARAMS_KEY
+    body = {"context": {"client": _TVHTML5_CTX, "user": {}}}
+    if continuation:
+        body["continuation"] = continuation
+    else:
+        body["browseId"] = browse_id
+    resp = _requests.post(
+        f"https://music.youtube.com/youtubei/v1/browse?alt=json{YTM_PARAMS_KEY}",
+        headers={
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0",
+            "accept": "*/*",
+            "content-type": "application/json",
+            "origin": "https://music.youtube.com",
+            "authorization": yt_client._token.as_auth(),
+            "X-Goog-Request-Time": str(int(time.time())),
+        },
+        json=body,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _tvhtml5_parse_tile(tile):
+    meta = tile.get("metadata", {}).get("tileMetadataRenderer", {})
+    title_runs = meta.get("title", {}).get("runs", [])
+    if not title_runs:
+        return None
+    title_text = title_runs[0].get("text", "")
+    browse_id = tile.get("onSelectCommand", {}).get("browseEndpoint", {}).get("browseId", "")
+    if not browse_id:
+        return None
+    playlist_id = browse_id[2:] if browse_id.startswith("VL") else browse_id
+    count = 0
+    lines = meta.get("lines", [])
+    if len(lines) > 1:
+        subtitle = (lines[1].get("lineRenderer", {}).get("items", [{}])[0]
+                    .get("lineItemRenderer", {}).get("text", {}).get("simpleText", ""))
+        m = re.search(r"(\d+)\s+(?:track|song|episode)", subtitle, re.I)
+        if m:
+            count = int(m.group(1))
+    return {"playlistId": playlist_id, "title": title_text, "count": count}
+
+
+def _tvhtml5_get_library(yt_client, limit=100):
+    response = _tvhtml5_browse(yt_client, "FEmusic_liked_playlists")
+    try:
+        sections = response["tvBrowseRenderer"]["content"]["tvSecondaryNavRenderer"]["sections"]
+        tabs = sections[0]["tvSecondaryNavSectionRenderer"]["tabs"]
+    except (KeyError, IndexError, TypeError):
+        return [], None
+
+    grid = None
+    for tab in tabs:
+        t = tab.get("tabRenderer", {})
+        if t.get("title") == "Playlists":
+            grid = (t.get("content", {}).get("tvSurfaceContentRenderer", {})
+                    .get("content", {}).get("gridRenderer", {}))
+            break
+    if not grid:
+        return [], None
+
+    playlists = []
+    liked_count = None
+
+    def _consume(items):
+        nonlocal liked_count
+        for item in items:
+            p = _tvhtml5_parse_tile(item.get("tileRenderer", {}))
+            if not p:
+                continue
+            if p["playlistId"] == "LM" or p["title"] == "Liked Music":
+                liked_count = p["count"]
+            playlists.append(p)
+
+    _consume(grid.get("items", []))
+
+    continuations = grid.get("continuations", [])
+    while continuations and len(playlists) < limit:
+        cont = continuations[0].get("nextContinuationData", {}).get("continuation")
+        if not cont:
+            break
+        cont_resp = _tvhtml5_browse(yt_client, continuation=cont)
+        cont_grid = cont_resp.get("continuationContents", {}).get("gridContinuation", {})
+        _consume(cont_grid.get("items", []))
+        continuations = cont_grid.get("continuations", [])
+
+    return playlists, liked_count
+
+
+def _data_api_get(yt_client, path, params):
+    resp = _requests.get(
+        f"https://www.googleapis.com/youtube/v3/{path}",
+        params=params,
+        headers={"Authorization": yt_client._token.as_auth()},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _data_api_get_liked_tracks(yt_client, limit=2500):
+    tracks = []
+    page_token = None
+    while len(tracks) < limit:
+        params = {"playlistId": "LL", "part": "snippet", "maxResults": min(50, limit - len(tracks))}
+        if page_token:
+            params["pageToken"] = page_token
+        data = _data_api_get(yt_client, "playlistItems", params)
+        for item in data.get("items", []):
+            snippet = item.get("snippet", {})
+            video_id = snippet.get("resourceId", {}).get("videoId")
+            if not video_id or video_id == "PLACEHOLDER":
+                continue
+            tracks.append({
+                "videoId": video_id,
+                "title": snippet.get("title", ""),
+                "artist": snippet.get("videoOwnerChannelTitle", ""),
+                "duration": None,
+                "album": None,
+            })
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+    return tracks
+
+
+def _data_api_get_playlist_tracks(yt_client, playlist_id, limit=None):
+    tracks = []
+    page_token = None
+    while True:
+        params = {"playlistId": playlist_id, "part": "snippet", "maxResults": 50}
+        if page_token:
+            params["pageToken"] = page_token
+        try:
+            data = _data_api_get(yt_client, "playlistItems", params)
+        except _requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                return []
+            raise
+        for item in data.get("items", []):
+            snippet = item.get("snippet", {})
+            video_id = snippet.get("resourceId", {}).get("videoId")
+            if not video_id or video_id == "PLACEHOLDER":
+                continue
+            tracks.append({
+                "videoId": video_id,
+                "title": snippet.get("title", ""),
+                "artist": snippet.get("videoOwnerChannelTitle", ""),
+                "duration": None,
+                "album": None,
+            })
+        page_token = data.get("nextPageToken")
+        if not page_token or (limit and len(tracks) >= limit):
+            break
+    return tracks[:limit] if limit else tracks
 
 
 def set_dependencies(enqueue_fn, db_path: str):
@@ -244,22 +407,27 @@ async def disconnect_ytm():
 async def get_library():
     yt = _get_client()
     loop = asyncio.get_event_loop()
-    try:
-        playlists = await loop.run_in_executor(None, lambda: yt.get_library_playlists(limit=100))
-    except Exception as e:
-        raise HTTPException(502, str(e))
-
-    try:
-        liked = await loop.run_in_executor(None, lambda: yt.get_liked_songs(limit=1))
-        liked_count = liked.get("trackCount") or len(liked.get("tracks", []))
-    except Exception:
-        liked_count = None
+    if _auth_type == "oauth":
+        try:
+            playlists_raw, liked_count = await loop.run_in_executor(None, lambda: _tvhtml5_get_library(yt, limit=100))
+        except Exception as e:
+            raise HTTPException(502, str(e))
+    else:
+        try:
+            playlists_raw = await loop.run_in_executor(None, lambda: yt.get_library_playlists(limit=100))
+        except Exception as e:
+            raise HTTPException(502, str(e))
+        try:
+            liked = await loop.run_in_executor(None, lambda: yt.get_liked_songs(limit=1))
+            liked_count = liked.get("trackCount") or len(liked.get("tracks", []))
+        except Exception:
+            liked_count = None
 
     return {
         "liked_count": liked_count,
         "playlists": [
             {"id": p["playlistId"], "title": p["title"], "count": p.get("count", 0)}
-            for p in playlists
+            for p in playlists_raw
             if p.get("title") not in _AUTO_PLAYLISTS
         ],
     }
@@ -270,28 +438,37 @@ async def get_library():
 @router.get("/playlist/{playlist_id}")
 async def get_playlist_tracks(playlist_id: str):
     yt = _get_client()
-    try:
-        playlist = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: yt.get_playlist(playlist_id, limit=None)
-        )
-    except Exception as e:
-        raise HTTPException(502, str(e))
-
-    tracks = [_fmt_track(t) for t in (playlist.get("tracks") or []) if t.get("videoId")]
-    return {"title": playlist.get("title"), "tracks": tracks}
+    loop = asyncio.get_event_loop()
+    if _auth_type == "oauth":
+        try:
+            tracks = await loop.run_in_executor(None, lambda: _data_api_get_playlist_tracks(yt, playlist_id))
+        except Exception as e:
+            raise HTTPException(502, str(e))
+        return {"title": None, "tracks": tracks}
+    else:
+        try:
+            playlist = await loop.run_in_executor(None, lambda: yt.get_playlist(playlist_id, limit=None))
+        except Exception as e:
+            raise HTTPException(502, str(e))
+        tracks = [_fmt_track(t) for t in (playlist.get("tracks") or []) if t.get("videoId")]
+        return {"title": playlist.get("title"), "tracks": tracks}
 
 
 @router.get("/liked")
 async def get_liked_tracks():
     yt = _get_client()
-    try:
-        liked = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: yt.get_liked_songs(limit=2500)
-        )
-    except Exception as e:
-        raise HTTPException(502, str(e))
-
-    tracks = [_fmt_track(t) for t in (liked.get("tracks") or []) if t.get("videoId")]
+    loop = asyncio.get_event_loop()
+    if _auth_type == "oauth":
+        try:
+            tracks = await loop.run_in_executor(None, lambda: _data_api_get_liked_tracks(yt, limit=2500))
+        except Exception as e:
+            raise HTTPException(502, str(e))
+    else:
+        try:
+            liked = await loop.run_in_executor(None, lambda: yt.get_liked_songs(limit=2500))
+        except Exception as e:
+            raise HTTPException(502, str(e))
+        tracks = [_fmt_track(t) for t in (liked.get("tracks") or []) if t.get("videoId")]
     return {"tracks": tracks}
 
 
@@ -358,14 +535,19 @@ async def _run_sync():
 
     logger.info("sync: fetching liked songs")
     try:
-        liked = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: yt.get_liked_songs(limit=2500)
-        )
+        if _auth_type == "oauth":
+            tracks = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: _data_api_get_liked_tracks(yt, limit=2500)
+            )
+        else:
+            liked = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: yt.get_liked_songs(limit=2500)
+            )
+            tracks = [t for t in (liked.get("tracks") or []) if t.get("videoId")]
     except Exception as e:
         logger.error("sync: failed to fetch liked songs: %s", e)
         return
 
-    tracks = [t for t in (liked.get("tracks") or []) if t.get("videoId")]
     logger.info("sync: fetched %d liked songs", len(tracks))
 
     new_count = 0
@@ -375,7 +557,7 @@ async def _run_sync():
             async with db.execute("SELECT 1 FROM ytm_liked WHERE video_id=?", (vid,)) as cur:
                 if await cur.fetchone() is None:
                     title = t.get("title") or ""
-                    artist = ", ".join(a["name"] for a in (t.get("artists") or []))
+                    artist = t.get("artist") or ", ".join(a["name"] for a in (t.get("artists") or []))
                     try:
                         await _enqueue_fn(f"https://music.youtube.com/watch?v={vid}")
                         await db.execute(
