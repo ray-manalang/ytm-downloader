@@ -262,7 +262,7 @@ async def get_library():
 
 @router.get("/debug")
 async def debug_oauth():
-    """Makes a raw HTTP request using the saved OAuth token and returns the full server response."""
+    """Tries multiple client contexts with the saved OAuth token to find one that works."""
     if not os.path.exists(YTM_AUTH_PATH):
         return {"error": "no auth file"}
     if not os.path.exists(_OAUTH_CREDS_PATH):
@@ -276,37 +276,48 @@ async def debug_oauth():
     from ytmusicapi.constants import YTM_PARAMS_KEY
 
     access_token = token_data.get("access_token", "")
-    expires_at = token_data.get("expires_at", 0)
     token_type = token_data.get("token_type", "Bearer")
-
-    resp = await asyncio.get_event_loop().run_in_executor(None, lambda: _requests.post(
-        f"https://music.youtube.com/youtubei/v1/browse?alt=json{YTM_PARAMS_KEY}",
-        headers={
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0",
-            "accept": "*/*",
-            "content-type": "application/json",
-            "origin": "https://music.youtube.com",
-            "authorization": f"{token_type} {access_token}",
-            "X-Goog-Request-Time": str(int(_time.time())),
-        },
-        json={
-            "browseId": "FEmusic_liked_playlists",
-            "context": {"client": {"clientName": "WEB_REMIX", "clientVersion": "1.20260603.01.00", "hl": "en"}, "user": {}},
-        },
-    ))
-
-    try:
-        body = resp.json()
-    except Exception:
-        body = resp.text[:2000]
-
-    return {
-        "status": resp.status_code,
-        "token_expires_at": expires_at,
-        "token_age_seconds": int(_time.time()) - (expires_at - 3600) if expires_at else None,
-        "access_token_prefix": access_token[:20] + "..." if access_token else "",
-        "response": body if resp.status_code >= 400 else {"top_level_keys": list(body.keys()) if isinstance(body, dict) else "not a dict"},
+    auth_header = f"{token_type} {access_token}"
+    base_url = f"https://music.youtube.com/youtubei/v1/browse?alt=json{YTM_PARAMS_KEY}"
+    base_headers = {
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0",
+        "accept": "*/*", "content-type": "application/json",
+        "origin": "https://music.youtube.com",
+        "authorization": auth_header,
+        "X-Goog-Request-Time": str(int(_time.time())),
     }
+
+    configs = [
+        ("WEB_REMIX + FEmusic_liked_playlists", {"clientName": "WEB_REMIX", "clientVersion": "1.20260603.01.00"}, "FEmusic_liked_playlists"),
+        ("WEB_REMIX + FEmusic_home",             {"clientName": "WEB_REMIX", "clientVersion": "1.20260603.01.00"}, "FEmusic_home"),
+        ("ANDROID_MUSIC + FEmusic_liked_playlists", {"clientName": "ANDROID_MUSIC", "clientVersion": "5.34.55", "androidSdkVersion": 30}, "FEmusic_liked_playlists"),
+        ("TVHTML5 + FEmusic_liked_playlists",    {"clientName": "TVHTML5", "clientVersion": "7.20231206.13.00"}, "FEmusic_liked_playlists"),
+    ]
+
+    def _post(client_ctx, browse_id):
+        return _requests.post(base_url, headers=base_headers, json={
+            "browseId": browse_id,
+            "context": {"client": {**client_ctx, "hl": "en"}, "user": {}},
+        })
+
+    results = {}
+    loop = asyncio.get_event_loop()
+    for label, client_ctx, browse_id in configs:
+        resp = await loop.run_in_executor(None, lambda c=client_ctx, b=browse_id: _post(c, b))
+        if resp.status_code < 400:
+            try:
+                body = resp.json()
+                results[label] = {"status": resp.status_code, "top_level_keys": list(body.keys())}
+            except Exception:
+                results[label] = {"status": resp.status_code}
+        else:
+            try:
+                err = resp.json().get("error", {})
+                results[label] = {"status": resp.status_code, "error": err.get("message"), "reason": (err.get("errors") or [{}])[0].get("reason")}
+            except Exception:
+                results[label] = {"status": resp.status_code}
+
+    return {"token_scope": token_data.get("scope"), "token_prefix": access_token[:20] + "...", "results": results}
 
 
 @router.get("/playlist/{playlist_id}")
