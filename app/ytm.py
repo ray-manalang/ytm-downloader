@@ -158,11 +158,11 @@ async def oauth_complete():
     with open(_OAUTH_CREDS_PATH, "w") as f:
         json.dump({"client_id": _oauth_pending["client_id"], "client_secret": _oauth_pending["client_secret"]}, f)
 
+    # Token exchange succeeded — that's sufficient proof of auth.
+    # Skip the API verification call; it can 400 for account/region reasons unrelated to auth.
     try:
         oauth_creds = OAuthCredentials(_oauth_pending["client_id"], _oauth_pending["client_secret"])
-        client = YTMusic(YTM_AUTH_PATH, oauth_credentials=oauth_creds)
-        await asyncio.get_event_loop().run_in_executor(None, lambda: client.get_library_playlists(limit=1))
-        _ytm_client = client
+        _ytm_client = YTMusic(YTM_AUTH_PATH, oauth_credentials=oauth_creds)
         _auth_type = "oauth"
     except Exception as e:
         _ytm_client = None
@@ -172,7 +172,7 @@ async def oauth_complete():
                 os.unlink(p)
             except Exception:
                 pass
-        raise HTTPException(401, f"Authentication failed: {e}")
+        raise HTTPException(401, f"Failed to initialize client: {e}")
 
     _oauth_pending = None
     return {"connected": True}
