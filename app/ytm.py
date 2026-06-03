@@ -195,12 +195,14 @@ def set_dependencies(enqueue_fn, db_path: str):
     _db_path = db_path
 
 
+def _is_oauth() -> bool:
+    return os.path.exists(_OAUTH_CREDS_PATH)
+
+
 def _patch_oauth_client(client) -> None:
-    # TV device OAuth tokens only work with TVHTML5 client context — WEB_REMIX returns 400.
-    # ytmusicapi's get_library_contents() already handles singleColumnBrowseResultsRenderer
-    # (TVHTML5's layout), so response parsing works without changes.
-    client.context["context"]["client"]["clientName"] = "TVHTML5"
-    client.context["context"]["client"]["clientVersion"] = "7.20231206.13.00"
+    # For OAuth we make all API calls directly (bypassing ytmusicapi), so don't patch
+    # the ytmusicapi context — leave it as WEB_REMIX so it never accidentally makes
+    # a TVHTML5 request it can't parse. Only add the API key to params.
     from ytmusicapi.constants import YTM_PARAMS_KEY
     if YTM_PARAMS_KEY not in client.params:
         client.params += YTM_PARAMS_KEY
@@ -407,7 +409,7 @@ async def disconnect_ytm():
 async def get_library():
     yt = _get_client()
     loop = asyncio.get_event_loop()
-    if _auth_type == "oauth":
+    if _is_oauth():
         try:
             playlists_raw, liked_count = await loop.run_in_executor(None, lambda: _tvhtml5_get_library(yt, limit=100))
         except Exception as e:
@@ -439,7 +441,7 @@ async def get_library():
 async def get_playlist_tracks(playlist_id: str):
     yt = _get_client()
     loop = asyncio.get_event_loop()
-    if _auth_type == "oauth":
+    if _is_oauth():
         try:
             tracks = await loop.run_in_executor(None, lambda: _data_api_get_playlist_tracks(yt, playlist_id))
         except Exception as e:
@@ -458,7 +460,7 @@ async def get_playlist_tracks(playlist_id: str):
 async def get_liked_tracks():
     yt = _get_client()
     loop = asyncio.get_event_loop()
-    if _auth_type == "oauth":
+    if _is_oauth():
         try:
             tracks = await loop.run_in_executor(None, lambda: _data_api_get_liked_tracks(yt, limit=2500))
         except Exception as e:
@@ -535,7 +537,7 @@ async def _run_sync():
 
     logger.info("sync: fetching liked songs")
     try:
-        if _auth_type == "oauth":
+        if _is_oauth():
             tracks = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: _data_api_get_liked_tracks(yt, limit=2500)
             )
