@@ -134,30 +134,68 @@ def _data_api_get(yt_client, path, params):
     return resp.json()
 
 
-def _data_api_get_liked_tracks(yt_client, limit=2500):
+def _tvhtml5_parse_song_tile(tile):
+    """Parse a TVHTML5 tileRenderer for an individual song (not a playlist)."""
+    meta = tile.get("metadata", {}).get("tileMetadataRenderer", {})
+    title_runs = meta.get("title", {}).get("runs", [])
+    if not title_runs:
+        return None
+    title_text = title_runs[0].get("text", "")
+    # videoId lives in onSelectCommand.watchEndpoint or title navigationEndpoint
+    video_id = (tile.get("onSelectCommand", {}).get("watchEndpoint", {}).get("videoId")
+                or title_runs[0].get("navigationEndpoint", {}).get("watchEndpoint", {}).get("videoId"))
+    if not video_id:
+        return None
+    lines = meta.get("lines", [])
+    artist = ""
+    if lines:
+        artist = (lines[0].get("lineRenderer", {}).get("items", [{}])[0]
+                  .get("lineItemRenderer", {}).get("text", {}).get("simpleText", ""))
+    return {"videoId": video_id, "title": title_text, "artist": artist, "duration": None, "album": None}
+
+
+def _tvhtml5_get_liked_tracks(yt_client, limit=2500):
+    """Fetch YouTube Music liked songs via TVHTML5 FEmusic_liked_videos."""
+    response = _tvhtml5_browse(yt_client, "FEmusic_liked_videos")
+    try:
+        sections = response["contents"]["tvBrowseRenderer"]["content"]["tvSecondaryNavRenderer"]["sections"]
+        tabs = sections[0]["tvSecondaryNavSectionRenderer"]["tabs"]
+    except (KeyError, IndexError, TypeError) as e:
+        top_keys = list(response.get("contents", response).keys()) if isinstance(response, dict) else []
+        raise ValueError(f"Unexpected TVHTML5 liked response (contents keys: {top_keys}): {e}")
+
+    # Find the selected "Liked songs" tab
+    grid = None
+    for tab in tabs:
+        t = tab.get("tabRenderer", {})
+        if t.get("selected") or t.get("title") == "Liked songs":
+            grid = (t.get("content", {}).get("tvSurfaceContentRenderer", {})
+                    .get("content", {}).get("gridRenderer", {}))
+            if grid:
+                break
+
     tracks = []
-    page_token = None
-    while len(tracks) < limit:
-        params = {"playlistId": "LL", "part": "snippet", "maxResults": min(50, limit - len(tracks))}
-        if page_token:
-            params["pageToken"] = page_token
-        data = _data_api_get(yt_client, "playlistItems", params)
-        for item in data.get("items", []):
-            snippet = item.get("snippet", {})
-            video_id = snippet.get("resourceId", {}).get("videoId")
-            if not video_id or video_id == "PLACEHOLDER":
-                continue
-            tracks.append({
-                "videoId": video_id,
-                "title": snippet.get("title", ""),
-                "artist": snippet.get("videoOwnerChannelTitle", ""),
-                "duration": None,
-                "album": None,
-            })
-        page_token = data.get("nextPageToken")
-        if not page_token:
-            break
-    return tracks
+
+    def _consume(items):
+        for item in items:
+            t = _tvhtml5_parse_song_tile(item.get("tileRenderer", {}))
+            if t:
+                tracks.append(t)
+
+    if grid:
+        _consume(grid.get("items", []))
+        continuations = grid.get("continuations", [])
+        while continuations and len(tracks) < limit:
+            cont = continuations[0].get("nextContinuationData", {}).get("continuation")
+            if not cont:
+                break
+            cont_resp = _tvhtml5_browse(yt_client, continuation=cont)
+            cont_grid = cont_resp.get("continuationContents", {}).get("gridContinuation", {})
+            _consume(cont_grid.get("items", []))
+            continuations = cont_grid.get("continuations", [])
+
+    logger.info("TVHTML5 liked tracks: fetched %d songs", len(tracks))
+    return tracks[:limit]
 
 
 def _data_api_get_playlist_tracks(yt_client, playlist_id, limit=None):
@@ -464,7 +502,7 @@ async def get_liked_tracks():
     loop = asyncio.get_event_loop()
     if _is_oauth():
         try:
-            tracks = await loop.run_in_executor(None, lambda: _data_api_get_liked_tracks(yt, limit=2500))
+            tracks = await loop.run_in_executor(None, lambda: _tvhtml5_get_liked_tracks(yt, limit=2500))
         except Exception as e:
             raise HTTPException(502, str(e))
     else:
@@ -541,7 +579,7 @@ async def _run_sync():
     try:
         if _is_oauth():
             tracks = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: _data_api_get_liked_tracks(yt, limit=2500)
+                None, lambda: _tvhtml5_get_liked_tracks(yt, limit=2500)
             )
         else:
             liked = await asyncio.get_event_loop().run_in_executor(
