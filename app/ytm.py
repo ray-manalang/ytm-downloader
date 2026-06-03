@@ -78,12 +78,12 @@ def _tvhtml5_parse_tile(tile):
 
 def _tvhtml5_get_library(yt_client, limit=100):
     response = _tvhtml5_browse(yt_client, "FEmusic_liked_playlists")
-    top_keys = list(response.keys()) if isinstance(response, dict) else []
     try:
-        sections = response["tvBrowseRenderer"]["content"]["tvSecondaryNavRenderer"]["sections"]
+        sections = response["contents"]["tvBrowseRenderer"]["content"]["tvSecondaryNavRenderer"]["sections"]
         tabs = sections[0]["tvSecondaryNavSectionRenderer"]["tabs"]
     except (KeyError, IndexError, TypeError) as e:
-        raise ValueError(f"Unexpected TVHTML5 response (top-level keys: {top_keys}): {e}")
+        top_keys = list(response.get("contents", response).keys()) if isinstance(response, dict) else []
+        raise ValueError(f"Unexpected TVHTML5 response (contents keys: {top_keys}): {e}")
 
     grid = None
     for tab in tabs:
