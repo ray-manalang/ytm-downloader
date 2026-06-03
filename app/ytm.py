@@ -32,6 +32,12 @@ def set_dependencies(enqueue_fn, db_path: str):
     _db_path = db_path
 
 
+def _patch_oauth_params(client) -> None:
+    from ytmusicapi.constants import YTM_PARAMS_KEY
+    if YTM_PARAMS_KEY not in client.params:
+        client.params += YTM_PARAMS_KEY
+
+
 def on_startup():
     global _ytm_client, _auth_type
     if not os.path.exists(YTM_AUTH_PATH):
@@ -44,6 +50,7 @@ def on_startup():
             from ytmusicapi.auth.oauth import OAuthCredentials
             oauth_creds = OAuthCredentials(creds_data["client_id"], creds_data["client_secret"])
             _ytm_client = YTMusic(YTM_AUTH_PATH, oauth_credentials=oauth_creds)
+            _patch_oauth_params(_ytm_client)
             _auth_type = "oauth"
         else:
             _ytm_client = YTMusic(YTM_AUTH_PATH)
@@ -163,6 +170,7 @@ async def oauth_complete():
     try:
         oauth_creds = OAuthCredentials(_oauth_pending["client_id"], _oauth_pending["client_secret"])
         _ytm_client = YTMusic(YTM_AUTH_PATH, oauth_credentials=oauth_creds)
+        _patch_oauth_params(_ytm_client)
         _auth_type = "oauth"
     except Exception as e:
         _ytm_client = None
@@ -233,11 +241,15 @@ async def get_library():
     loop = asyncio.get_event_loop()
     try:
         playlists = await loop.run_in_executor(None, lambda: yt.get_library_playlists(limit=100))
-        liked = await loop.run_in_executor(None, lambda: yt.get_liked_songs(limit=1))
     except Exception as e:
         raise HTTPException(502, str(e))
 
-    liked_count = liked.get("trackCount") or len(liked.get("tracks", []))
+    try:
+        liked = await loop.run_in_executor(None, lambda: yt.get_liked_songs(limit=1))
+        liked_count = liked.get("trackCount") or len(liked.get("tracks", []))
+    except Exception:
+        liked_count = None
+
     return {
         "liked_count": liked_count,
         "playlists": [
