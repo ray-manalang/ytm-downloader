@@ -154,6 +154,36 @@ def _tvhtml5_parse_song_tile(tile):
     return {"videoId": video_id, "title": title_text, "artist": artist, "duration": None, "album": None}
 
 
+def _tvhtml5_consume_continuation(yt_client, cont_token, tracks, limit):
+    """Follow a TVHTML5 continuation token, consuming song tiles into tracks."""
+    while cont_token and len(tracks) < limit:
+        resp = _tvhtml5_browse(yt_client, continuation=cont_token)
+        cont_token = None
+        # Grid continuation (paginated grid)
+        grid_cont = resp.get("continuationContents", {}).get("gridContinuation", {})
+        if grid_cont:
+            for item in grid_cont.get("items", []):
+                t = _tvhtml5_parse_song_tile(item.get("tileRenderer", {}))
+                if t:
+                    tracks.append(t)
+            nxt = grid_cont.get("continuations", [{}])[0].get("nextContinuationData", {})
+            cont_token = nxt.get("continuation")
+            continue
+        # onResponseReceivedActions (list-style append)
+        for action in resp.get("onResponseReceivedActions", []):
+            items = action.get("appendContinuationItemsAction", {}).get("continuationItems", [])
+            for item in items:
+                t = _tvhtml5_parse_song_tile(item.get("tileRenderer", {}))
+                if t:
+                    tracks.append(t)
+                # next continuation lives inside a continuationItemRenderer
+                if "continuationItemRenderer" in item:
+                    nxt = (item["continuationItemRenderer"].get("continuationEndpoint", {})
+                           .get("continuationCommand", {}).get("token"))
+                    if nxt:
+                        cont_token = nxt
+
+
 def _tvhtml5_get_liked_tracks(yt_client, limit=2500):
     """Fetch YouTube Music liked songs via TVHTML5 FEmusic_liked_videos."""
     response = _tvhtml5_browse(yt_client, "FEmusic_liked_videos")
@@ -164,35 +194,34 @@ def _tvhtml5_get_liked_tracks(yt_client, limit=2500):
         top_keys = list(response.get("contents", response).keys()) if isinstance(response, dict) else []
         raise ValueError(f"Unexpected TVHTML5 liked response (contents keys: {top_keys}): {e}")
 
-    # Find the selected "Liked songs" tab
+    tracks = []
     grid = None
+    reload_cont = None
+
     for tab in tabs:
         t = tab.get("tabRenderer", {})
         if t.get("selected") or t.get("title") == "Liked songs":
-            grid = (t.get("content", {}).get("tvSurfaceContentRenderer", {})
-                    .get("content", {}).get("gridRenderer", {}))
-            if grid:
-                break
+            surf = t.get("content", {}).get("tvSurfaceContentRenderer", {})
+            grid = surf.get("content", {}).get("gridRenderer", {})
+            if not grid:
+                # Tab has no inline content — fetch via reload continuation
+                reload_cont = (surf.get("continuation", {})
+                               .get("reloadContinuationData", {}).get("continuation"))
+            break
 
-    tracks = []
-
-    def _consume(items):
-        for item in items:
+    def _consume_grid(g):
+        for item in g.get("items", []):
             t = _tvhtml5_parse_song_tile(item.get("tileRenderer", {}))
             if t:
                 tracks.append(t)
+        nxt = g.get("continuations", [{}])[0].get("nextContinuationData", {}).get("continuation")
+        if nxt and len(tracks) < limit:
+            _tvhtml5_consume_continuation(yt_client, nxt, tracks, limit)
 
     if grid:
-        _consume(grid.get("items", []))
-        continuations = grid.get("continuations", [])
-        while continuations and len(tracks) < limit:
-            cont = continuations[0].get("nextContinuationData", {}).get("continuation")
-            if not cont:
-                break
-            cont_resp = _tvhtml5_browse(yt_client, continuation=cont)
-            cont_grid = cont_resp.get("continuationContents", {}).get("gridContinuation", {})
-            _consume(cont_grid.get("items", []))
-            continuations = cont_grid.get("continuations", [])
+        _consume_grid(grid)
+    elif reload_cont:
+        _tvhtml5_consume_continuation(yt_client, reload_cont, tracks, limit)
 
     logger.info("TVHTML5 liked tracks: fetched %d songs", len(tracks))
     return tracks[:limit]

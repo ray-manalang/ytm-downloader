@@ -421,7 +421,7 @@ function renderList(listId, emptyId, items, isQueue) {
 }
 
 function cardHTML(d, isQueue) {
-  const title = d.title || d.url;
+  const title = d.title || 'Starting…';
   const statusClass = 'status-' + d.status;
   const statusLabel = d.status;
   const pct = d.progress || 0;
