@@ -293,6 +293,10 @@
             </select>
             <span id="lastSyncTime" style="margin-left:4px"></span>
           </div>
+          <div class="lib-sync-row" style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
+            <span style="color:var(--muted);font-size:12px;flex:1">Reset to re-download all liked songs on next sync</span>
+            <button class="btn-ghost btn-sm" onclick="clearSyncHistory()">Reset sync history</button>
+          </div>
         </div>
       </div>
     </div>
@@ -987,6 +991,11 @@ async function updateSyncConfig() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({enabled, interval_minutes}),
   });
+}
+
+async function clearSyncHistory() {
+  if (!confirm('Reset sync history? All liked songs will be re-downloaded on the next sync.')) return;
+  await fetch('/api/ytm/sync/status', {method: 'DELETE'});
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
