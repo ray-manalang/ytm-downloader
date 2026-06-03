@@ -260,6 +260,55 @@ async def get_library():
     }
 
 
+@router.get("/debug")
+async def debug_oauth():
+    """Makes a raw HTTP request using the saved OAuth token and returns the full server response."""
+    if not os.path.exists(YTM_AUTH_PATH):
+        return {"error": "no auth file"}
+    if not os.path.exists(_OAUTH_CREDS_PATH):
+        return {"error": "not oauth — only useful for OAuth debugging"}
+
+    with open(YTM_AUTH_PATH) as f:
+        token_data = json.load(f)
+
+    import time as _time
+    import requests as _requests
+    from ytmusicapi.constants import YTM_PARAMS_KEY
+
+    access_token = token_data.get("access_token", "")
+    expires_at = token_data.get("expires_at", 0)
+    token_type = token_data.get("token_type", "Bearer")
+
+    resp = await asyncio.get_event_loop().run_in_executor(None, lambda: _requests.post(
+        f"https://music.youtube.com/youtubei/v1/browse?alt=json{YTM_PARAMS_KEY}",
+        headers={
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0",
+            "accept": "*/*",
+            "content-type": "application/json",
+            "origin": "https://music.youtube.com",
+            "authorization": f"{token_type} {access_token}",
+            "X-Goog-Request-Time": str(int(_time.time())),
+        },
+        json={
+            "browseId": "FEmusic_liked_playlists",
+            "context": {"client": {"clientName": "WEB_REMIX", "clientVersion": "1.20260603.01.00", "hl": "en"}, "user": {}},
+        },
+    ))
+
+    try:
+        body = resp.json()
+    except Exception:
+        body = resp.text[:2000]
+
+    return {
+        "status": resp.status_code,
+        "token_expires_at": expires_at,
+        "token_age_seconds": int(_time.time()) - (expires_at - 3600) if expires_at else None,
+        "access_token_prefix": access_token[:20] + "..." if access_token else "",
+        "response": body if resp.status_code >= 400 else {"top_level_keys": list(body.keys()) if isinstance(body, dict) else "not a dict"},
+    }
+
+
 @router.get("/playlist/{playlist_id}")
 async def get_playlist_tracks(playlist_id: str):
     yt = _get_client()
