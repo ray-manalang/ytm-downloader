@@ -12,6 +12,7 @@ A self-hosted web app for downloading YouTube Music albums and playlists as high
 - Download history with error reporting
 - File browser grouped by album — delete individual tracks or entire folders
 - **YouTube Music library** — browse and download your playlists and liked songs directly from the app
+- **OAuth authentication** — connect once via Google OAuth; never re-authenticate unless you explicitly revoke access
 - **Auto-sync** — automatically download new liked songs on a configurable schedule
 - Dark mode UI, no build step, no external JS dependencies
 
@@ -104,14 +105,31 @@ This maps the native HAOS `/share` directory into the container so downloaded fi
 
 ## YouTube Music library integration
 
-The **Library** tab lets you browse and download from your YouTube Music account without leaving the app.
+The **Library** tab (default) lets you browse and download from your YouTube Music account.
 
-### Connecting
+### Connecting via OAuth (recommended)
 
-1. Open the Library tab and click **Connect YouTube Music**.
-2. In your browser, open YouTube Music, open DevTools (F12), go to the Network tab, and find any request to `music.youtube.com`.
-3. Right-click the request → **Copy → Copy request headers**, then paste into the app.
-4. The app saves credentials to `YTM_AUTH_PATH` — they persist across restarts.
+OAuth is permanent — the refresh token never expires unless you revoke it in your Google account.
+
+**One-time Google Cloud setup:**
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) → APIs & Services → Library → enable **YouTube Data API v3**
+2. Go to Credentials → Create Credentials → OAuth client ID → type: **TV and Limited Input devices**
+3. Copy the Client ID and Client Secret
+
+**In the app:**
+1. Open the Library tab → enter your Client ID and Client Secret → click **Get Authorization Code**
+2. Visit the URL shown, sign in to your Google account, and enter the displayed code
+3. Click **I've Authorized — Connect**
+
+Credentials are saved to the `ytm_data` volume and survive container restarts and re-deploys.
+
+### Connecting via browser headers (fallback)
+
+If you prefer not to set up a Google Cloud project, you can connect with browser request headers instead. These expire periodically when Google invalidates your browser session.
+
+1. Open YouTube Music in Chrome while logged in
+2. Open DevTools (F12) → Network tab → click any request to `music.youtube.com`
+3. Right-click → **Copy → Copy request headers**, then paste into the app
 
 ### What you get
 

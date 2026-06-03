@@ -87,9 +87,11 @@ Single-process FastAPI app. No test suite.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/ytm/status` | Check connection status |
-| POST | `/api/ytm/setup` | Authenticate via pasted request headers |
-| DELETE | `/api/ytm/setup` | Disconnect and delete credentials |
+| GET | `/api/ytm/status` | Check connection status + `auth_type` ("oauth"\|"browser"\|null) |
+| POST | `/api/ytm/setup/oauth/init` | Start OAuth device flow — returns `url`, `user_code` |
+| POST | `/api/ytm/setup/oauth/complete` | Complete OAuth flow, saves token |
+| POST | `/api/ytm/setup` | Authenticate via pasted browser request headers (fallback) |
+| DELETE | `/api/ytm/setup` | Disconnect and delete all credentials |
 
 ### YouTube Music browse (`ytm.py`)
 
@@ -99,7 +101,7 @@ Single-process FastAPI app. No test suite.
 | GET | `/api/ytm/playlist/{id}` | All tracks in a playlist |
 | GET | `/api/ytm/liked` | All liked songs (up to 2500) |
 
-Auto-generated YTM playlists ("Liked Music", "Episodes for Later") are filtered out of the `/api/ytm/library` response.
+Auto-generated YTM playlists ("Liked Music", "Episodes for Later", "New Episodes") are filtered out of the `/api/ytm/library` response.
 
 ### Auto-sync (`ytm.py`)
 
@@ -132,16 +134,40 @@ Auto-generated YTM playlists ("Liked Music", "Episodes for Later") are filtered 
 
 ## YouTube Music integration (`app/ytm.py`)
 
-Authentication uses the `ytmusicapi` library with browser-header auth. Credentials are saved to `YTM_AUTH_PATH` on first setup and loaded on startup.
+Two auth modes are supported. OAuth is preferred — the refresh token never expires.
+
+### OAuth auth (preferred)
+
+Uses Google's TV device code flow (`ytmusicapi.auth.oauth`). Credentials saved as:
+- `YTM_AUTH_PATH` — OAuth token JSON (`access_token`, `refresh_token`, `expires_at`, etc.)
+- `$(dirname YTM_AUTH_PATH)/ytm_oauth_creds.json` — `{client_id, client_secret}`
+
+Auth mode is detected at runtime via `_is_oauth()` = `os.path.exists(_OAUTH_CREDS_PATH)`.
+
+**Critical OAuth constraint — TV tokens require TVHTML5 client context:**
+- TV device OAuth tokens are rejected (HTTP 400) by the YouTube Music internal API when using `WEB_REMIX` client context
+- All OAuth API calls use direct HTTP requests with `clientName: "TVHTML5"` context, bypassing ytmusicapi's own request path
+- **Never patch ytmusicapi's context to TVHTML5** — if ytmusicapi makes any request with TVHTML5 context it gets a response it can't parse
+- TVHTML5 library response path: `response["contents"]["tvBrowseRenderer"]["content"]["tvSecondaryNavRenderer"]["sections"][0]["tvSecondaryNavSectionRenderer"]["tabs"]`
+
+**OAuth API implementations (in `ytm.py`):**
+- `_tvhtml5_browse()` — raw TVHTML5 browse request using `yt_client._token.as_auth()`
+- `_tvhtml5_get_library()` — parses TVHTML5 playlists response; liked count from "Liked Music" tile subtitle
+- `_data_api_get_liked_tracks()` — YouTube Data API v3 `playlistItems?playlistId=LL`
+- `_data_api_get_playlist_tracks()` — YouTube Data API v3 `playlistItems?playlistId=PLxxx`
+
+### Browser header auth (fallback)
+
+User copies request headers from browser DevTools and pastes them in. Credentials saved to `YTM_AUTH_PATH` in ytmusicapi's browser header format. Works but sessions expire when Google invalidates cookies.
 
 ### Auto-sync flow
 1. `start_sync_task()` is called at startup (from `main.py`)
 2. `_sync_loop()` runs as a background asyncio task, sleeping between runs per the configured interval
-3. Each run calls `yt.get_liked_songs(limit=2500)`, diffs against `ytm_liked`, and enqueues any new tracks via the injected `_enqueue_fn`
+3. Each run fetches liked songs (TVHTML5/Data API for OAuth, ytmusicapi for browser), diffs against `ytm_liked`, and enqueues new tracks via `_enqueue_fn`
 4. Sync config (`enabled`, `interval_minutes`) is persisted to `ytm_sync.json` alongside the auth file
 
 ### Key constraint
-All content must be music-only. Never surface or enqueue YouTube video content. The "Episodes for Later" podcast playlist is filtered at the API layer.
+All content must be music-only. Never surface or enqueue YouTube video content. The "Episodes for Later", "New Episodes", and "Liked Music" auto-playlists are filtered at the API layer.
 
 ## Key yt-dlp settings — do not change without explicit approval
 
@@ -164,7 +190,7 @@ The DB `title` column stores the **album/playlist name** (from `playlist_title` 
 
 ## Frontend SPA (`app/static/index.html`)
 
-Single-file, no build step. Five tabs: **Add**, **Queue**, **History**, **Library**, **Files**.
+Single-file, no build step. Five tabs: **Library** (default), **Add**, **Queue**, **History**, **Files**.
 
 Key JS state:
 - `downloads` — map of id → download object (source of truth for queue/history cards)
