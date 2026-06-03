@@ -200,10 +200,21 @@ async def _worker():
                     await broadcast({"type": "status", "id": dl_id, "status": "done", "title": title})
             except Exception as exc:
                 err = str(exc)
-                await db_update(dl_id, status="error", error=err)
-                await broadcast({"type": "status", "id": dl_id, "status": "error", "error": err})
+                try:
+                    await db_update(dl_id, status="error", error=err)
+                    await broadcast({"type": "status", "id": dl_id, "status": "error", "error": err})
+                except Exception:
+                    pass
             finally:
                 _active_cancels.pop(dl_id, None)
+        except Exception as e:
+            logger.error("worker: unhandled error for %s: %s", dl_id, e)
+            _active_cancels.pop(dl_id, None)
+            try:
+                await db_update(dl_id, status="error", error=str(e))
+                await broadcast({"type": "status", "id": dl_id, "status": "error", "error": str(e)})
+            except Exception:
+                pass
         finally:
             _download_queue.task_done()
 

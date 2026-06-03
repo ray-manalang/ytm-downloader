@@ -634,24 +634,35 @@ async def _run_sync():
 
     logger.info("sync: fetched %d liked songs", len(tracks))
 
-    new_count = 0
+    # Phase 1: read-only — find which tracks are new (no write lock held)
+    to_enqueue = []
     async with aiosqlite.connect(_db_path) as db:
         for t in tracks:
             vid = t["videoId"]
             async with db.execute("SELECT 1 FROM ytm_liked WHERE video_id=?", (vid,)) as cur:
                 if await cur.fetchone() is None:
-                    title = t.get("title") or ""
-                    artist = t.get("artist") or ", ".join(a["name"] for a in (t.get("artists") or []))
-                    try:
-                        await _enqueue_fn(f"https://music.youtube.com/watch?v={vid}")
-                        await db.execute(
-                            "INSERT OR IGNORE INTO ytm_liked (video_id, title, artist, added_at, downloaded_at) VALUES (?,?,?,?,?)",
-                            (vid, title, artist, time.time(), time.time()),
-                        )
-                        new_count += 1
-                    except Exception as e:
-                        logger.error("sync: failed to enqueue %s: %s", vid, e)
-        await db.commit()
+                    to_enqueue.append(t)
+
+    logger.info("sync: %d new songs to enqueue (of %d fetched)", len(to_enqueue), len(tracks))
+
+    # Phase 2: enqueue + record each in its own small transaction so the
+    # write lock is released before _enqueue_fn opens a competing connection
+    new_count = 0
+    for t in to_enqueue:
+        vid = t["videoId"]
+        title = t.get("title") or ""
+        artist = t.get("artist") or ", ".join(a["name"] for a in (t.get("artists") or []))
+        try:
+            await _enqueue_fn(f"https://music.youtube.com/watch?v={vid}")
+            async with aiosqlite.connect(_db_path) as db:
+                await db.execute(
+                    "INSERT OR IGNORE INTO ytm_liked (video_id, title, artist, added_at, downloaded_at) VALUES (?,?,?,?,?)",
+                    (vid, title, artist, time.time(), time.time()),
+                )
+                await db.commit()
+            new_count += 1
+        except Exception as e:
+            logger.error("sync: failed to enqueue %s: %s", vid, e)
 
     logger.info("sync: enqueued %d new songs", new_count)
     cfg = _load_sync_config()

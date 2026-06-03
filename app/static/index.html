@@ -615,14 +615,23 @@ async function removeDownload(id) {
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
-let ws, wsRetry;
+let ws, wsRetry, wsEverOpened = false;
 
 function connectWS() {
   clearTimeout(wsRetry);
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws`);
 
-  ws.onopen = () => document.getElementById('wsDot').className = 'ws-dot connected';
+  ws.onopen = () => {
+    document.getElementById('wsDot').className = 'ws-dot connected';
+    if (wsEverOpened) {
+      fetch('/api/downloads').then(r => r.json()).then(data => {
+        for (const d of (data.downloads || [])) downloads[d.id] = d;
+        renderAll();
+      }).catch(() => {});
+    }
+    wsEverOpened = true;
+  };
 
   ws.onclose = () => {
     document.getElementById('wsDot').className = 'ws-dot';
