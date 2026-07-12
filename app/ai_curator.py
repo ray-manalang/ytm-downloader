@@ -102,7 +102,9 @@ def prompt_to_intent(prompt: str, facets: dict, controlled_genres: List[str]) ->
         "You are a music librarian. Convert the user's request into a filter over THEIR library. "
         "Only reference genres, artists, and years that plausibly exist in the library described below. "
         "Genres MUST come from the controlled vocabulary. Prefer match=any with a few genre/decade rules "
-        "for mood-style requests. Set limit to the number of tracks the user asks for, else 30. "
+        "for mood-style requests. If the request implies a time period or era (e.g. '80s', 'classic rock', "
+        "'hippie/Woodstock era', 'oldies'), also add year/decade rules to focus on it. "
+        "Set limit to the number of tracks the user asks for, else 30. "
         "Values are strings ('1980' for a decade, '1985' for a year).\n\n"
         f"Controlled genres: {', '.join(controlled_genres)}\n"
         f"Genres present in the library: {genres}\n"
@@ -138,11 +140,16 @@ def rerank(prompt: str, candidates: List[dict], target: int) -> List[int]:
         meta = " · ".join(x for x in [c.get("genre"), str(c.get("year")) if c.get("year") else None] if x)
         lines.append(f"{i}: {c.get('artist','')} — {c.get('title','')}" + (f"  [{meta}]" if meta else ""))
     system = (
-        f"Curate a playlist of up to {target} tracks from the candidates for the user's request. "
-        "Pick the best fits and order them for good flow (best first). Drop poor fits. "
-        "Spread the selection across many different artists — avoid clustering; use at most about "
-        "two tracks per artist unless the request is specifically about one artist. "
-        "Return only the indices of chosen candidates, in order."
+        "You are curating a playlist from a candidate list for the user's request. "
+        "Include ONLY tracks that genuinely fit what the request asks for — its mood, era, style, or theme. "
+        f"Return AT MOST {target} tracks, but quality over quantity: {target} is a ceiling, NOT a goal. "
+        "It is much better to return a short list of true fits than to pad the list to reach a number. "
+        "If only a handful of candidates genuinely fit, return only those few. Never include a track just to "
+        "fill the count, and never include one you are unsure about — when in doubt, leave it out. "
+        "The candidate list is in arbitrary order; do NOT let its ordering influence your choices. "
+        "Order the chosen tracks for good flow (best first), and spread them across many different artists — "
+        "avoid clustering; use at most about two tracks per artist unless the request is specifically about one artist. "
+        "Return only the indices of the tracks you choose, in order."
     )
     user = f"Request: {prompt}\n\nCandidates:\n" + "\n".join(lines)
     out = _structured(_client(), system, user, _RERANK_SCHEMA, max_tokens=2048)

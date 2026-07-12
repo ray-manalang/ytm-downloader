@@ -408,19 +408,25 @@ async def create_ai_playlist(body: dict):
     # Diversify so a prolific artist doesn't dominate the 150 Claude sees.
     candidates = _diversify_by_artist(candidates)[:150]
 
-    # Stage 2: optional Claude re-rank / curate.
+    # Stage 2: Claude re-rank / curate. The model returns ONLY genuine fits (may be
+    # far fewer than `target`) — respect that count; never pad back up from the broad
+    # candidate pool (that's what dumped non-fitting filler onto the end of the list).
     selected = candidates
     if candidates:
         cand_meta = [{"artist": c.get("artist"), "title": _display_title(c.get("path", "")),
                       "album": c.get("album"), "genre": c.get("genre"), "year": c.get("year")}
                      for c in candidates]
+        rerank_ok = True
         try:
             order = await loop.run_in_executor(None, lambda: ai_curator.rerank(prompt, cand_meta, target))
         except Exception:
-            order = []
-        selected = [candidates[i] for i in order] if order else candidates
-    # Cap per artist — unless the user explicitly asked for one artist.
-    selected = selected[:target] if artist_specific else _cap_per_artist(selected, target, candidates, AI_MAX_PER_ARTIST)
+            order, rerank_ok = [], False
+        # Only fall back to the raw candidate list on a genuine re-rank FAILURE — an
+        # empty selection means "nothing here fits", which we honor rather than pad.
+        selected = candidates if not rerank_ok else [candidates[i] for i in order]
+    # Cap per artist (prune only — backfill=[] so we never re-add non-fitting tracks),
+    # unless the user explicitly asked for one artist.
+    selected = selected[:target] if artist_specific else _cap_per_artist(selected, target, [], AI_MAX_PER_ARTIST)
 
     name = ((intent.get("name") or f"AI: {prompt}").strip())[:80] or "AI playlist"
     spec = {"source": "ai", "prompt": prompt, "intent": intent,
