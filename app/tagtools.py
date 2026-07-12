@@ -455,20 +455,28 @@ def _parse_stored_genre(genre_str: Optional[str]) -> List[str]:
 
 
 def run_genre_review(tracks: List[dict], use_online: bool, progress_cb, should_cancel,
-                     online_cap: int = 120, online_budget_s: float = 90.0) -> dict:
+                     online_cap: int = 120, online_budget_s: float = 90.0,
+                     llm_resolver=None, llm_cap: int = 400) -> dict:
     """Propose a canonical genre per artist. Read-only — writes nothing.
 
     ``tracks`` are ``library_tracks`` rows (path/artist/albumartist/genre). For each
     artist group the canonical genre is: the curated map → else the dominant genre(s)
-    among the group's tracks → else (optional) a MusicBrainz lookup → else unresolved.
-    Sole-``Holiday`` tracks are excluded from the vote and preserved. Returns only
-    the ACTIONABLE artists (changes>0 or unresolved) to keep the payload small.
+    among the group's tracks → else (optional) a MusicBrainz lookup → else (optional)
+    a Claude batch lookup via ``llm_resolver`` → else unresolved. Sole-``Holiday``
+    tracks are excluded from the vote and preserved; an artist whose ONLY tracks are
+    sole-Holiday has nothing to change and is reported as ``holiday_only`` (not a real
+    unresolved — neither MusicBrainz nor Claude is consulted for it). Returns only the
+    ACTIONABLE artists (changes>0 or still-unresolved) to keep the payload small.
 
     The online (MusicBrainz) phase is doubly bounded — at most ``online_cap`` lookups
     AND at most ``online_budget_s`` seconds of wall-clock — because each lookup is a
     rate-limited (~1.1s) pair of network requests, so an unbounded run over a library
     full of untagged/soundtrack artists would appear to hang. Artists left over once a
-    bound trips fall through to ``unresolved`` and can be handled from the review table.
+    bound trips fall through to ``unresolved``.
+
+    ``llm_resolver`` (optional) is a callable ``names -> {name: [genres]}`` (wired to
+    Claude by the caller). It runs ONCE, batched, over the artists still unresolved
+    after local + MusicBrainz resolution — so it augments rather than replaces those.
     """
     groups: dict = {}
     for t in tracks:
@@ -481,8 +489,9 @@ def run_genre_review(tracks: List[dict], use_online: bool, progress_cb, should_c
     online_used = 0
     online_started = time.monotonic()
     online_budget_hit = False
-    out_artists = []
-    total_changes = unresolved = 0
+    records = []                # every artist's record, in scan order
+    unresolved_records = []     # (record, non-holiday track_genres) still needing a genre
+    total_changes = unresolved = holiday_only = 0
     done = 0
 
     for key, group in sorted(groups.items()):
@@ -511,6 +520,10 @@ def run_genre_review(tracks: List[dict], use_online: bool, progress_cb, should_c
             top = max(vote.values())
             canonical = [g for g, c in vote.items() if c == top]
             source = "majority"
+        elif not track_genres:
+            # Only sole-Holiday tracks → nothing to resolve or change (Holiday is
+            # preserved). Not a real unresolved; skip MusicBrainz/Claude for it.
+            source = "holiday_only"
         elif use_online and online_used < online_cap and not online_budget_hit:
             if time.monotonic() - online_started > online_budget_s:
                 online_budget_hit = True  # stop hitting the network; rest go unresolved
@@ -524,29 +537,55 @@ def run_genre_review(tracks: List[dict], use_online: bool, progress_cb, should_c
         changes = sum(1 for g in track_genres if g != canonical) if canonical else 0
         if canonical:
             total_changes += changes
+        elif source == "holiday_only":
+            holiday_only += 1
         else:
             unresolved += 1
 
-        if changes > 0 or source == "unresolved":
-            out_artists.append({
-                "artist": key,
-                "key": low,
-                "canonical": canonical,
-                "source": source,
-                "track_count": len(group),
-                "changes": changes,
-                "holiday_preserved": holiday_preserved,
-                "current_top": vote.most_common(3),
-            })
+        rec = {
+            "artist": key,
+            "key": low,
+            "canonical": canonical,
+            "source": source,
+            "track_count": len(group),
+            "changes": changes,
+            "holiday_preserved": holiday_preserved,
+            "current_top": vote.most_common(3),
+        }
+        records.append(rec)
+        if source == "unresolved":
+            unresolved_records.append((rec, list(track_genres)))
 
         done += 1
         progress_cb({"done": done, "total": total, "current_file": key, "action": "review"})
 
+    # ── Claude augmentation: one batched pass over the still-unresolved artists ──
+    llm_used = 0
+    if llm_resolver and unresolved_records and not should_cancel():
+        names = [rec["artist"] for rec, _ in unresolved_records][:llm_cap]
+        try:
+            resolved = llm_resolver(names) or {}
+        except Exception:
+            resolved = {}
+        by_low = {(k or "").lower(): v for k, v in resolved.items()}
+        for rec, tgs in unresolved_records:
+            gens = normalize_genre(by_low.get(rec["key"]) or [])
+            if gens:
+                rec["canonical"] = gens
+                rec["source"] = "llm"
+                rec["changes"] = sum(1 for g in tgs if g != gens)
+                total_changes += rec["changes"]
+                unresolved -= 1
+                llm_used += 1
+
+    out_artists = [r for r in records if r["changes"] > 0 or r["source"] == "unresolved"]
     out_artists.sort(key=lambda a: (a["source"] != "unresolved", -a["changes"]))
     return {
         "total_artists": total,
         "artists_with_changes": sum(1 for a in out_artists if a["changes"] > 0),
         "unresolved": unresolved,
+        "holiday_only": holiday_only,
+        "llm_lookups": llm_used,
         "total_changes": total_changes,
         "used_online": use_online,
         "online_lookups": online_used,

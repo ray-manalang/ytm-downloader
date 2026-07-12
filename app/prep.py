@@ -24,6 +24,7 @@ from .converter import AAC_BITRATE, run_conversion
 from . import tagtools
 from . import enrich as enrich_module
 from . import playlists as playlists_module
+from . import ai_curator
 
 logger = logging.getLogger(__name__)
 
@@ -231,9 +232,16 @@ async def _prep_worker():
                 elif jtype == "review":
                     rows = await _fetch_library_tracks()
                     use_online = bool(job_spec["settings"].get("use_online"))
+                    # Optional Claude augmentation for still-unresolved artists —
+                    # key-gated (degrades to no-op if ANTHROPIC_API_KEY/SDK absent).
+                    llm_resolver = None
+                    if job_spec["settings"].get("use_llm") and ai_curator.is_enabled():
+                        llm_resolver = lambda names: ai_curator.genres_for_artists(
+                            names, tagtools.CONTROLLED_GENRES)
                     summary = await _loop.run_in_executor(
                         None, lambda: tagtools.run_genre_review(
-                            rows, use_online, progress_cb, cancel_ev.is_set)
+                            rows, use_online, progress_cb, cancel_ev.is_set,
+                            llm_resolver=llm_resolver)
                     )
                 elif jtype == "unify":
                     rows = await _fetch_library_tracks()
@@ -321,6 +329,7 @@ async def prep_config():
         "ipod_dir": IPOD_DIR,
         "aac_bitrate": AAC_BITRATE,
         "max_concurrent": MAX_CONCURRENT_CONVERSIONS,
+        "ai_enabled": ai_curator.is_enabled(),
     }
 
 
@@ -412,7 +421,8 @@ async def start_genre_review(body: dict):
             (count,) = await cur.fetchone()
     if not count:
         raise HTTPException(400, "No indexed tracks — run Audit first.")
-    settings = {"use_online": bool(body.get("use_online"))}
+    settings = {"use_online": bool(body.get("use_online")),
+                "use_llm": bool(body.get("use_llm"))}
     return await _create_and_enqueue("review", MUSIC_DIR or "", "", settings)
 
 

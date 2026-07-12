@@ -136,6 +136,66 @@ def prompt_to_intent(prompt: str, facets: dict, controlled_genres: List[str]) ->
     return intent
 
 
+# ── Artist genre resolution (augments MusicBrainz in the genre-review step) ──
+
+_ARTIST_GENRES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "artists": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "genres": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["name", "genres"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["artists"],
+    "additionalProperties": False,
+}
+
+
+def genres_for_artists(artists: List[str], controlled_genres: List[str],
+                       chunk: int = 80) -> dict:
+    """Ask Claude for each artist's primary genre(s), constrained to the controlled
+    vocabulary. Returns {artist_name: [genres]} (genres may be empty when genuinely
+    unknown). Batched — one call per `chunk` artists — since a genre-review can leave
+    many unresolved. The caller still normalizes the result against the vocabulary."""
+    names = [a for a in (artists or []) if a and a.strip()]
+    if not names:
+        return {}
+    vocab = ", ".join(controlled_genres)
+    system = (
+        "You are a music expert. For each artist, give their PRIMARY genre(s) — the "
+        "one or two that best classify their catalog overall. Choose ONLY from this "
+        "controlled vocabulary; use the exact spelling; never invent a genre:\n"
+        f"{vocab}\n\n"
+        "Return 1–2 genres per artist. Do NOT use 'Holiday' as an artist's genre even "
+        "for artists known for Christmas songs — give their non-holiday primary genre. "
+        "If you genuinely do not recognize an artist, return an empty genres array for "
+        "them rather than guessing."
+    )
+    client = _client()
+    out: dict = {}
+    for i in range(0, len(names), max(1, chunk)):
+        batch = names[i:i + max(1, chunk)]
+        user = "Artists:\n" + "\n".join(f"- {n}" for n in batch)
+        try:
+            data = _structured(client, system, user, _ARTIST_GENRES_SCHEMA, max_tokens=4096)
+        except Exception:
+            continue
+        for row in data.get("artists", []):
+            nm = (row.get("name") or "").strip()
+            gs = [g for g in (row.get("genres") or []) if isinstance(g, str)]
+            if nm:
+                out[nm] = gs
+    return out
+
+
 # ── Stage 2: re-rank / curate candidates against the original prompt ──
 
 _RERANK_SCHEMA = {

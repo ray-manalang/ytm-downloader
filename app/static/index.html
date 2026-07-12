@@ -465,6 +465,10 @@
             <input type="checkbox" id="reviewOnline" style="width:15px;height:15px;accent-color:var(--accent)">
             Look up unknown artists online (MusicBrainz — slower)
           </label>
+          <label id="reviewLLMLabel" style="display:none;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
+            <input type="checkbox" id="reviewLLM" style="width:15px;height:15px;accent-color:var(--accent)">
+            Use Claude for still-unknown artists (one batched call)
+          </label>
         </div>
         <div id="reviewError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
         <div class="step-extra" id="reviewResult"></div>
@@ -1482,6 +1486,9 @@ async function loadConvert() {
       if (cfg.music_dir && !document.getElementById('libDir').value)
         document.getElementById('libDir').value = cfg.music_dir;
       document.getElementById('convBitrateNote').textContent = `AAC ${cfg.aac_bitrate}`;
+      // Claude genre-resolution option only appears when ANTHROPIC_API_KEY is set.
+      const llmLabel = document.getElementById('reviewLLMLabel');
+      if (llmLabel) llmLabel.style.display = cfg.ai_enabled ? 'flex' : 'none';
       prepConfigLoaded = true;
     } catch {}
   }
@@ -1762,6 +1769,8 @@ async function rollbackClean(id) {
 // ── Genre review + unify ─────────────────────────────────────────────────────
 async function startReview() {
   const use_online = document.getElementById('reviewOnline').checked;
+  const llmEl = document.getElementById('reviewLLM');
+  const use_llm = !!(llmEl && llmEl.checked);
   const errEl = document.getElementById('reviewError');
   errEl.textContent = '';
   const btn = document.getElementById('reviewBtn');
@@ -1769,7 +1778,7 @@ async function startReview() {
   try {
     const res = await fetch('/api/prep/genres/review', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({use_online}),
+      body: JSON.stringify({use_online, use_llm}),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { errEl.textContent = data.detail || 'Failed to start review.'; }
@@ -1792,12 +1801,19 @@ function renderReviewTable(s) {
   if (!s) { el.innerHTML = ''; return; }
   const artists = s.artists || [];
   if (!artists.length) {
+    const holidayBit = s.holiday_only
+      ? ` (${s.holiday_only} holiday-only artist${s.holiday_only === 1 ? '' : 's'} kept as-is — their only tracks are Christmas songs, deliberately preserved)`
+      : '';
     el.innerHTML = `<div style="border-top:1px solid var(--border);padding-top:14px;color:var(--muted);font-size:13px">
-      Reviewed ${s.total_artists || 0} artists — nothing to change. Everything is already consistent. 🎉</div>`;
+      Reviewed ${s.total_artists || 0} artists — nothing to change. Everything is already consistent 🎉${holidayBit}</div>`;
     return;
   }
   const onlineNote = s.used_online
     ? `<span style="color:var(--muted)"> · ${s.online_lookups || 0} online lookups${s.online_capped ? ' (capped)' : ''}</span>` : '';
+  const llmNote = s.llm_lookups
+    ? `<span style="color:var(--muted)"> · ${s.llm_lookups} resolved by Claude</span>` : '';
+  const holidayNote = s.holiday_only
+    ? `<span style="color:var(--muted)"> · ${s.holiday_only} holiday-only (no change)</span>` : '';
   const rows = artists.map((a, i) => {
     const cur = (a.current_top || []).map(([g, c]) => `${escHtml(g || '∅')}·${c}`).join(', ') || '—';
     const proposed = (a.canonical || []).join(', ');
@@ -1824,7 +1840,7 @@ function renderReviewTable(s) {
   el.innerHTML = `
     <div style="border-top:1px solid var(--border);padding-top:14px">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
-        <span style="font-size:13px"><strong>${artists.length}</strong> <span style="color:var(--muted)">artists to review · ${s.total_changes || 0} track changes · ${s.unresolved || 0} unresolved${onlineNote}</span></span>
+        <span style="font-size:13px"><strong>${artists.length}</strong> <span style="color:var(--muted)">artists to review · ${s.total_changes || 0} track changes · ${s.unresolved || 0} unresolved${onlineNote}${llmNote}${holidayNote}</span></span>
         <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;cursor:pointer;margin-left:auto">
           <input type="checkbox" id="revSelectAll" checked onchange="revToggleAll(this.checked)" style="accent-color:var(--accent)"> all</label>
         <button class="btn-primary btn-sm" onclick="applyGenres()">Apply Selected</button>
