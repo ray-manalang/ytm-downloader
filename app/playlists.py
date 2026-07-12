@@ -539,6 +539,47 @@ async def regenerate(pid: str):
     return {"id": pid, "track_count": gen["track_count"], "written": gen["written"], "updated_at": now}
 
 
+async def regenerate_all_auto() -> int:
+    """Rewrite the .m3u(s) for every auto-refresh playlist against the current index.
+    Called after library/mirror-changing prep jobs and by the nightly refresh."""
+    async with aiosqlite.connect(_db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM playlists WHERE auto_refresh=1") as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+    now = time.time()
+    n = 0
+    for row in rows:
+        pub = _row_public(row)
+        try:
+            gen = await _generate(row["name"], pub["spec"], pub["targets"])
+        except Exception:
+            continue
+        async with aiosqlite.connect(_db_path) as db:
+            await db.execute("UPDATE playlists SET track_count=?, updated_at=? WHERE id=?",
+                             (gen["track_count"], now, row["id"]))
+            await db.commit()
+        n += 1
+    return n
+
+
+def start_refresh_task():
+    """Nightly regeneration of auto-refresh playlists (called from main.startup)."""
+    async def _loop():
+        while True:
+            await asyncio.sleep(24 * 3600)
+            try:
+                await regenerate_all_auto()
+            except Exception:
+                pass
+    asyncio.create_task(_loop())
+
+
+@router.post("/regenerate-all")
+async def regenerate_all_endpoint():
+    n = await regenerate_all_auto()
+    return {"regenerated": n}
+
+
 @router.delete("/{pid}")
 async def delete_playlist(pid: str):
     row = await _get_row(pid)

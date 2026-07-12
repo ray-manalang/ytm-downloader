@@ -18,6 +18,7 @@ A self-hosted music-library tool. It started as a YouTube Music downloader and i
 - **Tag cleanup** — audit your library, normalize genres to a controlled vocabulary, and fill missing album artists; every change is one-click reversible, and new downloads land normalized
 - **Smart playlists** — build genre/decade/year/artist rules and Music Monster keeps a matching `.m3u` in sync for Sonos / Music Assistant, the iPod mirror, or both; also import YouTube Music playlists (missing tracks are queued to download)
 - **AI playlists** — describe a vibe and Claude builds it from your library (optional; set `ANTHROPIC_API_KEY`)
+- **BPM & energy analysis** — analyze your library so smart playlists can filter by tempo and energy; playlists auto-refresh nightly and after library changes
 - Dark mode UI, no build step, no external JS dependencies
 
 ## Output format
@@ -159,6 +160,8 @@ The **Prep** tab has three tools over your music library (`MUSIC_DIR`):
 **Audit** (read-only) scans the library and reports the genre distribution, how many tracks need a genre fix or are missing an album artist, a per-format size breakdown, and any *unmapped genres* — raw genre strings that don't map to the controlled vocabulary yet, so you know what to add to `app/data/genres.json`.
 
 **Clean Tags** normalizes genres to a 25-value controlled vocabulary (splitting compound tags, dropping junk like `Music` or decade tags) and fills missing album artists (`Various Artists` for compilation folders). It writes tags **in place**, so mount the library **read-write** for this. Every change is recorded, and each completed clean job has a one-click **Rollback** that restores the original tags exactly. New downloads are normalized automatically via a post-download hook.
+
+**Analyze BPM & Energy** runs a one-time (resumable) librosa pass over your library, storing each track's tempo (BPM) and a 0–100 energy score — so smart playlists can add `BPM` and `Energy` rules (e.g. "BPM between 120 and 140"). It's slow (~1–2s/track, more over a network mount), skips already-analyzed files, and is safe to run overnight. Smart playlists auto-regenerate nightly and after library-changing operations.
 
 **Genre Completion & Unify** proposes one consistent genre per artist — from a curated artist→genre map, the majority of each artist's existing tags, and (optionally) a MusicBrainz lookup for unknown artists. You get an editable review table (adjust or fill in any proposal), and applying it unifies every artist's tracks to the approved genre. A track tagged only `Holiday` is always preserved, and the whole apply is reversible via **Rollback**.
 

@@ -36,6 +36,7 @@ Single-process FastAPI app. No test suite.
 | `app/prep.py` | iPod-Prep orchestration + `/api/prep/*` router — separate prep queue/worker pool; dispatches convert/audit/tags/review/unify jobs |
 | `app/playlists.py` | Smart-playlist rule engine over `library_tracks` + M3U writer (relative paths) + `/api/playlists/*` router |
 | `app/ai_curator.py` | AI playlist curation via Claude (Anthropic SDK) — two-stage prompt→intent→re-rank; isolates the key + degrades cleanly |
+| `app/enrich.py` | BPM + energy analysis via librosa — populates `library_tracks.bpm/energy`; lazy import, isolated + degrades cleanly |
 | `app/static/index.html` | Single-file dark-mode SPA — all JS inline, no build step, no external deps |
 | `app/static/logo.svg` | App icon (also used as browser favicon) |
 
@@ -130,6 +131,7 @@ Auto-generated YTM playlists ("Liked Music", "Episodes for Later", "New Episodes
 | POST | `/api/prep/convert` | Start a FLAC→AAC mirror job (`source_dir`, `output_dir`, `downsample_hires` optional) |
 | POST | `/api/prep/audit` | Scan the library read-only → genre distribution, missing album-artist, formats, unmapped genres; populates `library_tracks` |
 | POST | `/api/prep/tags` | Clean job — normalize genres + fill album-artist **in place** (requires a writable library); records `prep_changes` |
+| POST | `/api/prep/enrich` | Analyze BPM + energy (librosa) → `library_tracks.bpm/energy`; resumable (skips already-enriched); 400 if librosa unavailable |
 | POST | `/api/prep/genres/review` | Review job — propose a canonical genre per artist from `library_tracks` (`use_online` opt-in MusicBrainz); needs an Audit first |
 | GET | `/api/prep/genres/latest` | Most recent completed review summary (the proposal table) |
 | POST | `/api/prep/genres/apply` | Unify job — apply an approved `{artist_key: [genres]}` map in place; records `prep_changes` |
@@ -138,7 +140,11 @@ Auto-generated YTM playlists ("Liked Music", "Episodes for Later", "New Episodes
 | GET | `/api/prep/jobs` | List all prep jobs |
 | DELETE | `/api/prep/jobs/{id}` | Cancel a running/pending job or remove a finished one |
 
-Prep jobs run on a **separate** `_prep_queue` + worker pool (`MAX_CONCURRENT_CONVERSIONS`), independent of the download queue. WebSocket message types: `prep_added`, `prep_progress` (`done`/`total`/`current_file`/`action`), `prep_status` (`running`/`done`/`error`/`cancelled`, with a `summary` counts dict on done), `prep_removed`.
+Prep jobs run on a **separate** `_prep_queue` + worker pool (`MAX_CONCURRENT_CONVERSIONS`), independent of the download queue. Job types: `convert`/`audit`/`tags`/`review`/`unify`/`enrich`. After a **library/mirror-changing** job (`convert`/`tags`/`unify`/`enrich`) completes, the worker calls `playlists.regenerate_all_auto()` so auto-refresh playlists stay current. WebSocket message types: `prep_added`, `prep_progress` (`done`/`total`/`current_file`/`action`), `prep_status` (`running`/`done`/`error`/`cancelled`, with a `summary` counts dict on done), `prep_removed`.
+
+### BPM/energy enrichment (P4 — `enrich.py`)
+
+`run_enrich` analyzes each library file with librosa: **BPM** via `librosa.feature.rhythm.tempo` (more reliable than `beat_track`), **energy** as a 0–100 loudness proxy (RMS→dBFS mapped over −60…0 dB — a first-cut metric; the more clearly useful value is BPM). Only the first 120s is loaded for speed. Each analyzed track is persisted immediately via `update_cb` (crash/cancel-safe), and already-enriched files (`bpm IS NOT NULL`) are skipped — so a full pass over a big/networked library can run overnight and resume. The rule engine already supports `bpm`/`energy` fields, so smart playlists can filter on them once enriched. **Auto-refresh:** a nightly loop (`playlists.start_refresh_task`) plus the post-job hook above keep playlists regenerated.
 
 ### Playlists (`playlists.py`)
 
@@ -152,6 +158,7 @@ Prep jobs run on a **separate** `_prep_queue` + worker pool (`MAX_CONCURRENT_CON
 | POST | `/api/playlists/{id}/generate` | Re-run against the current index and rewrite the `.m3u`(s) |
 | POST | `/api/playlists/import/ytm` | Import a YTM playlist → M3U for owned tracks + enqueue the missing ones |
 | POST | `/api/playlists/ai` | Two-stage AI curation (`prompt`, `targets`) → `type='ai'` playlist. 400 if `ANTHROPIC_API_KEY` unset |
+| POST | `/api/playlists/regenerate-all` | Rewrite every `auto_refresh` playlist against the current index |
 | DELETE | `/api/playlists/{id}` | Delete the row and its `.m3u` file(s) |
 
 Smart playlists are **synchronous** (no queue/WS) — the rule engine filters the in-memory `library_tracks` rows. A smart `spec` is `{match: all|any, rules: [{field, op, value}], sort?, limit?}`; fields are `genre`/`artist`/`albumartist`/`album`/`year`/`decade` (`bpm`/`energy` exist for P4). M3U uses `#EXTINF` + paths **relative to the playlist folder** so Music Assistant resolves them.
@@ -266,6 +273,8 @@ With `downsample_hires` and a source >16-bit/>48 kHz, `-ar 44100` is added. **No
 - `format`: `bestaudio/best` — no codec restriction; picks ~265 kbps opus then converts to m4a
 - `postprocessors`: FFmpegExtractAudio → FFmpegMetadata → FFmpegThumbnailsConvertor → EmbedThumbnail (order matters)
 - `remote_components: ["ejs:github"]` — required for YouTube JS challenge solving via Deno; Deno is installed in the Docker image
+
+**Docker system deps:** the image installs `ffmpeg` (yt-dlp + converter), Deno (JS challenge), and `libsndfile1` (librosa's soundfile backend for enrichment). librosa also pulls numba/scipy — a few hundred MB.
 - **Never add `extractor_args` with a custom `player_client` list** — it restricts the format list and causes lower-bitrate streams to be selected
 - `outtmpl`: `%(album,playlist_title)s/%(playlist_index)02d %(title)s.%(ext)s`
 

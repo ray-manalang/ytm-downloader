@@ -306,6 +306,7 @@ async def startup():
     await prep_module.reset_stuck_jobs()
     prep_module.start_prep_task()
     playlists_module.set_dependencies(DB_PATH, _enqueue_download)
+    playlists_module.start_refresh_task()
 
 
 # ── REST API ─────────────────────────────────────────────────────────────────

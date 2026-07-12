@@ -22,6 +22,8 @@ from fastapi import APIRouter, HTTPException
 
 from .converter import AAC_BITRATE, run_conversion
 from . import tagtools
+from . import enrich as enrich_module
+from . import playlists as playlists_module
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +140,19 @@ async def _update_track_genres(updated: list):
         await db.commit()
 
 
+async def _fetch_enriched_paths() -> set:
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute("SELECT path FROM library_tracks WHERE bpm IS NOT NULL") as cur:
+            return {r[0] for r in await cur.fetchall()}
+
+
+async def _update_bpm_energy(path: str, bpm: float, energy: int):
+    async with aiosqlite.connect(_db_path) as db:
+        await db.execute("UPDATE library_tracks SET bpm=?, energy=? WHERE path=?",
+                         (bpm, energy, path))
+        await db.commit()
+
+
 # ── Prep worker ─────────────────────────────────────────────────────────────
 
 async def _handle_prep_progress(job_id: str, info: dict):
@@ -224,6 +239,18 @@ async def _prep_worker():
                             rows, approved, progress_cb, record_cb, cancel_ev.is_set)
                     )
                     await _update_track_genres(summary.pop("updated", []))
+                elif jtype == "enrich":
+                    enriched = await _fetch_enriched_paths()
+
+                    def update_cb(path, bpm, energy, _jid=job_id):
+                        asyncio.run_coroutine_threadsafe(
+                            _update_bpm_energy(path, bpm, energy), _loop
+                        ).result()
+                    summary = await _loop.run_in_executor(
+                        None, lambda: enrich_module.run_enrich(
+                            job_spec["source_dir"], progress_cb, update_cb,
+                            cancel_ev.is_set, enriched)
+                    )
                 else:
                     raise ValueError(f"Unknown prep job type: {jtype}")
 
@@ -238,6 +265,12 @@ async def _prep_worker():
                     await _broadcast({
                         "type": "prep_status", "id": job_id, "status": "done", "summary": summary,
                     })
+                    # A library/mirror change → refresh auto-refresh playlists.
+                    if jtype in ("convert", "tags", "unify", "enrich"):
+                        try:
+                            await playlists_module.regenerate_all_auto()
+                        except Exception:
+                            pass
             except Exception as exc:
                 err = str(exc)
                 await _job_update(job_id, status="error", error=err)
@@ -342,6 +375,24 @@ async def start_clean(body: dict):
     if not os.access(source_dir, os.W_OK):
         raise HTTPException(400, f"Library is not writable (mount without :ro): {source_dir}")
     return await _create_and_enqueue("tags", source_dir, "", {})
+
+
+@router.post("/enrich")
+async def start_enrich(body: dict):
+    """Analyze BPM + energy for library tracks (librosa). Resumable; run after Audit."""
+    if not enrich_module.is_available():
+        raise HTTPException(400, "Audio analysis is unavailable (librosa not installed).")
+    source_dir = (body.get("source_dir") or MUSIC_DIR or "").strip()
+    if not source_dir:
+        raise HTTPException(400, "No library directory (set MUSIC_DIR or pass source_dir)")
+    if not Path(source_dir).is_dir():
+        raise HTTPException(400, f"Library directory not found: {source_dir}")
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute("SELECT COUNT(*) FROM library_tracks") as cur:
+            (count,) = await cur.fetchone()
+    if not count:
+        raise HTTPException(400, "No indexed tracks — run Audit first.")
+    return await _create_and_enqueue("enrich", source_dir, "", {})
 
 
 @router.post("/genres/review")

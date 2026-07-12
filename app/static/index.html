@@ -357,9 +357,10 @@
       </p>
       <input id="libDir" type="text" placeholder="/music"
         style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
-      <div class="add-actions" style="margin-top:14px">
+      <div class="add-actions" style="margin-top:14px;flex-wrap:wrap">
         <button class="btn-primary" id="auditBtn" onclick="startAudit()">🔍 Audit Library</button>
         <button class="btn-ghost" id="cleanBtn" onclick="startClean()">🧹 Clean Tags</button>
+        <button class="btn-ghost" id="enrichBtn" onclick="startEnrich()">📊 Analyze BPM &amp; Energy</button>
       </div>
       <div id="prepError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
       <div id="auditResults" style="margin-top:16px"></div>
@@ -1352,7 +1353,7 @@ function renderPrepJobs() {
 
 const PREP_TITLES = {
   convert: 'Convert → AAC 256k', audit: 'Library Audit', tags: 'Clean Tags',
-  review: 'Genre Review', unify: 'Unify Genres',
+  review: 'Genre Review', unify: 'Unify Genres', enrich: 'Analyze BPM & Energy',
 };
 
 function prepSummaryChips(type, s) {
@@ -1377,6 +1378,9 @@ function prepSummaryChips(type, s) {
   } else if (type === 'unify') {
     if (s.changed != null) parts.push(`${s.changed} changed`);
     if (s.holiday_preserved) parts.push(`${s.holiday_preserved} holiday kept`);
+  } else if (type === 'enrich') {
+    if (s.analyzed != null) parts.push(`${s.analyzed} analyzed`);
+    if (s.skipped) parts.push(`${s.skipped} skipped`);
   }
   if (s.errors) parts.push(`${s.errors} errors`);
   return parts.length ? `<div class="speed-info">${parts.map(p => `<span>${p}</span>`).join('')}</div>` : '';
@@ -1520,6 +1524,8 @@ function startClean() {
   startPrep('/api/prep/tags', 'cleanBtn');
 }
 
+function startEnrich() { startPrep('/api/prep/enrich', 'enrichBtn'); }
+
 async function rollbackClean(id) {
   if (!confirm('Roll back all tag changes from this job?')) return;
   const res = await fetch('/api/prep/jobs/' + id + '/rollback', { method: 'POST' });
@@ -1641,15 +1647,19 @@ async function applyGenres() {
 let plRules = [{ field: 'genre', op: 'is', value: '' }];
 let plFacets = { genres: [], artists: [], year_min: 1960, year_max: 2025 };
 
+const PL_NUM_OPS = [['is', 'is'], ['between', 'between'], ['gte', 'at least'], ['lte', 'at most']];
 const PL_FIELD_OPS = {
   genre: [['is', 'is']],
   artist: [['is', 'is'], ['contains', 'contains']],
   albumartist: [['is', 'is'], ['contains', 'contains']],
   album: [['is', 'is'], ['contains', 'contains']],
-  year: [['is', 'is'], ['between', 'between'], ['gte', 'at least'], ['lte', 'at most']],
+  year: PL_NUM_OPS,
   decade: [['is', 'is']],
+  bpm: PL_NUM_OPS,
+  energy: PL_NUM_OPS,
 };
-const PL_FIELD_LABELS = { genre: 'Genre', artist: 'Artist', albumartist: 'Album artist', album: 'Album', year: 'Year', decade: 'Decade' };
+const PL_FIELD_LABELS = { genre: 'Genre', artist: 'Artist', albumartist: 'Album artist', album: 'Album', year: 'Year', decade: 'Decade', bpm: 'BPM', energy: 'Energy' };
+const PL_NUM_DEFAULTS = { year: [1980, 1989], bpm: [110, 140], energy: [60, 100] };
 
 async function loadPlaylists() {
   try {
@@ -1768,14 +1778,14 @@ function ruleValueCell(r, i) {
     for (let d = 1950; d <= 2020; d += 10) opts.push(`<option value="${d}" ${+r.value === d ? 'selected' : ''}>${d}s</option>`);
     return `<select onchange="setRule(${i},'value',parseInt(this.value,10))">${opts.join('')}</select>`;
   }
-  if (r.field === 'year') {
+  if (r.field === 'year' || r.field === 'bpm' || r.field === 'energy') {
     if (r.op === 'between') {
-      const v = Array.isArray(r.value) ? r.value : [plFacets.year_min || 1980, plFacets.year_max || 1989];
+      const v = Array.isArray(r.value) ? r.value : (PL_NUM_DEFAULTS[r.field] || [0, 100]);
       return `<input type="number" value="${v[0]}" oninput="setRuleBetween(${i},0,this.value)" style="width:80px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-size:13px;outline:none">
         <span style="color:var(--muted)">to</span>
         <input type="number" value="${v[1]}" oninput="setRuleBetween(${i},1,this.value)" style="width:80px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-size:13px;outline:none">`;
     }
-    return inp(`type="number" placeholder="year" oninput="setRule(${i},'value',parseInt(this.value,10))"`, r.value);
+    return inp(`type="number" placeholder="${r.field}" oninput="setRule(${i},'value',parseInt(this.value,10))"`, r.value);
   }
   return '';
 }
@@ -1784,10 +1794,10 @@ function setRule(i, key, val) {
   plRules[i][key] = val;
   if (key === 'field') {
     plRules[i].op = (PL_FIELD_OPS[val] || [['is']])[0][0];
-    plRules[i].value = val === 'decade' ? 1980 : (val === 'year' ? '' : '');
+    plRules[i].value = val === 'decade' ? 1980 : '';
     renderRules();
   } else if (key === 'op') {
-    if (val === 'between') plRules[i].value = [plFacets.year_min || 1980, plFacets.year_max || 1989];
+    if (val === 'between') plRules[i].value = (PL_NUM_DEFAULTS[plRules[i].field] || [0, 100]).slice();
     else if (Array.isArray(plRules[i].value)) plRules[i].value = '';
     renderRules();
   }
