@@ -21,6 +21,7 @@ import aiosqlite
 from fastapi import APIRouter, HTTPException
 
 from .converter import AAC_BITRATE, run_conversion
+from . import tagtools
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,38 @@ def _job_public(row: dict) -> dict:
     return out
 
 
+async def _upsert_tracks(tracks: list):
+    if not tracks:
+        return
+    now = time.time()
+    rows = [
+        (t["path"], t.get("artist"), t.get("albumartist"), t.get("album"),
+         t.get("genre"), t.get("year"), t.get("duration"), now)
+        for t in tracks
+    ]
+    async with aiosqlite.connect(_db_path) as db:
+        await db.executemany(
+            "INSERT INTO library_tracks "
+            "(path,artist,albumartist,album,genre,year,duration,added_at) "
+            "VALUES (?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(path) DO UPDATE SET "
+            "artist=excluded.artist, albumartist=excluded.albumartist, "
+            "album=excluded.album, genre=excluded.genre, year=excluded.year, "
+            "duration=excluded.duration, added_at=excluded.added_at",
+            rows,
+        )
+        await db.commit()
+
+
+async def _insert_change(job_id: str, path: str, field: str, old_value: str, new_value: str):
+    async with aiosqlite.connect(_db_path) as db:
+        await db.execute(
+            "INSERT INTO prep_changes (job_id,path,field,old_value,new_value) VALUES (?,?,?,?,?)",
+            (job_id, path, field, old_value, new_value),
+        )
+        await db.commit()
+
+
 # ── Prep worker ─────────────────────────────────────────────────────────────
 
 async def _handle_prep_progress(job_id: str, info: dict):
@@ -126,18 +159,40 @@ async def _prep_worker():
                 asyncio.run_coroutine_threadsafe(coro, _loop)
 
             job_spec = _job_public(job)
+            jtype = job_spec.get("type") or "convert"
             try:
-                summary = await _loop.run_in_executor(
-                    None,
-                    lambda: run_conversion(job_spec, progress_cb, cancel_ev.is_set),
-                )
+                if jtype == "convert":
+                    summary = await _loop.run_in_executor(
+                        None, lambda: run_conversion(job_spec, progress_cb, cancel_ev.is_set)
+                    )
+                elif jtype == "audit":
+                    result = await _loop.run_in_executor(
+                        None, lambda: tagtools.run_audit(
+                            job_spec["source_dir"], progress_cb, cancel_ev.is_set)
+                    )
+                    await _upsert_tracks(result["tracks"])
+                    summary = result["summary"]
+                elif jtype == "tags":
+                    # record_cb persists each pre-image durably BEFORE the file is
+                    # written, so a crash mid-clean still leaves it rollback-able.
+                    def record_cb(path, field, old_json, new_json, _jid=job_id):
+                        asyncio.run_coroutine_threadsafe(
+                            _insert_change(_jid, path, field, old_json, new_json), _loop
+                        ).result()
+                    summary = await _loop.run_in_executor(
+                        None, lambda: tagtools.run_clean(
+                            job_spec["source_dir"], progress_cb, record_cb, cancel_ev.is_set)
+                    )
+                else:
+                    raise ValueError(f"Unknown prep job type: {jtype}")
+
                 if cancel_ev.is_set():
-                    await _job_update(job_id, status="cancelled")
+                    await _job_update(job_id, status="cancelled", error=json.dumps(summary))
                     await _broadcast({"type": "prep_status", "id": job_id, "status": "cancelled"})
                 else:
                     await _job_update(
                         job_id, status="done", progress=100.0,
-                        error=json.dumps(summary),  # store summary counts in `error` slot
+                        error=json.dumps(summary),  # store summary in `error` slot
                     )
                     await _broadcast({
                         "type": "prep_status", "id": job_id, "status": "done", "summary": summary,
@@ -186,6 +241,26 @@ async def prep_config():
     }
 
 
+async def _create_and_enqueue(jtype: str, source_dir: str, output_dir: str, settings: dict) -> dict:
+    job_id = str(uuid.uuid4())[:8]
+    now = time.time()
+    async with aiosqlite.connect(_db_path) as db:
+        await db.execute(
+            "INSERT INTO prep_jobs (id,type,source_dir,output_dir,status,settings,created_at) "
+            "VALUES (?,?,?,?,'pending',?,?)",
+            (job_id, jtype, source_dir, output_dir, json.dumps(settings), now),
+        )
+        await db.commit()
+    entry = {
+        "id": job_id, "type": jtype, "source_dir": source_dir,
+        "output_dir": output_dir, "status": "pending", "progress": 0,
+        "total": 0, "done": 0, "settings": settings, "created_at": now,
+    }
+    await _prep_queue.put(job_id)
+    await _broadcast({"type": "prep_added", **entry})
+    return entry
+
+
 @router.post("/convert")
 async def start_convert(body: dict):
     source_dir = (body.get("source_dir") or MUSIC_DIR or "").strip()
@@ -200,25 +275,101 @@ async def start_convert(body: dict):
     settings = {"downsample_hires": bool(body.get("downsample_hires"))}
     if body.get("bitrate"):
         settings["bitrate"] = str(body["bitrate"])
+    return await _create_and_enqueue("convert", source_dir, output_dir, settings)
 
-    job_id = str(uuid.uuid4())[:8]
-    now = time.time()
+
+@router.post("/audit")
+async def start_audit(body: dict):
+    source_dir = (body.get("source_dir") or MUSIC_DIR or "").strip()
+    if not source_dir:
+        raise HTTPException(400, "No library directory (set MUSIC_DIR or pass source_dir)")
+    if not Path(source_dir).is_dir():
+        raise HTTPException(400, f"Library directory not found: {source_dir}")
+    return await _create_and_enqueue("audit", source_dir, "", {})
+
+
+@router.post("/tags")
+async def start_clean(body: dict):
+    """Normalize genres + fill album-artist IN PLACE. Requires a writable library."""
+    source_dir = (body.get("source_dir") or MUSIC_DIR or "").strip()
+    if not source_dir:
+        raise HTTPException(400, "No library directory (set MUSIC_DIR or pass source_dir)")
+    if not Path(source_dir).is_dir():
+        raise HTTPException(400, f"Library directory not found: {source_dir}")
+    if not os.access(source_dir, os.W_OK):
+        raise HTTPException(400, f"Library is not writable (mount without :ro): {source_dir}")
+    return await _create_and_enqueue("tags", source_dir, "", {})
+
+
+@router.get("/audit/latest")
+async def latest_audit():
+    """Most recent completed audit summary, for the Audit panel."""
     async with aiosqlite.connect(_db_path) as db:
-        await db.execute(
-            "INSERT INTO prep_jobs (id,type,source_dir,output_dir,status,settings,created_at) "
-            "VALUES (?,?,?,?,'pending',?,?)",
-            (job_id, "convert", source_dir, output_dir, json.dumps(settings), now),
-        )
-        await db.commit()
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM prep_jobs WHERE type='audit' AND status='done' "
+            "ORDER BY created_at DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return {"audit": None}
+    job = _job_public(dict(row))
+    try:
+        job["summary"] = json.loads(row["error"] or "{}")
+    except (TypeError, ValueError):
+        job["summary"] = {}
+    return {"audit": job}
 
-    entry = {
-        "id": job_id, "type": "convert", "source_dir": source_dir,
-        "output_dir": output_dir, "status": "pending", "progress": 0,
-        "total": 0, "done": 0, "settings": settings, "created_at": now,
-    }
-    await _prep_queue.put(job_id)
-    await _broadcast({"type": "prep_added", **entry})
-    return entry
+
+def _apply_rollback(changes_by_path: dict) -> dict:
+    """Blocking: restore old genre/albumartist per path from recorded pre-images."""
+    restored = errors = 0
+    for path, fields in changes_by_path.items():
+        try:
+            kwargs = {}
+            if "genre" in fields:
+                kwargs["genre"] = json.loads(fields["genre"])
+            if "albumartist" in fields:
+                kwargs["albumartist"] = json.loads(fields["albumartist"])
+            if tagtools.write_tags(path, **kwargs):
+                restored += 1
+            else:
+                errors += 1
+        except Exception:
+            errors += 1
+    return {"restored": restored, "errors": errors}
+
+
+@router.post("/jobs/{job_id}/rollback")
+async def rollback_job(job_id: str):
+    job = await _job_row(job_id)
+    if not job:
+        raise HTTPException(404, "Not found")
+    if job["type"] != "tags":
+        raise HTTPException(400, "Only tag-clean jobs can be rolled back")
+
+    async with aiosqlite.connect(_db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT path, field, old_value FROM prep_changes WHERE job_id=?", (job_id,)
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+    if not rows:
+        raise HTTPException(400, "No changes recorded for this job (nothing to roll back)")
+
+    # Restore the earliest recorded pre-image per (path, field).
+    changes_by_path: dict = {}
+    for r in rows:
+        changes_by_path.setdefault(r["path"], {}).setdefault(r["field"], r["old_value"])
+
+    result = await _loop.run_in_executor(None, lambda: _apply_rollback(changes_by_path))
+
+    async with aiosqlite.connect(_db_path) as db:
+        await db.execute("DELETE FROM prep_changes WHERE job_id=?", (job_id,))
+        await db.execute("UPDATE prep_jobs SET status='rolled_back' WHERE id=?", (job_id,))
+        await db.commit()
+    await _broadcast({"type": "prep_status", "id": job_id, "status": "rolled_back"})
+    return result
 
 
 @router.get("/jobs")

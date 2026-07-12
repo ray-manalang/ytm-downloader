@@ -6,6 +6,8 @@ from typing import Callable
 
 import yt_dlp
 
+from . import tagtools
+
 DOWNLOADS_DIR = os.environ.get("DOWNLOADS_DIR", "./downloads")
 COOKIES_FILE = os.environ.get("COOKIES_FILE", "")
 
@@ -75,12 +77,29 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
-    # Resize cover art in every newly created m4a
+    # Resize cover art + normalize genre tags in every newly created m4a
     files_after = set(base.rglob("*.m4a")) if base.exists() else set()
     for path in files_after - files_before:
         _resize_cover(path)
+        _normalize_tags(path)
 
     return info
+
+
+def _normalize_tags(path: Path):
+    """Post-download hook: clean the genre tag so new grabs land normalized.
+
+    Best-effort — never let a tag issue fail a download. Genre-only; artist and
+    album-artist are already set by yt-dlp's parse_metadata.
+    """
+    try:
+        tags = tagtools.read_tags(path)
+        old = tagtools._genre_list(tags.get("genre"))
+        new = tagtools.normalize_genre(old)
+        if new != old:
+            tagtools.write_tags(path, genre=new)
+    except Exception:
+        pass
 
 
 def _resize_cover(path: Path):

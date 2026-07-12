@@ -30,7 +30,9 @@ Single-process FastAPI app. No test suite.
 | `app/downloader.py` | yt-dlp wrapper, post-download cover-art resize, stray-thumbnail cleanup |
 | `app/ytm.py` | YouTube Music integration — auth, playlist/liked-songs browsing, auto-sync background task |
 | `app/converter.py` | FLAC→AAC transcode engine — ffmpeg subprocess, mirrors `downloader.py`'s pattern; never mutates the source |
-| `app/prep.py` | iPod-Prep orchestration + `/api/prep/*` router — separate prep queue/worker pool, conversion jobs |
+| `app/tagtools.py` | Pure tag logic — `normalize_genre`, `fill_album_artist`, `is_compilation`, mutagen read/write, and the `run_audit`/`run_clean` engines. No FastAPI; unit-tested |
+| `app/data/genres.json` | Editable genre vocabulary + EXACT/JUNK/keyword maps loaded by `tagtools` |
+| `app/prep.py` | iPod-Prep orchestration + `/api/prep/*` router — separate prep queue/worker pool; dispatches convert/audit/tags jobs |
 | `app/static/index.html` | Single-file dark-mode SPA — all JS inline, no build step, no external deps |
 | `app/static/logo.svg` | App icon (also used as browser favicon) |
 
@@ -119,6 +121,10 @@ Auto-generated YTM playlists ("Liked Music", "Episodes for Later", "New Episodes
 |---|---|---|
 | GET | `/api/prep/config` | Configured defaults (`music_dir`, `ipod_dir`, `aac_bitrate`, `max_concurrent`) |
 | POST | `/api/prep/convert` | Start a FLAC→AAC mirror job (`source_dir`, `output_dir`, `downsample_hires` optional) |
+| POST | `/api/prep/audit` | Scan the library read-only → genre distribution, missing album-artist, formats, unmapped genres; populates `library_tracks` |
+| POST | `/api/prep/tags` | Clean job — normalize genres + fill album-artist **in place** (requires a writable library); records `prep_changes` |
+| GET | `/api/prep/audit/latest` | Most recent completed audit summary |
+| POST | `/api/prep/jobs/{id}/rollback` | Restore a tag-clean job from its `prep_changes` pre-images |
 | GET | `/api/prep/jobs` | List all prep jobs |
 | DELETE | `/api/prep/jobs/{id}` | Cancel a running/pending job or remove a finished one |
 
@@ -207,6 +213,13 @@ ffmpeg -y -i INPUT.flac -map 0:a -map 0:v? -c:a aac -b:a $AAC_BITRATE \
 ```
 With `downsample_hires` and a source >16-bit/>48 kHz, `-ar 44100` is added. **Note:** the HANDOFF §6 also lists `-sample_fmt s16`, but that makes the AAC encoder refuse to open (AAC is lossy/`fltp` — PCM bit depth is meaningless for it), so only `-ar 44100` is applied. Bit-depth reduction belongs to a future lossless-target path, not AAC.
 
+### Audit / Clean tags (M2 — `tagtools.py`)
+
+- **Audit** (`run_audit`) walks the library read-only via mutagen, upserts `library_tracks`, and returns a summary: normalized-genre distribution, count needing normalization, missing album-artist, per-format counts/sizes, and **`unmapped_genres`** — raw genre strings that map to nothing, so `genres.json` can be extended.
+- **Clean** (`run_clean`) normalizes genres (`normalize_genre`) and fills missing album-artist (`fill_album_artist`), writing files **in place**. Before each file is touched, `record_cb` durably persists the pre-image to `prep_changes` (so a crash mid-run still leaves it rollback-able). Rollback restores those pre-images; an empty pre-image deletes the tag (faithful restore of an originally-absent value).
+- **Genre logic** is a FIRST-CUT of HANDOFF §10 derived from the 25-genre controlled vocab + documented rules; the `exact`/`junk`/`keywords` maps in `genres.json` should be replaced with the verbatim maps from Ray's `normalize_music_tags.py` when available. Key rules: whole-value match before splitting (protects `R&B/Soul`, `Christian/Gospel`), split compounds (`Rock/Pop`→`[Rock,Pop]`), drop junk (`Music`, decade tags, sole `Vocal`), unknown→dropped (M3 re-fills). Unit tests: `tests/test_tagtools.py`.
+- **Download hook:** `downloader._normalize_tags()` runs after `_resize_cover` on each new `.m4a`, normalizing its genre so new grabs land clean (best-effort, never fails a download).
+
 ## Key yt-dlp settings — do not change without explicit approval
 
 - `format`: `bestaudio/best` — no codec restriction; picks ~265 kbps opus then converts to m4a
@@ -228,7 +241,7 @@ The DB `title` column stores the **album/playlist name** (from `playlist_title` 
 
 ## Frontend SPA (`app/static/index.html`)
 
-Single-file, no build step. Six tabs: **Library** (default), **Add**, **Queue**, **History**, **Convert**, **Files**.
+Single-file, no build step. Six tabs: **Library** (default), **Add**, **Queue**, **History**, **Prep** (Audit / Clean / Convert), **Files**.
 
 Key JS state:
 - `downloads` — map of id → download object (source of truth for queue/history cards)

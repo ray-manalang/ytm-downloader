@@ -160,7 +160,7 @@
     History <span class="badge warn" id="histBadge" style="display:none"></span>
   </div>
   <div class="tab" data-tab="convert" onclick="switchTab('convert')">
-    Convert <span class="badge" id="convBadge" style="display:none"></span>
+    Prep <span class="badge" id="convBadge" style="display:none"></span>
   </div>
   <div class="tab" data-tab="files" onclick="switchTab('files')">Files</div>
 </div>
@@ -345,8 +345,25 @@
     </div>
   </div>
 
-  <!-- CONVERT -->
+  <!-- PREP (Audit / Clean / Convert) -->
   <div class="panel" id="panel-convert">
+    <!-- Library directory shared by Audit + Clean -->
+    <div class="add-box" style="margin-bottom:20px">
+      <label>Library</label>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.6">
+        Point Audit and Clean at your music library. Audit is read-only; Clean writes
+        tags in place (mount read-write) and every change is reversible.
+      </p>
+      <input id="libDir" type="text" placeholder="/music"
+        style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
+      <div class="add-actions" style="margin-top:14px">
+        <button class="btn-primary" id="auditBtn" onclick="startAudit()">🔍 Audit Library</button>
+        <button class="btn-ghost" id="cleanBtn" onclick="startClean()">🧹 Clean Tags</button>
+      </div>
+      <div id="prepError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+      <div id="auditResults" style="margin-top:16px"></div>
+    </div>
+
     <div class="add-box" style="margin-bottom:20px">
       <label>iPod AAC Mirror</label>
       <p style="color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.6">
@@ -756,6 +773,7 @@ function handleWS(msg) {
       if (msg.error) prepJobs[id].error = msg.error;
       if (msg.summary) prepJobs[id].summary = msg.summary;
       if (msg.status === 'done') prepJobs[id].progress = 100;
+      if (msg.status === 'done' && prepJobs[id].type === 'audit') loadLatestAudit();
     }
     renderPrepJobs();
     return;
@@ -1132,11 +1150,47 @@ async function loadConvert() {
         document.getElementById('convSource').value = cfg.music_dir;
       if (cfg.ipod_dir && !document.getElementById('convOutput').value)
         document.getElementById('convOutput').value = cfg.ipod_dir;
+      if (cfg.music_dir && !document.getElementById('libDir').value)
+        document.getElementById('libDir').value = cfg.music_dir;
       document.getElementById('convBitrateNote').textContent = `AAC ${cfg.aac_bitrate}`;
       prepConfigLoaded = true;
     } catch {}
   }
-  await loadPrepJobs();
+  await Promise.all([loadPrepJobs(), loadLatestAudit()]);
+}
+
+async function loadLatestAudit() {
+  try {
+    const res = await fetch('/api/prep/audit/latest');
+    const data = await res.json();
+    renderAuditResults(data.audit && data.audit.summary);
+  } catch {}
+}
+
+function renderAuditResults(s) {
+  const el = document.getElementById('auditResults');
+  if (!s) { el.innerHTML = ''; return; }
+  const dist = Object.entries(s.genre_distribution || {})
+    .map(([g, n]) => `<span style="display:inline-block;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 8px;margin:2px;font-size:12px">${escHtml(g)} <span style="color:var(--muted)">${n}</span></span>`)
+    .join('');
+  const fmts = Object.entries(s.formats || {})
+    .map(([ext, f]) => `${escHtml(ext)} ${f.count} · ${fmtSize(f.bytes)}`).join('  ·  ');
+  const unmapped = (s.unmapped_genres || []).length
+    ? `<div style="margin-top:12px"><div style="color:var(--warn);font-size:12px;font-weight:600;margin-bottom:4px">Unmapped genres (extend genres.json)</div>${
+        s.unmapped_genres.map(u => `<span style="display:inline-block;background:rgba(242,201,76,.12);border:1px solid rgba(242,201,76,.3);color:var(--warn);border-radius:4px;padding:2px 8px;margin:2px;font-size:12px">${escHtml(u.value)} <span style="opacity:.7">${u.count}</span></span>`).join('')
+      }</div>` : '';
+  el.innerHTML = `
+    <div style="border-top:1px solid var(--border);padding-top:14px">
+      <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;margin-bottom:10px">
+        <span><strong>${s.total_tracks || 0}</strong> <span style="color:var(--muted)">tracks · ${fmtSize(s.total_bytes || 0)}</span></span>
+        <span><strong style="color:var(--warn)">${s.needs_normalization || 0}</strong> <span style="color:var(--muted)">need genre fix</span></span>
+        <span><strong style="color:var(--warn)">${s.missing_albumartist || 0}</strong> <span style="color:var(--muted)">missing album artist</span></span>
+      </div>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:8px">${fmts}</div>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:4px">Genre distribution</div>
+      <div>${dist || '<span style="color:var(--muted);font-size:12px">—</span>'}</div>
+      ${unmapped}
+    </div>`;
 }
 
 async function loadPrepJobs() {
@@ -1163,10 +1217,36 @@ function renderPrepJobs() {
   el.innerHTML = jobs.map(prepCardHTML).join('');
 }
 
+const PREP_TITLES = { convert: 'Convert → AAC 256k', audit: 'Library Audit', tags: 'Clean Tags' };
+
+function prepSummaryChips(type, s) {
+  const parts = [];
+  if (type === 'convert') {
+    if (s.transcoded) parts.push(`${s.transcoded} transcoded`);
+    if (s.copied) parts.push(`${s.copied} copied`);
+    if (s.skipped) parts.push(`${s.skipped} skipped`);
+    if (s.drm_skipped) parts.push(`${s.drm_skipped} DRM`);
+  } else if (type === 'audit') {
+    if (s.total_tracks != null) parts.push(`${s.total_tracks} tracks`);
+    if (s.needs_normalization) parts.push(`${s.needs_normalization} need genre fix`);
+    if (s.missing_albumartist) parts.push(`${s.missing_albumartist} missing album artist`);
+  } else if (type === 'tags') {
+    if (s.changed != null) parts.push(`${s.changed} changed`);
+    if (s.genre_changes) parts.push(`${s.genre_changes} genres`);
+    if (s.albumartist_filled) parts.push(`${s.albumartist_filled} album artists`);
+  }
+  if (s.errors) parts.push(`${s.errors} errors`);
+  return parts.length ? `<div class="speed-info">${parts.map(p => `<span>${p}</span>`).join('')}</div>` : '';
+}
+
 function prepCardHTML(j) {
   const pct = j.progress || 0;
   const active = j.status === 'running';
-  const dirLine = `${escHtml(j.source_dir || '')} → ${escHtml(j.output_dir || '')}`;
+  const type = j.type || 'convert';
+  const title = PREP_TITLES[type] || type;
+  const dirLine = type === 'convert'
+    ? `${escHtml(j.source_dir || '')} → ${escHtml(j.output_dir || '')}`
+    : escHtml(j.source_dir || '');
 
   let progressBar = '';
   let currentFileHtml = '';
@@ -1179,39 +1259,34 @@ function prepCardHTML(j) {
       <div class="progress-fill" style="width:${pct}%"></div></div></div>`;
   }
 
-  // Summary chips for finished jobs
-  let summaryHtml = '';
   let summary = j.summary;
-  if (!summary && j.error && j.status === 'done') {
+  if (!summary && j.error && (j.status === 'done' || j.status === 'rolled_back')) {
     try { summary = JSON.parse(j.error); } catch {}
   }
-  if (summary && typeof summary === 'object') {
-    const parts = [];
-    if (summary.transcoded) parts.push(`${summary.transcoded} transcoded`);
-    if (summary.copied) parts.push(`${summary.copied} copied`);
-    if (summary.skipped) parts.push(`${summary.skipped} skipped`);
-    if (summary.drm_skipped) parts.push(`${summary.drm_skipped} DRM`);
-    if (summary.errors) parts.push(`${summary.errors} errors`);
-    if (parts.length) summaryHtml = `<div class="speed-info">${parts.map(p => `<span>${p}</span>`).join('')}</div>`;
-  }
+  const summaryHtml = (summary && typeof summary === 'object') ? prepSummaryChips(type, summary) : '';
 
   const errorMsg = (j.status === 'error' && j.error) ? `<div class="error-msg">${escHtml(j.error)}</div>` : '';
-  const removable = j.status !== 'running';
-  const btnLabel = j.status === 'running' ? 'Cancel' : (j.status === 'pending' ? 'Cancel' : 'Remove');
+  const btnLabel = (j.status === 'running' || j.status === 'pending') ? 'Cancel' : 'Remove';
   const dateStr = (j.status !== 'pending' && j.status !== 'running')
     ? `<span style="color:var(--muted);font-size:12px">${fmtDate(j.created_at)}</span>` : '';
+  const rollbackBtn = (type === 'tags' && j.status === 'done')
+    ? `<button class="btn-ghost btn-sm" onclick="rollbackClean('${j.id}')" title="Undo all tag changes">↺ Rollback</button>` : '';
+  const statusChip = j.status === 'rolled_back' ? 'cancelled' : (j.status === 'running' ? 'downloading' : j.status);
 
   return `
     <div class="card" id="prepcard-${j.id}">
       <div class="card-header">
         <div class="card-info">
-          <div class="card-title">Convert → AAC 256k</div>
+          <div class="card-title">${title}</div>
           <div class="card-url">${dirLine}</div>
         </div>
-        <button class="btn-danger" onclick="removePrepJob('${j.id}','${j.status}')">${btnLabel}</button>
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          ${rollbackBtn}
+          <button class="btn-danger" onclick="removePrepJob('${j.id}','${j.status}')">${btnLabel}</button>
+        </div>
       </div>
       <div class="card-meta">
-        <span class="status-chip status-${j.status === 'running' ? 'downloading' : j.status}">${j.status}</span>
+        <span class="status-chip status-${statusChip}">${j.status === 'rolled_back' ? 'rolled back' : j.status}</span>
         ${summaryHtml}
         ${dateStr}
       </div>
@@ -1259,8 +1334,7 @@ async function startConvert() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { errEl.textContent = data.detail || 'Failed to start conversion.'; return; }
-    prepJobs[data.id] = data;
-    renderPrepJobs();
+    // Card is driven by the WS prep_added/prep_status messages (see startPrep).
   } finally {
     btn.disabled = false;
     btn.textContent = 'Start Conversion';
@@ -1268,9 +1342,45 @@ async function startConvert() {
 }
 
 async function removePrepJob(id, status) {
-  if (status === 'running' && !confirm('Cancel this conversion?')) return;
+  if (status === 'running' && !confirm('Cancel this job?')) return;
   await fetch('/api/prep/jobs/' + id, { method: 'DELETE' });
   if (status !== 'running') { delete prepJobs[id]; renderPrepJobs(); }
+}
+
+async function startPrep(endpoint, btnId, errEl) {
+  const source_dir = document.getElementById('libDir').value.trim();
+  const el = document.getElementById('prepError');
+  el.textContent = '';
+  if (!source_dir) { el.textContent = 'Library directory is required.'; return; }
+  const btn = document.getElementById(btnId);
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Starting…';
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({source_dir}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { el.textContent = data.detail || 'Failed to start.'; return; }
+    // The job card is created/updated by the WS prep_added/prep_status messages
+    // (which can arrive before this response) — don't clobber it with a stale
+    // 'pending' snapshot here.
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
+}
+
+function startAudit() { startPrep('/api/prep/audit', 'auditBtn'); }
+
+function startClean() {
+  if (!confirm('Clean tags writes to your library in place. Every change is reversible via Rollback. Continue?')) return;
+  startPrep('/api/prep/tags', 'cleanBtn');
+}
+
+async function rollbackClean(id) {
+  if (!confirm('Roll back all tag changes from this clean job?')) return;
+  const res = await fetch('/api/prep/jobs/' + id + '/rollback', { method: 'POST' });
+  if (res.ok && prepJobs[id]) { prepJobs[id].status = 'rolled_back'; renderPrepJobs(); }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

@@ -10,7 +10,8 @@ services:
     volumes:
       - /mnt/data/supervisor/share:/share
       - ytm_data:/data
-      # Source music library — mount READ-ONLY (converter never writes here):
+      # Source music library. Convert + Audit only read it, so :ro is safe for
+      # those; the Clean Tags tool writes tags in place, so drop :ro if you use it.
       # - /mnt/data/supervisor/share/Music:/music:ro
       # iPod AAC mirror output — read-write (e.g. NAS mount):
       # - /Volumes/Terradrive/ipodMusic:/ipod

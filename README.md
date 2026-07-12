@@ -15,6 +15,7 @@ A self-hosted music-library tool. It started as a YouTube Music downloader and i
 - **OAuth authentication** — connect once via Google OAuth; never re-authenticate unless you explicitly revoke access
 - **Auto-sync** — automatically download new liked songs on a configurable schedule
 - **iPod AAC mirror** — transcode a FLAC library to a 256k AAC mirror for iPod/iTunes; source is never modified, and re-runs only convert what's missing
+- **Tag cleanup** — audit your library, normalize genres to a controlled vocabulary, and fill missing album artists; every change is one-click reversible, and new downloads land normalized
 - Dark mode UI, no build step, no external JS dependencies
 
 ## Output format
@@ -142,9 +143,19 @@ If you prefer not to set up a Google Cloud project, you can connect with browser
 - **Playlists** — browse all your playlists, expand to see tracks, download individual tracks or the full playlist
 - **Auto-sync** — enable to automatically download new liked songs; configurable interval (15 min / 1 hr / 6 hrs / 24 hrs)
 
-## iPod AAC mirror (Convert tab)
+## Library prep (Prep tab)
 
-The **Convert** tab mirrors a FLAC music library into an iPod/iTunes-ready AAC copy.
+The **Prep** tab has three tools over your music library (`MUSIC_DIR`):
+
+**Audit** (read-only) scans the library and reports the genre distribution, how many tracks need a genre fix or are missing an album artist, a per-format size breakdown, and any *unmapped genres* — raw genre strings that don't map to the controlled vocabulary yet, so you know what to add to `app/data/genres.json`.
+
+**Clean Tags** normalizes genres to a 25-value controlled vocabulary (splitting compound tags, dropping junk like `Music` or decade tags) and fills missing album artists (`Various Artists` for compilation folders). It writes tags **in place**, so mount the library **read-write** for this. Every change is recorded, and each completed clean job has a one-click **Rollback** that restores the original tags exactly. New downloads are normalized automatically via a post-download hook.
+
+> The genre maps in `app/data/genres.json` are editable — tune the vocabulary and aliases to your library without touching code.
+
+### iPod AAC mirror
+
+The **iPod AAC Mirror** section mirrors a FLAC music library into an iPod/iTunes-ready AAC copy.
 
 - Set `MUSIC_DIR` (source, mounted **read-only**) and `IPOD_DIR` (output mirror). Both can also be typed into the form per-run.
 - `.flac` (and other lossless) are transcoded to **AAC 256k `.m4a`**, preserving cover art and tags.
