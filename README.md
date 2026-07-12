@@ -157,7 +157,9 @@ The **Prep** tab has three tools over your music library (`MUSIC_DIR`):
 
 **Clean Tags** normalizes genres to a 25-value controlled vocabulary (splitting compound tags, dropping junk like `Music` or decade tags) and fills missing album artists (`Various Artists` for compilation folders). It writes tags **in place**, so mount the library **read-write** for this. Every change is recorded, and each completed clean job has a one-click **Rollback** that restores the original tags exactly. New downloads are normalized automatically via a post-download hook.
 
-> The genre maps in `app/data/genres.json` are editable — tune the vocabulary and aliases to your library without touching code.
+**Genre Completion & Unify** proposes one consistent genre per artist — from a curated artist→genre map, the majority of each artist's existing tags, and (optionally) a MusicBrainz lookup for unknown artists. You get an editable review table (adjust or fill in any proposal), and applying it unifies every artist's tracks to the approved genre. A track tagged only `Holiday` is always preserved, and the whole apply is reversible via **Rollback**.
+
+> The maps in `app/data/genres.json` (vocabulary/aliases) and `app/data/artist_genres.json` (artist→genre) are editable — tune them to your library without touching code.
 
 ### iPod AAC mirror
 

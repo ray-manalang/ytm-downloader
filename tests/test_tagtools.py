@@ -70,6 +70,58 @@ def test_fill_album_artist():
     assert fill_album_artist({}, "/music/Artist/Album/x.flac") is None
 
 
+# ── M3: genre review + unify ────────────────────────────────────────────────
+
+from app.tagtools import artist_key, is_sole_holiday, run_genre_review  # noqa: E402
+
+
+def test_artist_key():
+    assert artist_key("The Cure", "The Cure") == "The Cure"
+    # Compilation → group by track artist, not "Various Artists"
+    assert artist_key("Various Artists", "Wham!") == "Wham!"
+
+
+def test_is_sole_holiday():
+    assert is_sole_holiday(["Holiday"]) is True
+    assert is_sole_holiday(["Holiday", "Pop"]) is False
+    assert is_sole_holiday(["Pop"]) is False
+
+
+def _rows(*triples):
+    # (albumartist, artist, genre_str)
+    return [{"path": f"/m/{i}.flac", "albumartist": a, "artist": ar, "genre": g}
+            for i, (a, ar, g) in enumerate(triples)]
+
+
+def test_review_curated_wins():
+    rows = _rows(("The Cure", "The Cure", "Rock"), ("The Cure", "The Cure", "Pop"))
+    r = run_genre_review(rows, use_online=False, progress_cb=lambda _: None, should_cancel=lambda: False)
+    cure = [a for a in r["artists"] if a["key"] == "the cure"][0]
+    assert cure["source"] == "curated"
+    assert cure["canonical"] == ["Alternative", "New Wave"]
+    assert cure["changes"] == 2  # both tracks differ from canonical
+
+
+def test_review_majority_vote():
+    rows = _rows(("Nobody Band", "Nobody Band", "Jazz"),
+                 ("Nobody Band", "Nobody Band", "Jazz"),
+                 ("Nobody Band", "Nobody Band", "Blues"))
+    r = run_genre_review(rows, use_online=False, progress_cb=lambda _: None, should_cancel=lambda: False)
+    band = [a for a in r["artists"] if a["key"] == "nobody band"][0]
+    assert band["source"] == "majority"
+    assert band["canonical"] == ["Jazz"]
+    assert band["changes"] == 1  # the Blues track
+
+
+def test_review_holiday_preserved_and_unresolved():
+    rows = _rows(("Mystery Act", "Mystery Act", ""),          # blank, unknown
+                 ("Mystery Act", "Mystery Act", "Holiday"))   # sole Holiday
+    r = run_genre_review(rows, use_online=False, progress_cb=lambda _: None, should_cancel=lambda: False)
+    act = [a for a in r["artists"] if a["key"] == "mystery act"][0]
+    assert act["source"] == "unresolved"
+    assert act["holiday_preserved"] == 1
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):

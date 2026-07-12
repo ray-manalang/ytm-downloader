@@ -13,12 +13,16 @@ keys are uniform across FLAC, MP3 (ID3) and M4A (MP4).
 import json
 import os
 import re
+import time
+from collections import Counter
 from pathlib import Path
 from typing import List, Optional, Union
 
+import requests
 from mutagen import File as MutagenFile
 
 _DATA_PATH = Path(__file__).parent / "data" / "genres.json"
+_ARTIST_PATH = Path(__file__).parent / "data" / "artist_genres.json"
 
 # Separators that split a compound genre string into parts.
 _SPLIT_RE = re.compile(r"\s*[/;,|]\s*|\s+&\s+|\s+\band\b\s+", re.IGNORECASE)
@@ -27,6 +31,16 @@ _SPLIT_RE = re.compile(r"\s*[/;,|]\s*|\s+&\s+|\s+\band\b\s+", re.IGNORECASE)
 def _load_data() -> dict:
     with open(_DATA_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _load_artist_genres() -> dict:
+    try:
+        with open(_ARTIST_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f).get("artists", {})
+    except (OSError, ValueError):
+        return {}
+    # Lowercase keys; normalize values through the controlled vocabulary.
+    return {k.strip().lower(): normalize_genre(v) for k, v in raw.items()}
 
 
 _DATA = _load_data()
@@ -40,9 +54,9 @@ _CONTROLLED_LOWER = {g.lower(): g for g in CONTROLLED_GENRES}
 
 
 def reload_data():
-    """Re-read genres.json (e.g. after the user edits the vocabulary)."""
+    """Re-read genres.json + artist_genres.json (after the user edits the vocab/maps)."""
     global _DATA, CONTROLLED_GENRES, _EXACT, _JUNK, _JUNK_PATTERNS, _KEYWORDS
-    global _COMPILATION_KEYWORDS, _CONTROLLED_LOWER
+    global _COMPILATION_KEYWORDS, _CONTROLLED_LOWER, ARTIST_GENRES
     _DATA = _load_data()
     CONTROLLED_GENRES = list(_DATA["controlled"])
     _EXACT = {k.lower(): v for k, v in _DATA["exact"].items()}
@@ -51,6 +65,7 @@ def reload_data():
     _KEYWORDS = [(kw.lower(), canon) for kw, canon in _DATA["keywords"]]
     _COMPILATION_KEYWORDS = [k.lower() for k in _DATA.get("compilation_dir_keywords", [])]
     _CONTROLLED_LOWER = {g.lower(): g for g in CONTROLLED_GENRES}
+    ARTIST_GENRES = _load_artist_genres()
 
 
 def _map_token(token: str) -> Optional[str]:
@@ -378,6 +393,202 @@ def run_clean(source_dir: Union[str, Path], progress_cb, record_cb, should_cance
         "genre_changes": genre_changes,
         "albumartist_filled": albumartist_filled,
         "errors": errors,
+        "cancelled": bool(should_cancel()),
+    }
+
+
+# ── Genre completion + artist unification (M3) ──────────────────────────────
+
+# Curated artist → canonical genre(s). Loaded after normalize_genre exists.
+ARTIST_GENRES = _load_artist_genres()
+
+_MB_HEADERS = {"User-Agent": "MusicMonster/1.0 ( https://github.com/ray-manalang/ytm-downloader )"}
+
+
+def artist_key(albumartist: Optional[str], artist: Optional[str]) -> str:
+    """The unit of unification: the album-artist, unless it's a compilation."""
+    aa = (albumartist or "").strip()
+    if aa and aa.lower() != "various artists":
+        return aa
+    return (artist or "").strip()
+
+
+def is_sole_holiday(genres: List[str]) -> bool:
+    """A track tagged ONLY Holiday is preserved during unify (§10)."""
+    return genres == ["Holiday"]
+
+
+def musicbrainz_genres(artist_name: str) -> List[str]:
+    """Look up an artist's genres on MusicBrainz → controlled genres, or []. Rate-limited."""
+    name = (artist_name or "").strip()
+    if not name:
+        return []
+    try:
+        r = requests.get(
+            "https://musicbrainz.org/ws/2/artist",
+            params={"query": f'artist:"{name}"', "fmt": "json", "limit": 1},
+            headers=_MB_HEADERS, timeout=12,
+        )
+        arts = r.json().get("artists", [])
+        if not arts:
+            return []
+        mbid = arts[0].get("id")
+        if not mbid:
+            return []
+        time.sleep(1.1)  # MusicBrainz asks for <=1 req/sec
+        r2 = requests.get(
+            f"https://musicbrainz.org/ws/2/artist/{mbid}",
+            params={"inc": "genres", "fmt": "json"},
+            headers=_MB_HEADERS, timeout=12,
+        )
+        names = [g.get("name", "") for g in r2.json().get("genres", [])]
+        return normalize_genre(names)
+    except Exception:
+        return []
+
+
+def _parse_stored_genre(genre_str: Optional[str]) -> List[str]:
+    """library_tracks stores genre as ', '-joined controlled genres."""
+    if not genre_str:
+        return []
+    return [g.strip() for g in genre_str.split(",") if g.strip()]
+
+
+def run_genre_review(tracks: List[dict], use_online: bool, progress_cb, should_cancel,
+                     online_cap: int = 400) -> dict:
+    """Propose a canonical genre per artist. Read-only — writes nothing.
+
+    ``tracks`` are ``library_tracks`` rows (path/artist/albumartist/genre). For each
+    artist group the canonical genre is: the curated map → else the dominant genre(s)
+    among the group's tracks → else (optional) a MusicBrainz lookup → else unresolved.
+    Sole-``Holiday`` tracks are excluded from the vote and preserved. Returns only
+    the ACTIONABLE artists (changes>0 or unresolved) to keep the payload small.
+    """
+    groups: dict = {}
+    for t in tracks:
+        key = artist_key(t.get("albumartist"), t.get("artist"))
+        if not key:
+            continue
+        groups.setdefault(key, []).append(t)
+
+    total = len(groups)
+    online_used = 0
+    out_artists = []
+    total_changes = unresolved = 0
+    done = 0
+
+    for key, group in sorted(groups.items()):
+        if should_cancel():
+            break
+        low = key.lower()
+        # Current per-track genres (normalized), Holiday tracks set aside.
+        track_genres = []
+        holiday_preserved = 0
+        for t in group:
+            g = _parse_stored_genre(t.get("genre"))
+            if is_sole_holiday(g):
+                holiday_preserved += 1
+            else:
+                track_genres.append(g)
+
+        vote = Counter()
+        for g in track_genres:
+            vote.update(g)
+
+        source = "unresolved"
+        canonical: List[str] = []
+        if low in ARTIST_GENRES and ARTIST_GENRES[low]:
+            canonical, source = ARTIST_GENRES[low], "curated"
+        elif vote:
+            top = max(vote.values())
+            canonical = [g for g, c in vote.items() if c == top]
+            source = "majority"
+        elif use_online and online_used < online_cap:
+            online_used += 1
+            mb = musicbrainz_genres(key)
+            if mb:
+                canonical, source = mb, "online"
+
+        # How many non-Holiday tracks would actually change?
+        changes = sum(1 for g in track_genres if g != canonical) if canonical else 0
+        if canonical:
+            total_changes += changes
+        else:
+            unresolved += 1
+
+        if changes > 0 or source == "unresolved":
+            out_artists.append({
+                "artist": key,
+                "key": low,
+                "canonical": canonical,
+                "source": source,
+                "track_count": len(group),
+                "changes": changes,
+                "holiday_preserved": holiday_preserved,
+                "current_top": vote.most_common(3),
+            })
+
+        done += 1
+        progress_cb({"done": done, "total": total, "current_file": key, "action": "review"})
+
+    out_artists.sort(key=lambda a: (a["source"] != "unresolved", -a["changes"]))
+    return {
+        "total_artists": total,
+        "artists_with_changes": sum(1 for a in out_artists if a["changes"] > 0),
+        "unresolved": unresolved,
+        "total_changes": total_changes,
+        "used_online": use_online,
+        "online_lookups": online_used,
+        "online_capped": use_online and online_used >= online_cap,
+        "artists": out_artists,
+        "cancelled": bool(should_cancel()),
+    }
+
+
+def run_unify(tracks: List[dict], approved: dict, progress_cb, record_cb, should_cancel) -> dict:
+    """Apply approved per-artist canonical genres, writing files in place.
+
+    ``approved`` maps lowercased artist key → list of controlled genres. Only tracks
+    whose artist is in ``approved`` are touched; sole-``Holiday`` tracks are preserved;
+    ``record_cb`` persists each pre-image to prep_changes before the write. Returns a
+    summary plus ``updated`` [(path, genre_str)] so the caller can refresh library_tracks.
+    """
+    targets = [t for t in tracks
+               if artist_key(t.get("albumartist"), t.get("artist")).lower() in approved]
+    total = len(targets)
+    changed = holiday_preserved = errors = 0
+    updated = []
+    done = 0
+
+    for t in targets:
+        if should_cancel():
+            break
+        path = t["path"]
+        key = artist_key(t.get("albumartist"), t.get("artist")).lower()
+        new_genre = approved.get(key) or []
+        try:
+            cur = read_tags(path)
+            old_genre = _genre_list(cur.get("genre"))
+            if is_sole_holiday(normalize_genre(old_genre)):
+                holiday_preserved += 1
+            elif new_genre and new_genre != old_genre:
+                record_cb(path, "genre", json.dumps(old_genre), json.dumps(new_genre))
+                if write_tags(path, genre=new_genre):
+                    changed += 1
+                    updated.append((path, ", ".join(new_genre)))
+                else:
+                    errors += 1
+        except Exception:
+            errors += 1
+        done += 1
+        progress_cb({"done": done, "total": total, "current_file": Path(path).name, "action": "unify"})
+
+    return {
+        "total_tracks": total,
+        "changed": changed,
+        "holiday_preserved": holiday_preserved,
+        "errors": errors,
+        "updated": updated,
         "cancelled": bool(should_cancel()),
     }
 

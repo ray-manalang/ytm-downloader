@@ -30,8 +30,9 @@ Single-process FastAPI app. No test suite.
 | `app/downloader.py` | yt-dlp wrapper, post-download cover-art resize, stray-thumbnail cleanup |
 | `app/ytm.py` | YouTube Music integration — auth, playlist/liked-songs browsing, auto-sync background task |
 | `app/converter.py` | FLAC→AAC transcode engine — ffmpeg subprocess, mirrors `downloader.py`'s pattern; never mutates the source |
-| `app/tagtools.py` | Pure tag logic — `normalize_genre`, `fill_album_artist`, `is_compilation`, mutagen read/write, and the `run_audit`/`run_clean` engines. No FastAPI; unit-tested |
+| `app/tagtools.py` | Pure tag logic — `normalize_genre`, `fill_album_artist`, `is_compilation`, mutagen read/write, and the `run_audit`/`run_clean`/`run_genre_review`/`run_unify` engines + MusicBrainz lookup. No FastAPI; unit-tested |
 | `app/data/genres.json` | Editable genre vocabulary + EXACT/JUNK/keyword maps loaded by `tagtools` |
+| `app/data/artist_genres.json` | Editable curated artist → canonical genre map for the unify step |
 | `app/prep.py` | iPod-Prep orchestration + `/api/prep/*` router — separate prep queue/worker pool; dispatches convert/audit/tags jobs |
 | `app/static/index.html` | Single-file dark-mode SPA — all JS inline, no build step, no external deps |
 | `app/static/logo.svg` | App icon (also used as browser favicon) |
@@ -123,8 +124,11 @@ Auto-generated YTM playlists ("Liked Music", "Episodes for Later", "New Episodes
 | POST | `/api/prep/convert` | Start a FLAC→AAC mirror job (`source_dir`, `output_dir`, `downsample_hires` optional) |
 | POST | `/api/prep/audit` | Scan the library read-only → genre distribution, missing album-artist, formats, unmapped genres; populates `library_tracks` |
 | POST | `/api/prep/tags` | Clean job — normalize genres + fill album-artist **in place** (requires a writable library); records `prep_changes` |
+| POST | `/api/prep/genres/review` | Review job — propose a canonical genre per artist from `library_tracks` (`use_online` opt-in MusicBrainz); needs an Audit first |
+| GET | `/api/prep/genres/latest` | Most recent completed review summary (the proposal table) |
+| POST | `/api/prep/genres/apply` | Unify job — apply an approved `{artist_key: [genres]}` map in place; records `prep_changes` |
 | GET | `/api/prep/audit/latest` | Most recent completed audit summary |
-| POST | `/api/prep/jobs/{id}/rollback` | Restore a tag-clean job from its `prep_changes` pre-images |
+| POST | `/api/prep/jobs/{id}/rollback` | Restore a `tags` or `unify` job from its `prep_changes` pre-images |
 | GET | `/api/prep/jobs` | List all prep jobs |
 | DELETE | `/api/prep/jobs/{id}` | Cancel a running/pending job or remove a finished one |
 
@@ -219,6 +223,13 @@ With `downsample_hires` and a source >16-bit/>48 kHz, `-ar 44100` is added. **No
 - **Clean** (`run_clean`) normalizes genres (`normalize_genre`) and fills missing album-artist (`fill_album_artist`), writing files **in place**. Before each file is touched, `record_cb` durably persists the pre-image to `prep_changes` (so a crash mid-run still leaves it rollback-able). Rollback restores those pre-images; an empty pre-image deletes the tag (faithful restore of an originally-absent value).
 - **Genre logic** is a FIRST-CUT of HANDOFF §10 derived from the 25-genre controlled vocab + documented rules; the `exact`/`junk`/`keywords` maps in `genres.json` should be replaced with the verbatim maps from Ray's `normalize_music_tags.py` when available. Key rules: whole-value match before splitting (protects `R&B/Soul`, `Christian/Gospel`), split compounds (`Rock/Pop`→`[Rock,Pop]`), drop junk (`Music`, decade tags, sole `Vocal`), unknown→dropped (M3 re-fills). Unit tests: `tests/test_tagtools.py`.
 - **Download hook:** `downloader._normalize_tags()` runs after `_resize_cover` on each new `.m4a`, normalizing its genre so new grabs land clean (best-effort, never fails a download).
+
+### Genre completion + artist unify (M3 — `tagtools.py`)
+
+- **Review** (`run_genre_review`) works off `library_tracks` (fast, no file I/O — run an Audit first). It groups tracks by `artist_key` (album-artist, or track artist for compilations) and proposes a canonical genre per artist: curated map (`artist_genres.json`) → else the dominant genre(s) among the artist's tracks (majority vote, ties kept) → else optional MusicBrainz lookup (`use_online`, rate-limited, capped) → else `unresolved`. **Sole-`Holiday` tracks are excluded from the vote and never overwritten.** Returns only actionable artists (changes>0 or unresolved) to bound the payload; the UI renders an editable review table.
+- **Apply / unify** (`run_unify`) takes the approved `{artist_key: [genres]}` map and writes tags in place, skipping sole-Holiday tracks, recording each pre-image to `prep_changes` (reversible via the same rollback endpoint), and returning `updated` so the worker refreshes `library_tracks.genre`.
+- **`prep_added` is broadcast before the job is enqueued** so a fast worker can't emit `prep_status` before clients see the job. The SPA also resyncs (`loadPrepJobs`) if a `prep_status`/`prep_progress` arrives for an unknown job id.
+- The `artist_genres.json` seed is a FIRST-CUT — replace it with the ~130-artist map from Ray's `unify_artists.py` when available (Holiday is never an artist's canonical genre; it's preserved per-track).
 
 ## Key yt-dlp settings — do not change without explicit approval
 

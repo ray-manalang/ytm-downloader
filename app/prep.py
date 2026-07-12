@@ -117,6 +117,27 @@ async def _insert_change(job_id: str, path: str, field: str, old_value: str, new
         await db.commit()
 
 
+async def _fetch_library_tracks() -> list:
+    async with aiosqlite.connect(_db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT path, artist, albumartist, genre FROM library_tracks"
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def _update_track_genres(updated: list):
+    """updated = [(path, genre_str), ...] — refresh library_tracks after a unify."""
+    if not updated:
+        return
+    async with aiosqlite.connect(_db_path) as db:
+        await db.executemany(
+            "UPDATE library_tracks SET genre=? WHERE path=?",
+            [(g, p) for p, g in updated],
+        )
+        await db.commit()
+
+
 # ── Prep worker ─────────────────────────────────────────────────────────────
 
 async def _handle_prep_progress(job_id: str, info: dict):
@@ -183,6 +204,26 @@ async def _prep_worker():
                         None, lambda: tagtools.run_clean(
                             job_spec["source_dir"], progress_cb, record_cb, cancel_ev.is_set)
                     )
+                elif jtype == "review":
+                    rows = await _fetch_library_tracks()
+                    use_online = bool(job_spec["settings"].get("use_online"))
+                    summary = await _loop.run_in_executor(
+                        None, lambda: tagtools.run_genre_review(
+                            rows, use_online, progress_cb, cancel_ev.is_set)
+                    )
+                elif jtype == "unify":
+                    rows = await _fetch_library_tracks()
+                    approved = job_spec["settings"].get("approved", {})
+
+                    def record_cb(path, field, old_json, new_json, _jid=job_id):
+                        asyncio.run_coroutine_threadsafe(
+                            _insert_change(_jid, path, field, old_json, new_json), _loop
+                        ).result()
+                    summary = await _loop.run_in_executor(
+                        None, lambda: tagtools.run_unify(
+                            rows, approved, progress_cb, record_cb, cancel_ev.is_set)
+                    )
+                    await _update_track_genres(summary.pop("updated", []))
                 else:
                     raise ValueError(f"Unknown prep job type: {jtype}")
 
@@ -256,8 +297,10 @@ async def _create_and_enqueue(jtype: str, source_dir: str, output_dir: str, sett
         "output_dir": output_dir, "status": "pending", "progress": 0,
         "total": 0, "done": 0, "settings": settings, "created_at": now,
     }
-    await _prep_queue.put(job_id)
+    # Broadcast prep_added BEFORE enqueuing, so a worker can't dequeue and emit
+    # prep_status(running) before clients have seen the job created.
     await _broadcast({"type": "prep_added", **entry})
+    await _prep_queue.put(job_id)
     return entry
 
 
@@ -299,6 +342,60 @@ async def start_clean(body: dict):
     if not os.access(source_dir, os.W_OK):
         raise HTTPException(400, f"Library is not writable (mount without :ro): {source_dir}")
     return await _create_and_enqueue("tags", source_dir, "", {})
+
+
+@router.post("/genres/review")
+async def start_genre_review(body: dict):
+    """Propose canonical genres per artist from the library_tracks index (needs an Audit first)."""
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute("SELECT COUNT(*) FROM library_tracks") as cur:
+            (count,) = await cur.fetchone()
+    if not count:
+        raise HTTPException(400, "No indexed tracks — run Audit first.")
+    settings = {"use_online": bool(body.get("use_online"))}
+    return await _create_and_enqueue("review", MUSIC_DIR or "", "", settings)
+
+
+@router.get("/genres/latest")
+async def latest_review():
+    async with aiosqlite.connect(_db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM prep_jobs WHERE type='review' AND status='done' "
+            "ORDER BY created_at DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return {"review": None}
+    job = _job_public(dict(row))
+    try:
+        job["summary"] = json.loads(row["error"] or "{}")
+    except (TypeError, ValueError):
+        job["summary"] = {}
+    return {"review": job}
+
+
+@router.post("/genres/apply")
+async def apply_genres(body: dict):
+    """Apply approved per-artist canonical genres (unify), writing tags in place."""
+    approved = body.get("approved") or {}
+    if not isinstance(approved, dict) or not approved:
+        raise HTTPException(400, "No approved artists to apply")
+    # Normalize keys to lowercase and drop empties.
+    clean = {}
+    for k, v in approved.items():
+        genres = tagtools.normalize_genre(v)
+        if genres:
+            clean[str(k).strip().lower()] = genres
+    if not clean:
+        raise HTTPException(400, "No valid genres in the approved set")
+
+    source_dir = MUSIC_DIR or ""
+    if not source_dir:
+        raise HTTPException(400, "MUSIC_DIR is not configured")
+    if not os.access(source_dir, os.W_OK):
+        raise HTTPException(400, f"Library is not writable (mount without :ro): {source_dir}")
+    return await _create_and_enqueue("unify", source_dir, "", {"approved": clean})
 
 
 @router.get("/audit/latest")
@@ -345,8 +442,8 @@ async def rollback_job(job_id: str):
     job = await _job_row(job_id)
     if not job:
         raise HTTPException(404, "Not found")
-    if job["type"] != "tags":
-        raise HTTPException(400, "Only tag-clean jobs can be rolled back")
+    if job["type"] not in ("tags", "unify"):
+        raise HTTPException(400, "Only tag-clean and unify jobs can be rolled back")
 
     async with aiosqlite.connect(_db_path) as db:
         db.row_factory = aiosqlite.Row
