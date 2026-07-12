@@ -140,6 +140,8 @@ def rerank(prompt: str, candidates: List[dict], target: int) -> List[int]:
     system = (
         f"Curate a playlist of up to {target} tracks from the candidates for the user's request. "
         "Pick the best fits and order them for good flow (best first). Drop poor fits. "
+        "Spread the selection across many different artists — avoid clustering; use at most about "
+        "two tracks per artist unless the request is specifically about one artist. "
         "Return only the indices of chosen candidates, in order."
     )
     user = f"Request: {prompt}\n\nCandidates:\n" + "\n".join(lines)

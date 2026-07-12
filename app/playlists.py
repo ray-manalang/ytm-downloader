@@ -328,6 +328,53 @@ async def preview(body: dict):
     return {"count": len(matched), "sample": sample}
 
 
+# Max tracks per artist in an AI playlist, unless the request is artist-specific.
+AI_MAX_PER_ARTIST = max(1, int(os.environ.get("AI_MAX_PER_ARTIST", "2")))
+
+
+def _artist_of(t: dict) -> str:
+    return (t.get("artist") or t.get("albumartist") or "").strip().lower()
+
+
+def _diversify_by_artist(tracks: List[dict]) -> List[dict]:
+    """Round-robin interleave by artist so no one artist dominates the front of the list."""
+    groups: dict = {}
+    order: List[str] = []
+    for t in tracks:
+        k = _artist_of(t)
+        if k not in groups:
+            groups[k] = []
+            order.append(k)
+        groups[k].append(t)
+    out: List[dict] = []
+    idx = {k: 0 for k in order}
+    remaining = len(tracks)
+    while remaining:
+        for k in order:
+            if idx[k] < len(groups[k]):
+                out.append(groups[k][idx[k]]); idx[k] += 1; remaining -= 1
+    return out
+
+
+def _cap_per_artist(ordered: List[dict], target: int, backfill: List[dict], cap: int) -> List[dict]:
+    """Keep at most `cap` tracks per artist, preserving order; backfill to `target` if room."""
+    counts, chosen, chosen_paths = {}, [], set()
+    def _try_add(t):
+        k = _artist_of(t)
+        if counts.get(k, 0) >= cap or t["path"] in chosen_paths:
+            return
+        counts[k] = counts.get(k, 0) + 1
+        chosen.append(t); chosen_paths.add(t["path"])
+    for t in ordered:
+        if len(chosen) >= target: break
+        _try_add(t)
+    if len(chosen) < target:
+        for t in backfill:
+            if len(chosen) >= target: break
+            _try_add(t)
+    return chosen
+
+
 @router.post("/ai")
 async def create_ai_playlist(body: dict):
     """Two-stage AI curation: prompt → intent (Claude) → local candidates → Claude re-rank."""
@@ -352,12 +399,14 @@ async def create_ai_playlist(body: dict):
         raise HTTPException(502, f"AI intent step failed: {e}")
 
     rules = intent.get("rules") or []
+    artist_specific = any(r.get("field") == "artist" for r in rules)
     target = int(intent.get("limit") or 30)
     # Stage 1b: local candidate query.
     candidates = _match_tracks(tracks, {"match": intent.get("match", "any"), "rules": rules}) if rules else []
     if not candidates and rules:  # nothing matched all — broaden to any-match
         candidates = _match_tracks(tracks, {"match": "any", "rules": rules})
-    candidates = candidates[:150]
+    # Diversify so a prolific artist doesn't dominate the 150 Claude sees.
+    candidates = _diversify_by_artist(candidates)[:150]
 
     # Stage 2: optional Claude re-rank / curate.
     selected = candidates
@@ -370,7 +419,8 @@ async def create_ai_playlist(body: dict):
         except Exception:
             order = []
         selected = [candidates[i] for i in order] if order else candidates
-    selected = selected[:target]
+    # Cap per artist — unless the user explicitly asked for one artist.
+    selected = selected[:target] if artist_specific else _cap_per_artist(selected, target, candidates, AI_MAX_PER_ARTIST)
 
     name = ((intent.get("name") or f"AI: {prompt}").strip())[:80] or "AI playlist"
     spec = {"source": "ai", "prompt": prompt, "intent": intent,
