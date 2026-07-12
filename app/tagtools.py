@@ -427,7 +427,7 @@ def musicbrainz_genres(artist_name: str) -> List[str]:
         r = requests.get(
             "https://musicbrainz.org/ws/2/artist",
             params={"query": f'artist:"{name}"', "fmt": "json", "limit": 1},
-            headers=_MB_HEADERS, timeout=12,
+            headers=_MB_HEADERS, timeout=6,
         )
         arts = r.json().get("artists", [])
         if not arts:
@@ -439,7 +439,7 @@ def musicbrainz_genres(artist_name: str) -> List[str]:
         r2 = requests.get(
             f"https://musicbrainz.org/ws/2/artist/{mbid}",
             params={"inc": "genres", "fmt": "json"},
-            headers=_MB_HEADERS, timeout=12,
+            headers=_MB_HEADERS, timeout=6,
         )
         names = [g.get("name", "") for g in r2.json().get("genres", [])]
         return normalize_genre(names)
@@ -455,7 +455,7 @@ def _parse_stored_genre(genre_str: Optional[str]) -> List[str]:
 
 
 def run_genre_review(tracks: List[dict], use_online: bool, progress_cb, should_cancel,
-                     online_cap: int = 400) -> dict:
+                     online_cap: int = 120, online_budget_s: float = 90.0) -> dict:
     """Propose a canonical genre per artist. Read-only — writes nothing.
 
     ``tracks`` are ``library_tracks`` rows (path/artist/albumartist/genre). For each
@@ -463,6 +463,12 @@ def run_genre_review(tracks: List[dict], use_online: bool, progress_cb, should_c
     among the group's tracks → else (optional) a MusicBrainz lookup → else unresolved.
     Sole-``Holiday`` tracks are excluded from the vote and preserved. Returns only
     the ACTIONABLE artists (changes>0 or unresolved) to keep the payload small.
+
+    The online (MusicBrainz) phase is doubly bounded — at most ``online_cap`` lookups
+    AND at most ``online_budget_s`` seconds of wall-clock — because each lookup is a
+    rate-limited (~1.1s) pair of network requests, so an unbounded run over a library
+    full of untagged/soundtrack artists would appear to hang. Artists left over once a
+    bound trips fall through to ``unresolved`` and can be handled from the review table.
     """
     groups: dict = {}
     for t in tracks:
@@ -473,6 +479,8 @@ def run_genre_review(tracks: List[dict], use_online: bool, progress_cb, should_c
 
     total = len(groups)
     online_used = 0
+    online_started = time.monotonic()
+    online_budget_hit = False
     out_artists = []
     total_changes = unresolved = 0
     done = 0
@@ -503,11 +511,14 @@ def run_genre_review(tracks: List[dict], use_online: bool, progress_cb, should_c
             top = max(vote.values())
             canonical = [g for g, c in vote.items() if c == top]
             source = "majority"
-        elif use_online and online_used < online_cap:
-            online_used += 1
-            mb = musicbrainz_genres(key)
-            if mb:
-                canonical, source = mb, "online"
+        elif use_online and online_used < online_cap and not online_budget_hit:
+            if time.monotonic() - online_started > online_budget_s:
+                online_budget_hit = True  # stop hitting the network; rest go unresolved
+            else:
+                online_used += 1
+                mb = musicbrainz_genres(key)
+                if mb:
+                    canonical, source = mb, "online"
 
         # How many non-Holiday tracks would actually change?
         changes = sum(1 for g in track_genres if g != canonical) if canonical else 0
@@ -539,7 +550,8 @@ def run_genre_review(tracks: List[dict], use_online: bool, progress_cb, should_c
         "total_changes": total_changes,
         "used_online": use_online,
         "online_lookups": online_used,
-        "online_capped": use_online and online_used >= online_cap,
+        "online_capped": use_online and (online_used >= online_cap or online_budget_hit),
+        "online_budget_hit": online_budget_hit,
         "artists": out_artists,
         "cancelled": bool(should_cancel()),
     }

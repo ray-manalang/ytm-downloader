@@ -190,9 +190,18 @@ async def _prep_worker():
             await _job_update(job_id, status="running")
             await _broadcast({"type": "prep_status", "id": job_id, "status": "running"})
 
+            # Throttle progress persistence: each event does a DB write + WS broadcast
+            # on the main loop, and a job can fire one per file/artist (thousands over a
+            # big library). Emit at most ~4/sec, but always the final tick — so the bar
+            # still lands on done/total. `_last` is a 1-slot mutable closure cell.
+            _last = [0.0]
             def progress_cb(dinfo, _jid=job_id):
-                coro = _handle_prep_progress(_jid, dinfo)
-                asyncio.run_coroutine_threadsafe(coro, _loop)
+                now = time.monotonic()
+                final = (dinfo.get("done") or 0) >= (dinfo.get("total") or 0)
+                if not final and now - _last[0] < 0.25:
+                    return
+                _last[0] = now
+                asyncio.run_coroutine_threadsafe(_handle_prep_progress(_jid, dinfo), _loop)
 
             job_spec = _job_public(job)
             jtype = job_spec.get("type") or "convert"
