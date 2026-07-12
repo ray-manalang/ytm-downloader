@@ -4,6 +4,8 @@ A self-hosted music-library tool. It started as a YouTube Music downloader and i
 
 ![Dark mode UI with queue, history, and file browser](https://img.shields.io/badge/UI-dark%20mode-ff0033?style=flat-square) ![Multi-arch](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-blue?style=flat-square)
 
+> **Running it day to day?** See [RUNBOOK.md](RUNBOOK.md) for the operator workflow (deploy → download → prepare → playlists, in order).
+
 ## Features
 
 - Paste one or many YouTube Music URLs (playlists and single tracks)
