@@ -2123,10 +2123,10 @@ async function loadPlaylistList() {
           <div class="card-title">🎵 ${escHtml(p.name)}</div>
           <div class="card-url">${escHtml(summary)}</div>
         </div>
-        <div style="display:flex;gap:8px;align-items:flex-start">
+        <div style="display:flex;gap:8px;align-items:center">
           ${p.type === 'ai' ? `<button class="btn-ghost btn-sm" onclick="recuratePlaylist('${p.id}')" title="Ask Claude to pick a fresh set of tracks for this prompt">✨ Re-curate</button>` : ''}
           <button class="btn-ghost btn-sm" onclick="regeneratePlaylist('${p.id}')" title="Re-run against the current library">↻ Regenerate</button>
-          <button class="btn-danger" onclick="deletePlaylist('${p.id}','${escHtml(p.name)}')">Delete</button>
+          <button class="btn-danger btn-sm" onclick="deletePlaylist('${p.id}','${escHtml(p.name)}')">Delete</button>
         </div>
       </div>
       <div class="card-meta">
