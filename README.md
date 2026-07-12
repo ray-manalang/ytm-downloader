@@ -16,6 +16,7 @@ A self-hosted music-library tool. It started as a YouTube Music downloader and i
 - **Auto-sync** — automatically download new liked songs on a configurable schedule
 - **iPod AAC mirror** — transcode a FLAC library to a 256k AAC mirror for iPod/iTunes; source is never modified, and re-runs only convert what's missing
 - **Tag cleanup** — audit your library, normalize genres to a controlled vocabulary, and fill missing album artists; every change is one-click reversible, and new downloads land normalized
+- **Smart playlists** — build genre/decade/year/artist rules and Music Monster keeps a matching `.m3u` in sync for Sonos / Music Assistant
 - Dark mode UI, no build step, no external JS dependencies
 
 ## Output format
@@ -114,6 +115,7 @@ This maps the native HAOS `/share` directory into the container so downloaded fi
 | `IPOD_DIR` | `./ipod` | AAC mirror output root |
 | `MAX_CONCURRENT_CONVERSIONS` | `2` | Parallel transcode workers |
 | `AAC_BITRATE` | `256k` | Conversion bitrate |
+| `PLAYLIST_DIR_LIBRARY` | `<MUSIC_DIR>/Playlists` | Where smart-playlist `.m3u` files are written |
 
 ## YouTube Music library integration
 
@@ -164,6 +166,10 @@ The **Prep** tab has three tools over your music library (`MUSIC_DIR`):
 ### iPod AAC mirror
 
 The **iPod AAC Mirror** section mirrors a FLAC music library into an iPod/iTunes-ready AAC copy.
+
+## Smart playlists (Playlists tab)
+
+The **Playlists** tab builds rule-based playlists over your library index (populated by Audit). Combine rules on **genre, artist, album artist, album, year, or decade** with match-all or match-any, preview the matches, then save. Music Monster writes an `.m3u` (with `#EXTINF` and paths relative to the playlist folder) into `PLAYLIST_DIR_LIBRARY` — inside your `MUSIC_DIR/Playlists` by default, so **Sonos / Music Assistant** picks it up. Hit **Regenerate** after adding music to refresh a playlist against the current library.
 
 - Set `MUSIC_DIR` (source, mounted **read-only**) and `IPOD_DIR` (output mirror). Both can also be typed into the form per-run.
 - `.flac` (and other lossless) are transcoded to **AAC 256k `.m4a`**, preserving cover art and tags.

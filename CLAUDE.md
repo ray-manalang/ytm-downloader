@@ -33,7 +33,8 @@ Single-process FastAPI app. No test suite.
 | `app/tagtools.py` | Pure tag logic — `normalize_genre`, `fill_album_artist`, `is_compilation`, mutagen read/write, and the `run_audit`/`run_clean`/`run_genre_review`/`run_unify` engines + MusicBrainz lookup. No FastAPI; unit-tested |
 | `app/data/genres.json` | Editable genre vocabulary + EXACT/JUNK/keyword maps loaded by `tagtools` |
 | `app/data/artist_genres.json` | Editable curated artist → canonical genre map for the unify step |
-| `app/prep.py` | iPod-Prep orchestration + `/api/prep/*` router — separate prep queue/worker pool; dispatches convert/audit/tags jobs |
+| `app/prep.py` | iPod-Prep orchestration + `/api/prep/*` router — separate prep queue/worker pool; dispatches convert/audit/tags/review/unify jobs |
+| `app/playlists.py` | Smart-playlist rule engine over `library_tracks` + M3U writer (relative paths) + `/api/playlists/*` router |
 | `app/static/index.html` | Single-file dark-mode SPA — all JS inline, no build step, no external deps |
 | `app/static/logo.svg` | App icon (also used as browser favicon) |
 
@@ -50,6 +51,8 @@ Single-process FastAPI app. No test suite.
 | `IPOD_DIR` | `./ipod` | AAC mirror output root (read-write) |
 | `MAX_CONCURRENT_CONVERSIONS` | `2` | Parallel transcode workers |
 | `AAC_BITRATE` | `256k` | Conversion bitrate |
+| `PLAYLIST_DIR_LIBRARY` | `<MUSIC_DIR>/Playlists` | Smart-playlist `.m3u` output for Sonos / Music Assistant |
+| `PLAYLIST_DIR_IPOD` | `<IPOD_DIR>/Playlists` | iPod-target `.m3u` output (P2, not yet wired) |
 
 ## Database schema
 
@@ -133,6 +136,20 @@ Auto-generated YTM playlists ("Liked Music", "Episodes for Later", "New Episodes
 | DELETE | `/api/prep/jobs/{id}` | Cancel a running/pending job or remove a finished one |
 
 Prep jobs run on a **separate** `_prep_queue` + worker pool (`MAX_CONCURRENT_CONVERSIONS`), independent of the download queue. WebSocket message types: `prep_added`, `prep_progress` (`done`/`total`/`current_file`/`action`), `prep_status` (`running`/`done`/`error`/`cancelled`, with a `summary` counts dict on done), `prep_removed`.
+
+### Playlists (`playlists.py`)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/playlists/config` | Facets from `library_tracks` (genres, artists, year range) + output dir + index size |
+| POST | `/api/playlists/preview` | Match a `spec` and return count + a 25-track sample (no save) |
+| GET | `/api/playlists` | List saved playlists |
+| POST | `/api/playlists` | Create a smart playlist (`name`, `spec`) → writes the `.m3u` |
+| PUT | `/api/playlists/{id}` | Update name/spec → regenerate |
+| POST | `/api/playlists/{id}/generate` | Re-run the rules against the current index and rewrite the `.m3u` |
+| DELETE | `/api/playlists/{id}` | Delete the row and its `.m3u` file |
+
+Smart playlists are **synchronous** (no queue/WS) — the rule engine filters the in-memory `library_tracks` rows. A `spec` is `{match: all|any, rules: [{field, op, value}], sort?, limit?}`; fields are `genre`/`artist`/`albumartist`/`album`/`year`/`decade` (`bpm`/`energy` exist for P4). M3U uses `#EXTINF` + paths **relative to `PLAYLIST_DIR_LIBRARY`** so Music Assistant resolves them. Playlists read the index that Audit populates — re-run Audit to refresh before regenerating.
 
 ### Auto-sync (`ytm.py`)
 
@@ -252,7 +269,7 @@ The DB `title` column stores the **album/playlist name** (from `playlist_title` 
 
 ## Frontend SPA (`app/static/index.html`)
 
-Single-file, no build step. Six tabs: **Library** (default), **Add**, **Queue**, **History**, **Prep** (Audit / Clean / Convert), **Files**.
+Single-file, no build step. Seven tabs: **Library** (default), **Add**, **Queue**, **History**, **Prep** (Audit / Clean / Genre / Convert), **Playlists** (smart rule builder), **Files**.
 
 Key JS state:
 - `downloads` — map of id → download object (source of truth for queue/history cards)

@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from .downloader import DOWNLOADS_DIR, run_download
 from . import ytm as ytm_module
 from . import prep as prep_module
+from . import playlists as playlists_module
 
 DB_PATH = os.environ.get("DB_PATH", "./data/downloads.db")
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "2"))
@@ -304,6 +305,7 @@ async def startup():
     prep_module.set_dependencies(_enqueue_download, broadcast, DB_PATH)
     await prep_module.reset_stuck_jobs()
     prep_module.start_prep_task()
+    playlists_module.set_dependencies(DB_PATH)
 
 
 # ── REST API ─────────────────────────────────────────────────────────────────
@@ -419,6 +421,7 @@ async def ws_endpoint(websocket: WebSocket):
 
 app.include_router(ytm_module.router)
 app.include_router(prep_module.router)
+app.include_router(playlists_module.router)
 
 # ── Static files ─────────────────────────────────────────────────────────────
 

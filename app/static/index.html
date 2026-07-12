@@ -162,6 +162,7 @@
   <div class="tab" data-tab="convert" onclick="switchTab('convert')">
     Prep <span class="badge" id="convBadge" style="display:none"></span>
   </div>
+  <div class="tab" data-tab="playlists" onclick="switchTab('playlists')">Playlists</div>
   <div class="tab" data-tab="files" onclick="switchTab('files')">Files</div>
 </div>
 
@@ -420,6 +421,54 @@
     </div>
   </div>
 
+  <!-- PLAYLISTS -->
+  <div class="panel" id="panel-playlists">
+    <div class="add-box" style="margin-bottom:20px">
+      <label>Create Smart Playlist</label>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.6">
+        Build a rule over your library and Music Monster keeps a matching
+        <code>.m3u</code> in sync for Sonos / Music Assistant.
+        <span id="plIndexNote"></span>
+      </p>
+      <input id="plName" type="text" placeholder="Playlist name — e.g. 80s Alternative"
+        style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;margin-bottom:10px">
+        Match
+        <select id="plMatch"><option value="all">all</option><option value="any">any</option></select>
+        of these rules:
+      </div>
+      <div id="plRulesTable"></div>
+      <button class="btn-ghost btn-sm" style="margin-top:8px" onclick="addRule()">+ Add rule</button>
+      <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:14px;flex-wrap:wrap">
+        <span style="display:flex;align-items:center;gap:6px">Sort
+          <select id="plSort">
+            <option value="">album order</option>
+            <option value="artist">artist</option>
+            <option value="album">album</option>
+            <option value="year">year</option>
+            <option value="random">random</option>
+          </select></span>
+        <span style="display:flex;align-items:center;gap:6px">Limit
+          <input id="plLimit" type="number" min="0" placeholder="none"
+            style="width:80px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-size:13px;outline:none"></span>
+      </div>
+      <div class="add-actions" style="margin-top:14px">
+        <button class="btn-ghost" id="plPreviewBtn" onclick="previewPlaylist()">Preview</button>
+        <button class="btn-primary" id="plSaveBtn" onclick="savePlaylist()">Save Playlist</button>
+      </div>
+      <div id="plError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+      <div id="plPreview" style="margin-top:14px"></div>
+    </div>
+
+    <div id="plList"></div>
+    <div class="empty" id="plEmpty" style="display:none">
+      <div class="empty-icon">🎵</div>
+      <p>No playlists yet</p>
+    </div>
+    <datalist id="plGenres"></datalist>
+    <datalist id="plArtists"></datalist>
+  </div>
+
   <!-- FILES -->
   <div class="panel" id="panel-files">
     <div class="files-toolbar">
@@ -449,6 +498,7 @@ function switchTab(name) {
   if (name === 'files') loadFiles();
   if (name === 'library') loadLibrary();
   if (name === 'convert') loadConvert();
+  if (name === 'playlists') loadPlaylists();
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1526,6 +1576,190 @@ async function applyGenres() {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) { document.getElementById('reviewError').textContent = data.detail || 'Apply failed.'; }
   // Unify job appears in the job list via WS.
+}
+
+// ── Playlists (smart / rule-based) ───────────────────────────────────────────
+let plRules = [{ field: 'genre', op: 'is', value: '' }];
+let plFacets = { genres: [], artists: [], year_min: 1960, year_max: 2025 };
+
+const PL_FIELD_OPS = {
+  genre: [['is', 'is']],
+  artist: [['is', 'is'], ['contains', 'contains']],
+  albumartist: [['is', 'is'], ['contains', 'contains']],
+  album: [['is', 'is'], ['contains', 'contains']],
+  year: [['is', 'is'], ['between', 'between'], ['gte', 'at least'], ['lte', 'at most']],
+  decade: [['is', 'is']],
+};
+const PL_FIELD_LABELS = { genre: 'Genre', artist: 'Artist', albumartist: 'Album artist', album: 'Album', year: 'Year', decade: 'Decade' };
+
+async function loadPlaylists() {
+  try {
+    const cfg = await (await fetch('/api/playlists/config')).json();
+    plFacets = cfg;
+    document.getElementById('plIndexNote').innerHTML = cfg.indexed_tracks
+      ? `<span style="color:var(--muted)">${cfg.indexed_tracks} tracks indexed · saved to <code>${escHtml(cfg.playlist_dir_library)}</code></span>`
+      : `<span style="color:var(--warn)">No indexed tracks yet — run <strong>Audit</strong> in the Prep tab first.</span>`;
+    document.getElementById('plGenres').innerHTML = (cfg.genres || []).map(g => `<option value="${escHtml(g)}">`).join('');
+    document.getElementById('plArtists').innerHTML = (cfg.artists || []).map(a => `<option value="${escHtml(a)}">`).join('');
+  } catch {}
+  renderRules();
+  await loadPlaylistList();
+}
+
+function renderRules() {
+  const el = document.getElementById('plRulesTable');
+  el.innerHTML = plRules.map((r, i) => {
+    const fieldSel = `<select onchange="setRule(${i},'field',this.value)">${
+      Object.keys(PL_FIELD_LABELS).map(f => `<option value="${f}" ${r.field === f ? 'selected' : ''}>${PL_FIELD_LABELS[f]}</option>`).join('')}</select>`;
+    const ops = PL_FIELD_OPS[r.field] || [['is', 'is']];
+    const opSel = `<select onchange="setRule(${i},'op',this.value)">${
+      ops.map(([v, l]) => `<option value="${v}" ${r.op === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+    return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+      ${fieldSel}${opSel}${ruleValueCell(r, i)}
+      <button class="btn-danger btn-sm" onclick="removeRule(${i})" ${plRules.length === 1 ? 'style="visibility:hidden"' : ''}>✕</button>
+    </div>`;
+  }).join('');
+}
+
+function ruleValueCell(r, i) {
+  const inp = (attrs, val) => `<input ${attrs} value="${escHtml(val == null ? '' : String(val))}"
+    style="background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-size:13px;outline:none">`;
+  if (r.field === 'genre') return inp(`list="plGenres" placeholder="genre" oninput="setRule(${i},'value',this.value)"`, r.value);
+  if (r.field === 'artist' || r.field === 'albumartist') return inp(`list="plArtists" placeholder="artist" oninput="setRule(${i},'value',this.value)"`, r.value);
+  if (r.field === 'album') return inp(`placeholder="album" oninput="setRule(${i},'value',this.value)"`, r.value);
+  if (r.field === 'decade') {
+    const opts = [];
+    for (let d = 1950; d <= 2020; d += 10) opts.push(`<option value="${d}" ${+r.value === d ? 'selected' : ''}>${d}s</option>`);
+    return `<select onchange="setRule(${i},'value',parseInt(this.value,10))">${opts.join('')}</select>`;
+  }
+  if (r.field === 'year') {
+    if (r.op === 'between') {
+      const v = Array.isArray(r.value) ? r.value : [plFacets.year_min || 1980, plFacets.year_max || 1989];
+      return `<input type="number" value="${v[0]}" oninput="setRuleBetween(${i},0,this.value)" style="width:80px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-size:13px;outline:none">
+        <span style="color:var(--muted)">to</span>
+        <input type="number" value="${v[1]}" oninput="setRuleBetween(${i},1,this.value)" style="width:80px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-size:13px;outline:none">`;
+    }
+    return inp(`type="number" placeholder="year" oninput="setRule(${i},'value',parseInt(this.value,10))"`, r.value);
+  }
+  return '';
+}
+
+function setRule(i, key, val) {
+  plRules[i][key] = val;
+  if (key === 'field') {
+    plRules[i].op = (PL_FIELD_OPS[val] || [['is']])[0][0];
+    plRules[i].value = val === 'decade' ? 1980 : (val === 'year' ? '' : '');
+    renderRules();
+  } else if (key === 'op') {
+    if (val === 'between') plRules[i].value = [plFacets.year_min || 1980, plFacets.year_max || 1989];
+    else if (Array.isArray(plRules[i].value)) plRules[i].value = '';
+    renderRules();
+  }
+}
+
+function setRuleBetween(i, idx, val) {
+  if (!Array.isArray(plRules[i].value)) plRules[i].value = [1980, 1989];
+  plRules[i].value[idx] = parseInt(val, 10);
+}
+
+function addRule() { plRules.push({ field: 'genre', op: 'is', value: '' }); renderRules(); }
+function removeRule(i) { plRules.splice(i, 1); if (!plRules.length) plRules.push({ field: 'genre', op: 'is', value: '' }); renderRules(); }
+
+function buildSpec() {
+  const rules = plRules
+    .map(r => ({ field: r.field, op: r.op, value: r.value }))
+    .filter(r => r.value !== '' && r.value != null && !(Array.isArray(r.value) && r.value.some(x => isNaN(x))));
+  const spec = { match: document.getElementById('plMatch').value, rules };
+  const sort = document.getElementById('plSort').value;
+  if (sort) spec.sort = sort;
+  const limit = parseInt(document.getElementById('plLimit').value, 10);
+  if (limit > 0) spec.limit = limit;
+  return spec;
+}
+
+async function previewPlaylist() {
+  const spec = buildSpec();
+  const errEl = document.getElementById('plError'); errEl.textContent = '';
+  if (!spec.rules.length) { errEl.textContent = 'Add at least one rule with a value.'; return; }
+  const res = await fetch('/api/playlists/preview', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({spec}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { errEl.textContent = data.detail || 'Preview failed.'; return; }
+  const el = document.getElementById('plPreview');
+  const rows = (data.sample || []).map(s =>
+    `<div style="padding:5px 0;border-top:1px solid var(--border);font-size:12px">
+       <span>${escHtml(s.artist || '')}</span> <span style="color:var(--muted)">— ${escHtml(s.title || '')}${s.year ? ' · ' + s.year : ''}${s.genre ? ' · ' + escHtml(s.genre) : ''}</span></div>`).join('');
+  el.innerHTML = `<div style="border-top:1px solid var(--border);padding-top:12px">
+    <div style="font-size:13px;margin-bottom:6px"><strong style="color:var(--accent)">${data.count}</strong> tracks match${data.count > 25 ? ' (showing 25)' : ''}</div>${rows}</div>`;
+}
+
+async function savePlaylist() {
+  const name = document.getElementById('plName').value.trim();
+  const spec = buildSpec();
+  const errEl = document.getElementById('plError'); errEl.textContent = '';
+  if (!name) { errEl.textContent = 'Name is required.'; return; }
+  if (!spec.rules.length) { errEl.textContent = 'Add at least one rule with a value.'; return; }
+  const btn = document.getElementById('plSaveBtn'); btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/playlists', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, spec}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { errEl.textContent = data.detail || 'Save failed.'; return; }
+    document.getElementById('plName').value = '';
+    document.getElementById('plPreview').innerHTML = '';
+    plRules = [{ field: 'genre', op: 'is', value: '' }];
+    renderRules();
+    await loadPlaylistList();
+  } finally { btn.disabled = false; btn.textContent = 'Save Playlist'; }
+}
+
+function ruleSummary(spec) {
+  const parts = (spec.rules || []).map(r => {
+    const f = PL_FIELD_LABELS[r.field] || r.field;
+    if (r.op === 'between' && Array.isArray(r.value)) return `${f} ${r.value[0]}–${r.value[1]}`;
+    if (r.field === 'decade') return `${f} ${r.value}s`;
+    return `${f} ${r.op} ${r.value}`;
+  });
+  return parts.join(` ${spec.match === 'any' ? 'OR' : 'AND'} `);
+}
+
+async function loadPlaylistList() {
+  const data = await (await fetch('/api/playlists')).json();
+  const items = data.playlists || [];
+  const el = document.getElementById('plList');
+  const empty = document.getElementById('plEmpty');
+  if (!items.length) { el.innerHTML = ''; empty.style.display = ''; return; }
+  empty.style.display = 'none';
+  el.innerHTML = items.map(p => `
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-header">
+        <div class="card-info">
+          <div class="card-title">🎵 ${escHtml(p.name)}</div>
+          <div class="card-url">${escHtml(ruleSummary(p.spec))}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <button class="btn-ghost btn-sm" onclick="regeneratePlaylist('${p.id}')" title="Re-run against the current library">↻ Regenerate</button>
+          <button class="btn-danger" onclick="deletePlaylist('${p.id}','${escHtml(p.name)}')">Delete</button>
+        </div>
+      </div>
+      <div class="card-meta">
+        <span class="status-chip status-done">${p.track_count} tracks</span>
+        <span style="color:var(--muted);font-size:12px">updated ${fmtDate(p.updated_at)}</span>
+      </div>
+    </div>`).join('');
+}
+
+async function regeneratePlaylist(id) {
+  await fetch('/api/playlists/' + id + '/generate', { method: 'POST' });
+  await loadPlaylistList();
+}
+
+async function deletePlaylist(id, name) {
+  if (!confirm(`Delete playlist "${name}" and its .m3u file?`)) return;
+  await fetch('/api/playlists/' + id, { method: 'DELETE' });
+  await loadPlaylistList();
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
