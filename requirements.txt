@@ -5,3 +5,4 @@ aiosqlite==0.20.0
 ytmusicapi>=1.7
 mutagen==1.47.0
 requests>=2.31
+anthropic>=0.40

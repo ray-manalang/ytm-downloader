@@ -17,6 +17,7 @@ A self-hosted music-library tool. It started as a YouTube Music downloader and i
 - **iPod AAC mirror** — transcode a FLAC library to a 256k AAC mirror for iPod/iTunes; source is never modified, and re-runs only convert what's missing
 - **Tag cleanup** — audit your library, normalize genres to a controlled vocabulary, and fill missing album artists; every change is one-click reversible, and new downloads land normalized
 - **Smart playlists** — build genre/decade/year/artist rules and Music Monster keeps a matching `.m3u` in sync for Sonos / Music Assistant, the iPod mirror, or both; also import YouTube Music playlists (missing tracks are queued to download)
+- **AI playlists** — describe a vibe and Claude builds it from your library (optional; set `ANTHROPIC_API_KEY`)
 - Dark mode UI, no build step, no external JS dependencies
 
 ## Output format
@@ -174,6 +175,8 @@ The **Playlists** tab builds rule-based playlists over your library index (popul
 **Targets** — each playlist can write to the **Library** target (`PLAYLIST_DIR_LIBRARY`, default `MUSIC_DIR/Playlists`), the **iPod** target (`PLAYLIST_DIR_IPOD`, default `IPOD_DIR/Playlists`, using the AAC mirror's `.m4a` paths), or both. The iPod playlist only lists tracks that already exist in the mirror, so run **Convert** first.
 
 **Import from YouTube Music** — pick one of your YTM playlists and Music Monster builds a local `.m3u` from the tracks you already have, and queues the rest for download. Re-import or Regenerate later to pick up the newly downloaded tracks.
+
+**AI Playlist** *(optional)* — describe a vibe (e.g. "upbeat 80s new wave for a road trip") and Claude builds it from your library: it picks a filter grounded in your actual genres/artists, then curates and orders the best matches. Enable it by setting `ANTHROPIC_API_KEY` in the container environment (`ANTHROPIC_MODEL` defaults to the low-cost `claude-haiku-4-5`). Without a key, the feature is hidden and the rest of the app is unaffected.
 
 - Set `MUSIC_DIR` (source, mounted **read-only**) and `IPOD_DIR` (output mirror). Both can also be typed into the form per-run.
 - `.flac` (and other lossless) are transcoded to **AAC 256k `.m4a`**, preserving cover art and tags.

@@ -8,6 +8,7 @@ Mirrors ``ytm.py``/``prep.py``: an ``APIRouter`` included by ``main.py`` and a
 ``set_dependencies(db_path)`` hook wired in ``startup``.
 """
 
+import asyncio
 import json
 import os
 import random
@@ -22,6 +23,8 @@ from fastapi import APIRouter, HTTPException
 
 from . import converter
 from . import ytm as ytm_module
+from . import ai_curator
+from .tagtools import CONTROLLED_GENRES
 
 router = APIRouter(prefix="/api/playlists")
 
@@ -207,7 +210,10 @@ def _match_ytm_tracks(ytm_tracks: List[dict], library: List[dict]) -> tuple:
 
 
 def _matched_for_spec(spec: dict, tracks: List[dict]) -> List[dict]:
-    """A spec is either a rule set (smart) or a fixed YTM track list."""
+    """A spec is a rule set (smart), a YTM track list, or a fixed AI selection."""
+    if spec.get("ai_paths"):
+        by_path = {t["path"]: t for t in tracks}
+        return [by_path[p] for p in spec["ai_paths"] if p in by_path]
     if spec.get("rules"):
         return _match_tracks(tracks, spec)
     if spec.get("ytm_tracks"):
@@ -272,30 +278,40 @@ def _row_public(row: dict) -> dict:
 
 # ── REST API ────────────────────────────────────────────────────────────────
 
-@router.get("/config")
-async def playlists_config():
-    """Facets from library_tracks so the UI can build rules; plus output dir + index size."""
-    tracks = await _all_tracks()
-    genres, artists = set(), set()
+def _facets(tracks: List[dict]) -> dict:
+    artists = set()
     years = []
     for t in tracks:
-        genres.update(g for g in _track_genres(t))
         aa = (t.get("albumartist") or t.get("artist") or "").strip()
         if aa:
             artists.add(aa)
         if t.get("year"):
             years.append(t["year"])
-    # Present genres in their canonical casing by re-reading from tracks.
     genre_display = sorted({g.strip() for t in tracks for g in (t.get("genre") or "").split(",") if g.strip()})
+    return {
+        "genres": genre_display,
+        "artists": sorted(artists),
+        "year_min": min(years) if years else None,
+        "year_max": max(years) if years else None,
+    }
+
+
+@router.get("/config")
+async def playlists_config():
+    """Facets from library_tracks so the UI can build rules; plus output dir + index size."""
+    tracks = await _all_tracks()
+    facets = _facets(tracks)
     return {
         "playlist_dir_library": PLAYLIST_DIR_LIBRARY,
         "playlist_dir_ipod": PLAYLIST_DIR_IPOD,
         "indexed_tracks": len(tracks),
-        "genres": genre_display,
-        "artists": sorted(artists)[:2000],
-        "year_min": min(years) if years else None,
-        "year_max": max(years) if years else None,
+        "genres": facets["genres"],
+        "artists": facets["artists"][:2000],
+        "year_min": facets["year_min"],
+        "year_max": facets["year_max"],
         "ytm_connected": ytm_module.is_connected(),
+        "ai_enabled": ai_curator.is_enabled(),
+        "ai_model": ai_curator.ANTHROPIC_MODEL,
     }
 
 
@@ -310,6 +326,68 @@ async def preview(body: dict):
                "album": t.get("album"), "genre": t.get("genre"), "year": t.get("year")}
               for t in matched[:25]]
     return {"count": len(matched), "sample": sample}
+
+
+@router.post("/ai")
+async def create_ai_playlist(body: dict):
+    """Two-stage AI curation: prompt → intent (Claude) → local candidates → Claude re-rank."""
+    if not ai_curator.is_enabled():
+        raise HTTPException(400, "AI curation is disabled — set ANTHROPIC_API_KEY to enable it.")
+    prompt = (body.get("prompt") or "").strip()
+    if not prompt:
+        raise HTTPException(400, "A prompt is required")
+    targets = _clean_targets(body.get("targets"))
+
+    tracks = await _all_tracks()
+    if not tracks:
+        raise HTTPException(400, "No indexed tracks — run Audit first.")
+    facets = _facets(tracks)
+    loop = asyncio.get_event_loop()
+
+    # Stage 1: prompt → structured intent (grounded in the library's facets).
+    try:
+        intent = await loop.run_in_executor(
+            None, lambda: ai_curator.prompt_to_intent(prompt, facets, CONTROLLED_GENRES))
+    except Exception as e:
+        raise HTTPException(502, f"AI intent step failed: {e}")
+
+    rules = intent.get("rules") or []
+    target = int(intent.get("limit") or 30)
+    # Stage 1b: local candidate query.
+    candidates = _match_tracks(tracks, {"match": intent.get("match", "any"), "rules": rules}) if rules else []
+    if not candidates and rules:  # nothing matched all — broaden to any-match
+        candidates = _match_tracks(tracks, {"match": "any", "rules": rules})
+    candidates = candidates[:150]
+
+    # Stage 2: optional Claude re-rank / curate.
+    selected = candidates
+    if candidates:
+        cand_meta = [{"artist": c.get("artist"), "title": _display_title(c.get("path", "")),
+                      "album": c.get("album"), "genre": c.get("genre"), "year": c.get("year")}
+                     for c in candidates]
+        try:
+            order = await loop.run_in_executor(None, lambda: ai_curator.rerank(prompt, cand_meta, target))
+        except Exception:
+            order = []
+        selected = [candidates[i] for i in order] if order else candidates
+    selected = selected[:target]
+
+    name = ((intent.get("name") or f"AI: {prompt}").strip())[:80] or "AI playlist"
+    spec = {"source": "ai", "prompt": prompt, "intent": intent,
+            "ai_paths": [t["path"] for t in selected]}
+    pid = str(uuid.uuid4())[:8]
+    now = time.time()
+    gen = await _generate(name, spec, targets)
+    async with aiosqlite.connect(_db_path) as db:
+        await db.execute(
+            "INSERT INTO playlists (id,name,type,spec,targets,track_count,auto_refresh,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (pid, name, "ai", json.dumps(spec), json.dumps(targets), gen["track_count"], 1, now),
+        )
+        await db.commit()
+    return {"id": pid, "name": name, "type": "ai", "targets": targets,
+            "candidates": len(candidates), "matched": gen["track_count"],
+            "written": gen["written"], "updated_at": now}
 
 
 @router.get("")

@@ -493,6 +493,32 @@
       </div>
     </div>
 
+    <!-- AI playlist -->
+    <div class="add-box" style="margin-bottom:20px" id="plAiBox">
+      <label>AI Playlist <span id="plAiModel" style="color:var(--muted);font-weight:400;font-size:11px"></span></label>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.6">
+        Describe a vibe and Claude builds it from your library — it picks a filter, then curates and orders the best matches.
+      </p>
+      <div id="plAiBody">
+        <textarea id="plAiPrompt" placeholder="e.g. upbeat 80s new wave for a road trip"
+          style="min-height:70px;font-family:inherit"></textarea>
+        <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:12px">
+          Write to:
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="plAiLibrary" checked style="accent-color:var(--accent)"> Library</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="plAiIpod" style="accent-color:var(--accent)"> iPod mirror</label>
+        </div>
+        <div class="add-actions" style="margin-top:12px">
+          <button class="btn-primary" id="plAiBtn" onclick="generateAi()">✨ Generate with AI</button>
+        </div>
+        <div id="plAiResult" style="margin-top:10px;font-size:13px"></div>
+      </div>
+      <div id="plAiDisabled" style="color:var(--muted);font-size:13px;display:none">
+        AI curation is off. Set <code>ANTHROPIC_API_KEY</code> in the container environment to enable it.
+      </div>
+    </div>
+
     <div id="plList"></div>
     <div class="empty" id="plEmpty" style="display:none">
       <div class="empty-icon">🎵</div>
@@ -1650,8 +1676,40 @@ async function loadPlaylists() {
   } else {
     importBody.style.display = 'none'; importDisc.style.display = '';
   }
+  // AI box: enabled only when ANTHROPIC_API_KEY is set in the container.
+  const aiBody = document.getElementById('plAiBody');
+  const aiDisabled = document.getElementById('plAiDisabled');
+  if (plFacets.ai_enabled) {
+    aiBody.style.display = ''; aiDisabled.style.display = 'none';
+    document.getElementById('plAiModel').textContent = plFacets.ai_model ? `· ${plFacets.ai_model}` : '';
+  } else {
+    aiBody.style.display = 'none'; aiDisabled.style.display = '';
+    document.getElementById('plAiModel').textContent = '';
+  }
   renderRules();
   await loadPlaylistList();
+}
+
+async function generateAi() {
+  const prompt = document.getElementById('plAiPrompt').value.trim();
+  const targets = plTargets('plAiLibrary', 'plAiIpod');
+  const out = document.getElementById('plAiResult');
+  if (!prompt) { out.innerHTML = '<span style="color:var(--danger)">Describe what you want.</span>'; return; }
+  if (!targets.length) { out.innerHTML = '<span style="color:var(--danger)">Pick at least one target.</span>'; return; }
+  const btn = document.getElementById('plAiBtn'); btn.disabled = true; btn.textContent = '✨ Curating…';
+  out.innerHTML = '<span style="color:var(--muted)">Asking Claude to build it…</span>';
+  try {
+    const res = await fetch('/api/playlists/ai', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({prompt, targets}),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { out.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'AI generation failed.')}</span>`; return; }
+    out.innerHTML = `<span style="color:var(--accent)">✓ "${escHtml(d.name)}" — ${d.matched} tracks</span>
+      <span style="color:var(--muted)"> from ${d.candidates} candidates</span>`;
+    document.getElementById('plAiPrompt').value = '';
+    await loadPlaylistList();
+  } finally { btn.disabled = false; btn.textContent = '✨ Generate with AI'; }
 }
 
 function plTargets(libId, ipodId) {
@@ -1813,12 +1871,14 @@ async function loadPlaylistList() {
   if (!items.length) { el.innerHTML = ''; empty.style.display = ''; return; }
   empty.style.display = 'none';
   el.innerHTML = items.map(p => {
-    const summary = p.type === 'ytm'
-      ? `YouTube Music import${p.spec && p.spec.ytm_tracks ? ` · ${p.spec.ytm_tracks.length} source tracks` : ''}`
-      : ruleSummary(p.spec);
+    let summary;
+    if (p.type === 'ytm') summary = `YouTube Music import${p.spec && p.spec.ytm_tracks ? ` · ${p.spec.ytm_tracks.length} source tracks` : ''}`;
+    else if (p.type === 'ai') summary = `AI · "${(p.spec && p.spec.prompt) || ''}"`;
+    else summary = ruleSummary(p.spec);
     const targetBadges = (p.targets || []).map(t =>
       `<span class="status-chip" style="background:var(--surface2);color:var(--muted)">${t === 'ipod' ? 'iPod' : 'Library'}</span>`).join('');
-    const typeBadge = p.type === 'ytm' ? '<span class="status-chip" style="background:var(--accent-soft);color:var(--accent)">YTM</span>' : '';
+    const typeBadge = p.type === 'ytm' ? '<span class="status-chip" style="background:var(--accent-soft);color:var(--accent)">YTM</span>'
+      : p.type === 'ai' ? '<span class="status-chip" style="background:var(--accent-soft);color:var(--accent)">AI</span>' : '';
     return `
     <div class="card" style="margin-bottom:10px">
       <div class="card-header">

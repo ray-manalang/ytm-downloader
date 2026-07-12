@@ -28,6 +28,9 @@ services:
       IPOD_DIR: /ipod
       MAX_CONCURRENT_CONVERSIONS: "2"
       AAC_BITRATE: 256k
+      # AI playlist engine — optional. Set the key to enable; NEVER commit it.
+      # ANTHROPIC_API_KEY: sk-ant-...
+      ANTHROPIC_MODEL: claude-haiku-4-5
 
 volumes:
   ytm_data:

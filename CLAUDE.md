@@ -35,6 +35,7 @@ Single-process FastAPI app. No test suite.
 | `app/data/artist_genres.json` | Editable curated artist → canonical genre map for the unify step |
 | `app/prep.py` | iPod-Prep orchestration + `/api/prep/*` router — separate prep queue/worker pool; dispatches convert/audit/tags/review/unify jobs |
 | `app/playlists.py` | Smart-playlist rule engine over `library_tracks` + M3U writer (relative paths) + `/api/playlists/*` router |
+| `app/ai_curator.py` | AI playlist curation via Claude (Anthropic SDK) — two-stage prompt→intent→re-rank; isolates the key + degrades cleanly |
 | `app/static/index.html` | Single-file dark-mode SPA — all JS inline, no build step, no external deps |
 | `app/static/logo.svg` | App icon (also used as browser favicon) |
 
@@ -53,6 +54,8 @@ Single-process FastAPI app. No test suite.
 | `AAC_BITRATE` | `256k` | Conversion bitrate |
 | `PLAYLIST_DIR_LIBRARY` | `<MUSIC_DIR>/Playlists` | Smart-playlist `.m3u` output for Sonos / Music Assistant |
 | `PLAYLIST_DIR_IPOD` | `<IPOD_DIR>/Playlists` | iPod-target `.m3u` output (mirror paths) |
+| `ANTHROPIC_API_KEY` | *(empty)* | Enables the AI playlist engine. **Runtime env only — never commit.** AI degrades to smart-only if unset |
+| `ANTHROPIC_MODEL` | `claude-haiku-4-5` | Model for AI curation (cheap by design; overridable) |
 
 ## Database schema
 
@@ -148,6 +151,7 @@ Prep jobs run on a **separate** `_prep_queue` + worker pool (`MAX_CONCURRENT_CON
 | PUT | `/api/playlists/{id}` | Update name/spec → regenerate |
 | POST | `/api/playlists/{id}/generate` | Re-run against the current index and rewrite the `.m3u`(s) |
 | POST | `/api/playlists/import/ytm` | Import a YTM playlist → M3U for owned tracks + enqueue the missing ones |
+| POST | `/api/playlists/ai` | Two-stage AI curation (`prompt`, `targets`) → `type='ai'` playlist. 400 if `ANTHROPIC_API_KEY` unset |
 | DELETE | `/api/playlists/{id}` | Delete the row and its `.m3u` file(s) |
 
 Smart playlists are **synchronous** (no queue/WS) — the rule engine filters the in-memory `library_tracks` rows. A smart `spec` is `{match: all|any, rules: [{field, op, value}], sort?, limit?}`; fields are `genre`/`artist`/`albumartist`/`album`/`year`/`decade` (`bpm`/`energy` exist for P4). M3U uses `#EXTINF` + paths **relative to the playlist folder** so Music Assistant resolves them.
@@ -155,6 +159,8 @@ Smart playlists are **synchronous** (no queue/WS) — the rule engine filters th
 **Targets (P2):** a playlist's `targets` is a subset of `["library", "ipod"]`. The **library** target writes source paths to `PLAYLIST_DIR_LIBRARY`; the **ipod** target maps each track to its mirror file via `converter.mirror_path()` (`.flac`→`.m4a`) and writes to `PLAYLIST_DIR_IPOD`, **including only mirror files that already exist** (run Convert first). Renaming or dropping a target removes the stale `.m3u`.
 
 **YTM import (P2):** `type='ytm'` playlists store the fetched YTM track list in `spec.ytm_tracks`. `_match_ytm_tracks` matches by normalized title (stripping `(...)`/`[...]`) + artist-substring overlap against the library; matched tracks go into the M3U, missing ones are enqueued via the download queue. Regenerating re-matches the stored track list against the current library (no YTM call) — so it picks up tracks once their downloads finish and a re-Audit indexes them.
+
+**AI curation (P3 — `ai_curator.py`):** `type='ai'` playlists come from a two-stage Claude flow, all key-gated on `ANTHROPIC_API_KEY` (read from env by the SDK — never stored). Stage 1 `prompt_to_intent` turns the NL prompt into a smart-playlist spec **grounded in the library's actual facets** (controlled genres, present genres, artist sample, year range) via structured output. Stage 1b runs that spec through the rule engine for candidates (broadening to any-match if the all-match set is empty, capped at 150). Stage 2 `rerank` has Claude select+order the best ~N. The final ordered selection is frozen in `spec.ai_paths`, so `_matched_for_spec` reproduces it on regenerate deterministically (no re-call). Model defaults to `claude-haiku-4-5` (cheap curation, per HANDOFF §4). Both Claude calls run in an executor so they don't block the loop. If the key/SDK is absent, `is_enabled()` is False and the endpoint 400s / the UI hides the box.
 
 Playlists read the index that Audit populates — re-run Audit to refresh before regenerating.
 
