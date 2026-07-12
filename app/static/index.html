@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>YTM Downloader</title>
+<title>Music Monster</title>
 <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -146,7 +146,7 @@
 
 <header>
   <img src="/static/logo.svg" alt="" width="36" height="36" style="flex-shrink:0">
-  <h1>YTM Downloader</h1>
+  <h1>Music Monster</h1>
   <div class="ws-dot" id="wsDot" title="WebSocket status"></div>
 </header>
 
@@ -158,6 +158,9 @@
   </div>
   <div class="tab" data-tab="history" onclick="switchTab('history')">
     History <span class="badge warn" id="histBadge" style="display:none"></span>
+  </div>
+  <div class="tab" data-tab="convert" onclick="switchTab('convert')">
+    Convert <span class="badge" id="convBadge" style="display:none"></span>
   </div>
   <div class="tab" data-tab="files" onclick="switchTab('files')">Files</div>
 </div>
@@ -342,6 +345,44 @@
     </div>
   </div>
 
+  <!-- CONVERT -->
+  <div class="panel" id="panel-convert">
+    <div class="add-box" style="margin-bottom:20px">
+      <label>iPod AAC Mirror</label>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.6">
+        Transcode a FLAC library into a 256k AAC mirror for iPod/iTunes. MP3 and AAC files
+        are copied as-is; DRM (<code>.m4p</code>) files are skipped. The source is never
+        modified, and re-running only converts what's missing.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div>
+          <label style="display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Source directory (read-only)</label>
+          <input id="convSource" type="text" placeholder="/music"
+            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
+        </div>
+        <div>
+          <label style="display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Output mirror directory</label>
+          <input id="convOutput" type="text" placeholder="/ipod"
+            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
+        </div>
+        <label class="lib-sync-row" style="cursor:pointer;color:var(--muted);font-size:13px;margin:0">
+          <input type="checkbox" id="convDownsample" style="width:16px;height:16px;cursor:pointer;accent-color:var(--accent)">
+          Downsample hi-res (&gt;16-bit / &gt;48kHz) to 44.1kHz/16-bit
+        </label>
+      </div>
+      <div class="add-actions" style="margin-top:14px">
+        <button class="btn-primary" id="convStartBtn" onclick="startConvert()">Start Conversion</button>
+        <span id="convBitrateNote" style="color:var(--muted);font-size:12px;align-self:center"></span>
+      </div>
+      <div id="convError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+    </div>
+    <div class="card-list" id="prepList"></div>
+    <div class="empty" id="prepEmpty" style="display:none">
+      <div class="empty-icon">🎧</div>
+      <p>No conversion jobs yet</p>
+    </div>
+  </div>
+
   <!-- FILES -->
   <div class="panel" id="panel-files">
     <div class="files-toolbar">
@@ -370,6 +411,7 @@ function switchTab(name) {
   document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
   if (name === 'files') loadFiles();
   if (name === 'library') loadLibrary();
+  if (name === 'convert') loadConvert();
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -629,6 +671,7 @@ function connectWS() {
         for (const d of (data.downloads || [])) downloads[d.id] = d;
         renderAll();
       }).catch(() => {});
+      loadPrepJobs();
     }
     wsEverOpened = true;
   };
@@ -694,6 +737,32 @@ function handleWS(msg) {
   } else if (type === 'removed') {
     delete downloads[id];
     delete tracksDone[id];
+  } else if (type === 'prep_added') {
+    prepJobs[id] = msg;
+    renderPrepJobs();
+    return;
+  } else if (type === 'prep_progress') {
+    if (prepJobs[id]) {
+      Object.assign(prepJobs[id], {
+        progress: msg.progress, done: msg.done, total: msg.total,
+        current_file: msg.current_file, action: msg.action,
+      });
+      updatePrepCardInPlace(id);
+    }
+    return;
+  } else if (type === 'prep_status') {
+    if (prepJobs[id]) {
+      prepJobs[id].status = msg.status;
+      if (msg.error) prepJobs[id].error = msg.error;
+      if (msg.summary) prepJobs[id].summary = msg.summary;
+      if (msg.status === 'done') prepJobs[id].progress = 100;
+    }
+    renderPrepJobs();
+    return;
+  } else if (type === 'prep_removed') {
+    delete prepJobs[id];
+    renderPrepJobs();
+    return;
   }
 
   renderAll();
@@ -1050,6 +1119,160 @@ async function clearSyncHistory() {
   await fetch('/api/ytm/sync/status', {method: 'DELETE'});
 }
 
+// ── Convert / iPod-Prep ─────────────────────────────────────────────────────
+const prepJobs = {};        // id -> job object
+let prepConfigLoaded = false;
+
+async function loadConvert() {
+  if (!prepConfigLoaded) {
+    try {
+      const res = await fetch('/api/prep/config');
+      const cfg = await res.json();
+      if (cfg.music_dir && !document.getElementById('convSource').value)
+        document.getElementById('convSource').value = cfg.music_dir;
+      if (cfg.ipod_dir && !document.getElementById('convOutput').value)
+        document.getElementById('convOutput').value = cfg.ipod_dir;
+      document.getElementById('convBitrateNote').textContent = `AAC ${cfg.aac_bitrate}`;
+      prepConfigLoaded = true;
+    } catch {}
+  }
+  await loadPrepJobs();
+}
+
+async function loadPrepJobs() {
+  try {
+    const res = await fetch('/api/prep/jobs');
+    const data = await res.json();
+    for (const j of (data.jobs || [])) prepJobs[j.id] = j;
+    renderPrepJobs();
+  } catch {}
+}
+
+function renderPrepJobs() {
+  const el = document.getElementById('prepList');
+  const empty = document.getElementById('prepEmpty');
+  const jobs = Object.values(prepJobs).sort((a, b) => b.created_at - a.created_at);
+
+  // Convert-tab badge: count of active jobs
+  const active = jobs.filter(j => j.status === 'pending' || j.status === 'running').length;
+  const cb = document.getElementById('convBadge');
+  if (active > 0) { cb.textContent = active; cb.style.display = ''; } else cb.style.display = 'none';
+
+  if (!jobs.length) { el.innerHTML = ''; empty.style.display = ''; return; }
+  empty.style.display = 'none';
+  el.innerHTML = jobs.map(prepCardHTML).join('');
+}
+
+function prepCardHTML(j) {
+  const pct = j.progress || 0;
+  const active = j.status === 'running';
+  const dirLine = `${escHtml(j.source_dir || '')} → ${escHtml(j.output_dir || '')}`;
+
+  let progressBar = '';
+  let currentFileHtml = '';
+  if (active) {
+    const pos = j.total ? `${j.done || 0}/${j.total}` : '';
+    const cf = j.current_file ? escHtml(j.current_file) : 'Scanning…';
+    currentFileHtml = `<div class="current-file" id="prepcf-${j.id}">
+      <span class="cf-name">${cf}</span>${pos ? `<span class="cf-pos">${pos}</span>` : ''}</div>`;
+    progressBar = `<div class="progress-wrap"><div class="progress-bar">
+      <div class="progress-fill" style="width:${pct}%"></div></div></div>`;
+  }
+
+  // Summary chips for finished jobs
+  let summaryHtml = '';
+  let summary = j.summary;
+  if (!summary && j.error && j.status === 'done') {
+    try { summary = JSON.parse(j.error); } catch {}
+  }
+  if (summary && typeof summary === 'object') {
+    const parts = [];
+    if (summary.transcoded) parts.push(`${summary.transcoded} transcoded`);
+    if (summary.copied) parts.push(`${summary.copied} copied`);
+    if (summary.skipped) parts.push(`${summary.skipped} skipped`);
+    if (summary.drm_skipped) parts.push(`${summary.drm_skipped} DRM`);
+    if (summary.errors) parts.push(`${summary.errors} errors`);
+    if (parts.length) summaryHtml = `<div class="speed-info">${parts.map(p => `<span>${p}</span>`).join('')}</div>`;
+  }
+
+  const errorMsg = (j.status === 'error' && j.error) ? `<div class="error-msg">${escHtml(j.error)}</div>` : '';
+  const removable = j.status !== 'running';
+  const btnLabel = j.status === 'running' ? 'Cancel' : (j.status === 'pending' ? 'Cancel' : 'Remove');
+  const dateStr = (j.status !== 'pending' && j.status !== 'running')
+    ? `<span style="color:var(--muted);font-size:12px">${fmtDate(j.created_at)}</span>` : '';
+
+  return `
+    <div class="card" id="prepcard-${j.id}">
+      <div class="card-header">
+        <div class="card-info">
+          <div class="card-title">Convert → AAC 256k</div>
+          <div class="card-url">${dirLine}</div>
+        </div>
+        <button class="btn-danger" onclick="removePrepJob('${j.id}','${j.status}')">${btnLabel}</button>
+      </div>
+      <div class="card-meta">
+        <span class="status-chip status-${j.status === 'running' ? 'downloading' : j.status}">${j.status}</span>
+        ${summaryHtml}
+        ${dateStr}
+      </div>
+      ${currentFileHtml}
+      ${progressBar}
+      ${errorMsg}
+    </div>`;
+}
+
+function updatePrepCardInPlace(id) {
+  const j = prepJobs[id];
+  if (!j) return;
+  const card = document.getElementById('prepcard-' + id);
+  if (!card) { renderPrepJobs(); return; }
+  const fill = card.querySelector('.progress-fill');
+  if (fill) fill.style.width = (j.progress || 0) + '%';
+  const cf = document.getElementById('prepcf-' + id);
+  if (cf) {
+    const pos = j.total ? `${j.done || 0}/${j.total}` : '';
+    const name = j.current_file ? escHtml(j.current_file) : 'Scanning…';
+    cf.innerHTML = `<span class="cf-name">${name}</span>${pos ? `<span class="cf-pos">${pos}</span>` : ''}`;
+  }
+  // keep the tab badge fresh without a full re-render
+  const active = Object.values(prepJobs).filter(x => x.status === 'pending' || x.status === 'running').length;
+  const cb = document.getElementById('convBadge');
+  if (active > 0) { cb.textContent = active; cb.style.display = ''; } else cb.style.display = 'none';
+}
+
+async function startConvert() {
+  const source_dir = document.getElementById('convSource').value.trim();
+  const output_dir = document.getElementById('convOutput').value.trim();
+  const downsample_hires = document.getElementById('convDownsample').checked;
+  const errEl = document.getElementById('convError');
+  errEl.textContent = '';
+  if (!source_dir) { errEl.textContent = 'Source directory is required.'; return; }
+
+  const btn = document.getElementById('convStartBtn');
+  btn.disabled = true;
+  btn.textContent = 'Starting…';
+  try {
+    const res = await fetch('/api/prep/convert', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({source_dir, output_dir, downsample_hires}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { errEl.textContent = data.detail || 'Failed to start conversion.'; return; }
+    prepJobs[data.id] = data;
+    renderPrepJobs();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Start Conversion';
+  }
+}
+
+async function removePrepJob(id, status) {
+  if (status === 'running' && !confirm('Cancel this conversion?')) return;
+  await fetch('/api/prep/jobs/' + id, { method: 'DELETE' });
+  if (status !== 'running') { delete prepJobs[id]; renderPrepJobs(); }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
   const res = await fetch('/api/downloads');
@@ -1058,6 +1281,7 @@ async function clearSyncHistory() {
   renderAll();
   connectWS();
   loadLibrary();
+  loadPrepJobs();
 })();
 </script>
 </body>

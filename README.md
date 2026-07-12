@@ -1,6 +1,6 @@
-# YTM Downloader
+# Music Monster
 
-A self-hosted web app for downloading YouTube Music albums and playlists as high-quality m4a files with embedded artwork and metadata.
+A self-hosted music-library tool. It started as a YouTube Music downloader and is growing into a full pipeline: download high-quality m4a files with embedded artwork and metadata, then clean tags, unify genres, and mirror the library to an iPod-ready AAC copy.
 
 ![Dark mode UI with queue, history, and file browser](https://img.shields.io/badge/UI-dark%20mode-ff0033?style=flat-square) ![Multi-arch](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-blue?style=flat-square)
 
@@ -14,6 +14,7 @@ A self-hosted web app for downloading YouTube Music albums and playlists as high
 - **YouTube Music library** — browse and download your playlists and liked songs directly from the app
 - **OAuth authentication** — connect once via Google OAuth; never re-authenticate unless you explicitly revoke access
 - **Auto-sync** — automatically download new liked songs on a configurable schedule
+- **iPod AAC mirror** — transcode a FLAC library to a 256k AAC mirror for iPod/iTunes; source is never modified, and re-runs only convert what's missing
 - Dark mode UI, no build step, no external JS dependencies
 
 ## Output format
@@ -29,14 +30,14 @@ Each download produces:
 
 ```bash
 docker run -d \
-  --name ytm-downloader \
+  --name music-monster \
   -p 8503:8080 \
   -v /path/to/music:/share \
   -v ytm_data:/data \
   -e DOWNLOADS_DIR=/share \
   -e DB_PATH=/data/downloads.db \
   -e YTM_AUTH_PATH=/data/ytm_auth.json \
-  raymanalang/ytm-downloader:latest
+  raymanalang/music-monster:latest
 ```
 
 Open `http://localhost:8503`.
@@ -45,9 +46,9 @@ Open `http://localhost:8503`.
 
 ```yaml
 services:
-  ytm-downloader:
-    image: raymanalang/ytm-downloader:latest
-    container_name: ytm-downloader
+  music-monster:
+    image: raymanalang/music-monster:latest
+    container_name: music-monster
     restart: unless-stopped
     ports:
       - "8503:8080"
@@ -70,9 +71,9 @@ HAOS's root filesystem is read-only. Use these volume paths:
 
 ```yaml
 services:
-  ytm-downloader:
-    image: raymanalang/ytm-downloader:latest
-    container_name: ytm-downloader
+  music-monster:
+    image: raymanalang/music-monster:latest
+    container_name: music-monster
     restart: unless-stopped
     ports:
       - "8503:8080"
@@ -102,6 +103,10 @@ This maps the native HAOS `/share` directory into the container so downloaded fi
 | `YTM_AUTH_PATH` | `./data/ytm_auth.json` | YouTube Music credentials (written by the app on first auth) |
 | `MAX_CONCURRENT_DOWNLOADS` | `2` | Parallel download workers |
 | `COOKIES_FILE` | _(unset)_ | Path to a Netscape-format cookies.txt for age-restricted or authenticated downloads |
+| `MUSIC_DIR` | _(unset)_ | Source library root for the Convert tab; mount **read-only** |
+| `IPOD_DIR` | `./ipod` | AAC mirror output root |
+| `MAX_CONCURRENT_CONVERSIONS` | `2` | Parallel transcode workers |
+| `AAC_BITRATE` | `256k` | Conversion bitrate |
 
 ## YouTube Music library integration
 
@@ -137,6 +142,19 @@ If you prefer not to set up a Google Cloud project, you can connect with browser
 - **Playlists** — browse all your playlists, expand to see tracks, download individual tracks or the full playlist
 - **Auto-sync** — enable to automatically download new liked songs; configurable interval (15 min / 1 hr / 6 hrs / 24 hrs)
 
+## iPod AAC mirror (Convert tab)
+
+The **Convert** tab mirrors a FLAC music library into an iPod/iTunes-ready AAC copy.
+
+- Set `MUSIC_DIR` (source, mounted **read-only**) and `IPOD_DIR` (output mirror). Both can also be typed into the form per-run.
+- `.flac` (and other lossless) are transcoded to **AAC 256k `.m4a`**, preserving cover art and tags.
+- `.mp3` and existing AAC `.m4a` files are **copied byte-for-byte**.
+- `.m4p` (DRM) files are **skipped** and reported.
+- Optional **downsample hi-res** (>16-bit / >48 kHz → 44.1 kHz) for older iPods.
+- **Resumable**: a re-run skips destinations that already exist and aren't older than the source. The source library is never modified.
+
+The app produces the mirror + (later) M3U playlists; import into Music/iTunes on a Mac and sync to the iPod from there.
+
 ## Cookies (age-restricted videos)
 
 If you see _"Sign in to confirm your age"_ errors, export your YouTube cookies and mount them into the container.
@@ -167,6 +185,6 @@ DOWNLOADS_DIR=./downloads DB_PATH=./data/downloads.db uvicorn app.main:app --por
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t raymanalang/ytm-downloader:latest \
+  -t raymanalang/music-monster:latest \
   --push .
 ```

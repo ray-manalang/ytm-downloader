@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Music Monster** (formerly `ytm-downloader`) — a self-hosted music-library tool. Beyond downloading from YouTube Music, it prepares an iPod-ready library: tag cleanup, genre unification, and a FLAC→AAC mirror (the **iPod-Prep** pipeline). See `HANDOFF-MusicMonster.md` for the full build spec and milestone order.
+
 ## Development commands
 
 ```bash
@@ -27,6 +29,8 @@ Single-process FastAPI app. No test suite.
 | `app/main.py` | FastAPI app, SQLite via aiosqlite, WebSocket broadcast, download queue, REST API |
 | `app/downloader.py` | yt-dlp wrapper, post-download cover-art resize, stray-thumbnail cleanup |
 | `app/ytm.py` | YouTube Music integration — auth, playlist/liked-songs browsing, auto-sync background task |
+| `app/converter.py` | FLAC→AAC transcode engine — ffmpeg subprocess, mirrors `downloader.py`'s pattern; never mutates the source |
+| `app/prep.py` | iPod-Prep orchestration + `/api/prep/*` router — separate prep queue/worker pool, conversion jobs |
 | `app/static/index.html` | Single-file dark-mode SPA — all JS inline, no build step, no external deps |
 | `app/static/logo.svg` | App icon (also used as browser favicon) |
 
@@ -39,6 +43,10 @@ Single-process FastAPI app. No test suite.
 | `MAX_CONCURRENT_DOWNLOADS` | `2` | Parallel download worker count |
 | `YTM_AUTH_PATH` | `./data/ytm_auth.json` | YouTube Music credentials file (written by the app on first auth) |
 | `COOKIES_FILE` | *(empty)* | Netscape-format cookies.txt for age-restricted videos; mount **without `:ro`** — yt-dlp writes back to refresh token expiry |
+| `MUSIC_DIR` | *(empty)* | Source library root for the Convert tab; mount **read-only** (converter never writes here) |
+| `IPOD_DIR` | `./ipod` | AAC mirror output root (read-write) |
+| `MAX_CONCURRENT_CONVERSIONS` | `2` | Parallel transcode workers |
+| `AAC_BITRATE` | `256k` | Conversion bitrate |
 
 ## Database schema
 
@@ -65,6 +73,8 @@ Single-process FastAPI app. No test suite.
 | `artist` | TEXT | Comma-separated artist names |
 | `added_at` | REAL | Unix timestamp from YTM |
 | `downloaded_at` | REAL | Unix timestamp when enqueued, or NULL |
+
+**iPod-Prep tables** (all created in `db_init`, per the HANDOFF §7): `prep_jobs` (job queue/history; `type` = `audit`\|`tags`\|`unify`\|`convert`; done-job summary counts are stored as JSON in the `error` column), `prep_changes` (tag-edit rollback log), `library_tracks` (scanned library index), `playlists` (playlist specs). M1 uses only `prep_jobs`; the rest are seeded ahead for later milestones.
 
 ## API endpoints
 
@@ -102,6 +112,17 @@ Single-process FastAPI app. No test suite.
 | GET | `/api/ytm/liked` | All liked songs (up to 2500) |
 
 Auto-generated YTM playlists ("Liked Music", "Episodes for Later", "New Episodes") are filtered out of the `/api/ytm/library` response.
+
+### iPod-Prep (`prep.py`)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/prep/config` | Configured defaults (`music_dir`, `ipod_dir`, `aac_bitrate`, `max_concurrent`) |
+| POST | `/api/prep/convert` | Start a FLAC→AAC mirror job (`source_dir`, `output_dir`, `downsample_hires` optional) |
+| GET | `/api/prep/jobs` | List all prep jobs |
+| DELETE | `/api/prep/jobs/{id}` | Cancel a running/pending job or remove a finished one |
+
+Prep jobs run on a **separate** `_prep_queue` + worker pool (`MAX_CONCURRENT_CONVERSIONS`), independent of the download queue. WebSocket message types: `prep_added`, `prep_progress` (`done`/`total`/`current_file`/`action`), `prep_status` (`running`/`done`/`error`/`cancelled`, with a `summary` counts dict on done), `prep_removed`.
 
 ### Auto-sync (`ytm.py`)
 
@@ -169,6 +190,23 @@ User copies request headers from browser DevTools and pastes them in. Credential
 ### Key constraint
 All content must be music-only. Never surface or enqueue YouTube video content. The "Episodes for Later", "New Episodes", and "Liked Music" auto-playlists are filtered at the API layer.
 
+## iPod-Prep pipeline (`prep.py` + `converter.py`)
+
+The **Convert** stage (M1) mirrors a FLAC library into an iPod-ready AAC copy. It reuses `main.py`'s patterns: `POST /api/prep/convert` inserts a `prep_jobs` row and enqueues its id onto `_prep_queue`; a `_prep_worker` dequeues, runs `run_conversion()` via `run_in_executor`, and streams progress over WebSocket. Cancellation uses the same `_active_cancels[id] = asyncio.Event()` / `should_cancel` poll as downloads.
+
+**Converter rules (`run_conversion`):** per file under `source_dir`, write into the mirror tree at `output_dir`:
+- `.flac`/lossless → transcode to AAC `.m4a` (256k, cover art + tags preserved)
+- `.mp3`, existing AAC `.m4a`/`.aac`/`.m4b` → copied byte-for-byte
+- `.m4p` → skipped (DRM); non-audio → ignored
+- Resumable: skip a destination that exists and is not older than its source. **The source is never modified** (mount `MUSIC_DIR` read-only).
+
+**Converter ffmpeg command** (distinct from yt-dlp — do not confuse with the download postprocessors):
+```
+ffmpeg -y -i INPUT.flac -map 0:a -map 0:v? -c:a aac -b:a $AAC_BITRATE \
+  -c:v copy -disposition:v:0 attached_pic -map_metadata 0 OUTPUT.m4a
+```
+With `downsample_hires` and a source >16-bit/>48 kHz, `-ar 44100` is added. **Note:** the HANDOFF §6 also lists `-sample_fmt s16`, but that makes the AAC encoder refuse to open (AAC is lossy/`fltp` — PCM bit depth is meaningless for it), so only `-ar 44100` is applied. Bit-depth reduction belongs to a future lossless-target path, not AAC.
+
 ## Key yt-dlp settings — do not change without explicit approval
 
 - `format`: `bestaudio/best` — no codec restriction; picks ~265 kbps opus then converts to m4a
@@ -190,7 +228,7 @@ The DB `title` column stores the **album/playlist name** (from `playlist_title` 
 
 ## Frontend SPA (`app/static/index.html`)
 
-Single-file, no build step. Five tabs: **Library** (default), **Add**, **Queue**, **History**, **Files**.
+Single-file, no build step. Six tabs: **Library** (default), **Add**, **Queue**, **History**, **Convert**, **Files**.
 
 Key JS state:
 - `downloads` — map of id → download object (source of truth for queue/history cards)

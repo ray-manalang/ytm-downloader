@@ -17,12 +17,13 @@ from fastapi.staticfiles import StaticFiles
 
 from .downloader import DOWNLOADS_DIR, run_download
 from . import ytm as ytm_module
+from . import prep as prep_module
 
 DB_PATH = os.environ.get("DB_PATH", "./data/downloads.db")
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "2"))
 STATIC_DIR = Path(__file__).parent / "static"
 
-app = FastAPI(title="YTM Downloader")
+app = FastAPI(title="Music Monster")
 
 _loop: asyncio.AbstractEventLoop | None = None
 _ws_clients: List[WebSocket] = []
@@ -74,6 +75,57 @@ async def db_init():
                 artist       TEXT,
                 added_at     REAL,
                 downloaded_at REAL
+            )
+        """)
+        # ── iPod-Prep / Music Monster tables ──────────────────────────────
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS prep_jobs (
+                id         TEXT PRIMARY KEY,
+                type       TEXT,                       -- audit|tags|unify|convert
+                source_dir TEXT,
+                output_dir TEXT,
+                status     TEXT DEFAULT 'pending',
+                progress   REAL DEFAULT 0,
+                total      INTEGER DEFAULT 0,
+                done       INTEGER DEFAULT 0,
+                error      TEXT,
+                settings   TEXT,
+                created_at REAL
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS prep_changes (
+                job_id    TEXT,
+                path      TEXT,
+                field     TEXT,
+                old_value TEXT,
+                new_value TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS library_tracks (
+                path        TEXT PRIMARY KEY,
+                artist      TEXT,
+                albumartist TEXT,
+                album       TEXT,
+                genre       TEXT,
+                year        INTEGER,
+                duration    REAL,
+                bpm         REAL,
+                energy      REAL,
+                added_at    REAL
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS playlists (
+                id           TEXT PRIMARY KEY,
+                name         TEXT,
+                type         TEXT,                     -- smart|ai|ytm
+                spec         TEXT,                     -- JSON
+                targets      TEXT,
+                track_count  INTEGER,
+                auto_refresh INTEGER DEFAULT 1,
+                updated_at   REAL
             )
         """)
         await db.commit()
@@ -248,6 +300,10 @@ async def startup():
     ytm_module.set_dependencies(_enqueue_download, DB_PATH)
     ytm_module.on_startup()
     ytm_module.start_sync_task()
+    # iPod-Prep: wire dependencies, reset interrupted jobs, start conversion workers
+    prep_module.set_dependencies(_enqueue_download, broadcast, DB_PATH)
+    await prep_module.reset_stuck_jobs()
+    prep_module.start_prep_task()
 
 
 # ── REST API ─────────────────────────────────────────────────────────────────
@@ -362,6 +418,7 @@ async def ws_endpoint(websocket: WebSocket):
 
 
 app.include_router(ytm_module.router)
+app.include_router(prep_module.router)
 
 # ── Static files ─────────────────────────────────────────────────────────────
 

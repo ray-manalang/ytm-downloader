@@ -1,17 +1,28 @@
 services:
-  ytm-downloader:
-    image: raymanalang/ytm-downloader:latest
-    container_name: ytm-downloader
+  music-monster:
+    # NOTE (Ray): build & push raymanalang/music-monster, then force re-pull in Portainer.
+    # The old raymanalang/ytm-downloader image name is retired.
+    image: raymanalang/music-monster:latest
+    container_name: music-monster
     restart: unless-stopped
     ports:
       - "8503:8080"
     volumes:
       - /mnt/data/supervisor/share:/share
       - ytm_data:/data
+      # Source music library — mount READ-ONLY (converter never writes here):
+      # - /mnt/data/supervisor/share/Music:/music:ro
+      # iPod AAC mirror output — read-write (e.g. NAS mount):
+      # - /Volumes/Terradrive/ipodMusic:/ipod
     environment:
       DOWNLOADS_DIR: /share
       DB_PATH: /data/downloads.db
       MAX_CONCURRENT_DOWNLOADS: "2"
+      # ── iPod-Prep / Music Monster ──
+      # MUSIC_DIR: /music
+      # IPOD_DIR: /ipod
+      MAX_CONCURRENT_CONVERSIONS: "2"
+      AAC_BITRATE: 256k
 
 volumes:
   ytm_data:

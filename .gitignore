@@ -1,6 +1,8 @@
 .venv/
 downloads/
+ipod/
 data/
 __pycache__/
 **/*.pyc
 .DS_Store
+cookies.txt
