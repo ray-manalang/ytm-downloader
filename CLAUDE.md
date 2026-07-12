@@ -44,7 +44,8 @@ Single-process FastAPI app. No test suite.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DOWNLOADS_DIR` | `./downloads` | Output directory for all music files |
+| `DOWNLOADS_DIR` | `./downloads` | **Staging** for downloads (keep local/fast). Finished files are promoted to `MUSIC_DIR`+`IPOD_DIR` unless `AUTO_PROMOTE=0` |
+| `AUTO_PROMOTE` | `1` (on) | After a download finishes, move it into `MUSIC_DIR`, copy to `IPOD_DIR`, and index it. No-ops if `MUSIC_DIR` unset. Also repoints the Files browser to the library |
 | `DB_PATH` | `./data/downloads.db` | SQLite database path |
 | `MAX_CONCURRENT_DOWNLOADS` | `2` | Parallel download worker count |
 | `YTM_AUTH_PATH` | `./data/ytm_auth.json` | YouTube Music credentials file (written by the app on first auth) |
@@ -189,7 +190,10 @@ Playlists read the index that Audit populates — re-run Audit to refresh before
 3. `run_download()` calls yt-dlp with a progress hook that fires `progress_callback(d)` on each yt-dlp event
 4. The callback schedules `_handle_progress` / `_handle_finished` coroutines on the main loop via `asyncio.run_coroutine_threadsafe`
 5. Those coroutines write to SQLite and broadcast JSON over WebSocket to all connected clients
-6. After yt-dlp finishes, `_resize_cover()` re-embeds the cover art at 600×600 via three sequential ffmpeg calls
+6. After yt-dlp finishes, `_resize_cover()` re-embeds the cover art at 600×600 via three sequential ffmpeg calls; `run_download` returns `info["files"]` (the new `.m4a` paths)
+7. **Promote** (`_promote_download`, `AUTO_PROMOTE` on + `MUSIC_DIR` set): each finished file is **moved** into `MUSIC_DIR` (staged locally first for speed; `shutil.move` handles the cross-SMB hop), **copied** to `IPOD_DIR` (m4a is copy-only — already AAC), and **indexed** via `prep._upsert_tracks` with the **resolved MUSIC_DIR path** (required — else `converter.mirror_path` raises and iPod playlists silently drop the track). Then `playlists.regenerate_all_auto()` refreshes auto playlists, and a `promoted` WS event fires. Isolated from the worker's error path — a promotion failure never flips a successful download to `error` (the file stays safe in staging).
+
+**Files browser repoint:** when promotion is active, `GET/DELETE /api/files` operate on `MUSIC_DIR` (the library), not `DOWNLOADS_DIR`. `delete_file` cascades — removes the iPod mirror copy (`converter.mirror_path`), deletes the `library_tracks` row(s), and regenerates auto playlists.
 
 ## WebSocket message types
 
@@ -200,6 +204,7 @@ Playlists read the index that Audit populates — re-run Audit to refresh before
 | `progress` | server→client | `id, progress, speed, eta, current_file, playlist_index, playlist_count` | Per-chunk progress update |
 | `track_done` | server→client | `id, track` | One track in a playlist finished |
 | `removed` | server→client | `id` | History entry deleted |
+| `promoted` | server→client | `id, count` | Finished download promoted to library + iPod + indexed |
 
 ## YouTube Music integration (`app/ytm.py`)
 

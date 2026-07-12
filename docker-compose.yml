@@ -23,6 +23,8 @@ services:
       YTM_AUTH_PATH: /data/ytm_auth.json
       COOKIES_FILE: /cookies.txt
       MAX_CONCURRENT_DOWNLOADS: "2"
+      # Finished downloads auto-move to MUSIC_DIR + copy to IPOD_DIR + index (default on).
+      # AUTO_PROMOTE: "0"   # uncomment to keep downloads in /share only
       # ── iPod-Prep / Music Monster ──
       MUSIC_DIR: /music
       IPOD_DIR: /ipod

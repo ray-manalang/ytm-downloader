@@ -110,7 +110,8 @@ This maps the native HAOS `/share` directory into the container so downloaded fi
 
 | Variable | Default | Description |
 |---|---|---|
-| `DOWNLOADS_DIR` | `./downloads` | Where yt-dlp saves files |
+| `DOWNLOADS_DIR` | `./downloads` | Staging for downloads (keep local/fast) |
+| `AUTO_PROMOTE` | `1` (on) | Auto-move finished downloads into `MUSIC_DIR` + copy to `IPOD_DIR` + index them (set `0` to keep files in staging only) |
 | `DB_PATH` | `./data/downloads.db` | SQLite database path |
 | `YTM_AUTH_PATH` | `./data/ytm_auth.json` | YouTube Music credentials (written by the app on first auth) |
 | `MAX_CONCURRENT_DOWNLOADS` | `2` | Parallel download workers |

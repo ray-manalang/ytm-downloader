@@ -79,10 +79,13 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
 
     # Resize cover art + normalize genre tags in every newly created m4a
     files_after = set(base.rglob("*.m4a")) if base.exists() else set()
-    for path in files_after - files_before:
+    new_files = files_after - files_before
+    for path in new_files:
         _resize_cover(path)
         _normalize_tags(path)
 
+    # Expose the created files so the worker can promote them to the library + iPod.
+    info["files"] = sorted(str(p) for p in new_files)
     return info
 
 

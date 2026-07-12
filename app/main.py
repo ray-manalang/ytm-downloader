@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Set
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 import aiosqlite
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -19,9 +20,13 @@ from .downloader import DOWNLOADS_DIR, run_download
 from . import ytm as ytm_module
 from . import prep as prep_module
 from . import playlists as playlists_module
+from . import converter
+from . import tagtools
 
 DB_PATH = os.environ.get("DB_PATH", "./data/downloads.db")
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "2"))
+# Auto-promote finished downloads into the library + iPod mirror (default on).
+AUTO_PROMOTE = os.environ.get("AUTO_PROMOTE", "1") not in ("0", "false", "False", "")
 STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="Music Monster")
@@ -217,6 +222,87 @@ async def _handle_finished(dl_id: str, track: str | None, album: str | None):
         await broadcast({"type": "track_done", "id": dl_id, "track": track})
 
 
+# ── Promote finished downloads → library + iPod mirror ───────────────────────
+
+def _promotion_active() -> bool:
+    return bool(AUTO_PROMOTE and prep_module.MUSIC_DIR)
+
+
+def _promote_files_sync(files: list) -> list:
+    """Blocking: move each finished file into MUSIC_DIR, copy to IPOD_DIR, and build
+    library_tracks upsert dicts. Runs in an executor. Returns the dicts for landed files."""
+    downloads_root = Path(DOWNLOADS_DIR).resolve()
+    music_root = Path(prep_module.MUSIC_DIR).resolve()
+    same_root = downloads_root == music_root
+    ipod = prep_module.IPOD_DIR
+    ipod_root = Path(ipod).resolve() if ipod else None
+    do_ipod = ipod_root is not None and ipod_root != music_root
+
+    dicts = []
+    for f in files:
+        try:
+            src = Path(f).resolve()
+            if not src.exists():
+                continue
+            try:
+                rel = src.relative_to(downloads_root)
+            except ValueError:
+                continue  # not under staging — leave it alone
+
+            if same_root:
+                lib_dst = src
+            else:
+                lib_dst = music_root / rel
+                lib_dst.parent.mkdir(parents=True, exist_ok=True)
+                if lib_dst.exists():
+                    lib_dst.unlink()
+                shutil.move(str(src), str(lib_dst))  # copy+unlink across filesystems/SMB
+
+            if do_ipod:
+                ipod_dst = ipod_root / rel
+                ipod_dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(lib_dst), str(ipod_dst))
+
+            tags = tagtools.read_tags(lib_dst)
+            dicts.append({
+                "path": str(lib_dst.resolve()),   # MUST be the resolved MUSIC_DIR path
+                "artist": tags.get("artist"),
+                "albumartist": tags.get("albumartist"),
+                "album": tags.get("album"),
+                "genre": ", ".join(tags.get("genre") or []),  # list → scalar
+                "year": tags.get("year"),
+                "duration": tags.get("duration"),
+            })
+
+            # Prune now-empty staging dirs (skip when we didn't move anything).
+            if not same_root:
+                parent = src.parent
+                while parent != downloads_root and parent.is_dir() and not any(parent.iterdir()):
+                    parent.rmdir()
+                    parent = parent.parent
+        except Exception as exc:
+            logger.warning("promote: failed on %s: %s", f, exc)
+    return dicts
+
+
+async def _promote_download(files: list, dl_id: str):
+    """Move finished downloads into the library, mirror to iPod, and index them."""
+    if not (_promotion_active() and files):
+        return
+    dicts = await asyncio.get_event_loop().run_in_executor(None, lambda: _promote_files_sync(files))
+    if not dicts:
+        return
+    try:
+        await prep_module._upsert_tracks(dicts)
+    except Exception as exc:
+        logger.warning("promote: index failed for %s: %s", dl_id, exc)
+    try:
+        await playlists_module.regenerate_all_auto()
+    except Exception as exc:
+        logger.warning("promote: playlist refresh failed: %s", exc)
+    await broadcast({"type": "promoted", "id": dl_id, "count": len(dicts)})
+
+
 # ── Download worker ──────────────────────────────────────────────────────────
 
 async def _worker():
@@ -262,6 +348,12 @@ async def _worker():
                                 await db.commit()
                         except Exception:
                             pass
+                    # Promote into the library + iPod mirror. Isolated: a promotion
+                    # failure must NOT flip this successful download to error.
+                    try:
+                        await _promote_download(result.get("files") or [], dl_id)
+                    except Exception as exc:
+                        logger.warning("promote failed for %s: %s", dl_id, exc)
             except Exception as exc:
                 err = str(exc)
                 try:
@@ -367,9 +459,14 @@ async def cancel_or_remove(dl_id: str):
     return {"ok": True}
 
 
+def _files_root() -> str:
+    """When promotion is active the Files browser shows the library, not staging."""
+    return prep_module.MUSIC_DIR if _promotion_active() else DOWNLOADS_DIR
+
+
 @app.get("/api/files")
 async def list_files():
-    base = Path(DOWNLOADS_DIR)
+    base = Path(_files_root())
     files = []
     if base.exists():
         for item in sorted(base.rglob("*")):
@@ -386,19 +483,57 @@ async def list_files():
 @app.delete("/api/files")
 async def delete_file(body: dict):
     rel = body.get("path", "")
-    base = Path(DOWNLOADS_DIR).resolve()
+    root = _files_root()
+    base = Path(root).resolve()
     target = (base / rel).resolve()
     if not str(target).startswith(str(base)):
         raise HTTPException(400, "Invalid path")
-    if target.exists():
-        if target.is_dir():
-            shutil.rmtree(target)
-        else:
-            target.unlink()
-            parent = target.parent
-            while parent != base and parent.exists() and not any(parent.iterdir()):
-                parent.rmdir()
-                parent = parent.parent
+    if not target.exists():
+        return {"ok": True}
+
+    # Collect library paths being removed (for de-indexing + mirror cleanup).
+    is_lib = _promotion_active() and base == Path(prep_module.MUSIC_DIR).resolve()
+    removed_files = (
+        [target] if target.is_file()
+        else [p for p in target.rglob("*") if p.is_file()]
+    )
+
+    if target.is_dir():
+        shutil.rmtree(target)
+    else:
+        target.unlink()
+    parent = target.parent
+    while parent != base and parent.exists() and not any(parent.iterdir()):
+        parent.rmdir()
+        parent = parent.parent
+
+    if is_lib:
+        # Cascade: remove iPod mirror copies, de-index, refresh playlists.
+        music_dir, ipod_dir = prep_module.MUSIC_DIR, prep_module.IPOD_DIR
+        for p in removed_files:
+            try:
+                if ipod_dir and Path(ipod_dir).resolve() != base:
+                    mp = Path(converter.mirror_path(p, music_dir, ipod_dir))
+                    if mp.exists():
+                        mp.unlink()
+                        mparent = mp.parent
+                        iroot = Path(ipod_dir).resolve()
+                        while mparent != iroot and mparent.exists() and not any(mparent.iterdir()):
+                            mparent.rmdir()
+                            mparent = mparent.parent
+            except Exception as exc:
+                logger.warning("delete: mirror cleanup failed for %s: %s", p, exc)
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.executemany(
+                "DELETE FROM library_tracks WHERE path=?",
+                [(str(p.resolve()),) for p in removed_files],
+            )
+            await db.commit()
+        try:
+            await playlists_module.regenerate_all_auto()
+        except Exception as exc:
+            logger.warning("delete: playlist refresh failed: %s", exc)
+
     return {"ok": True}
 
 

@@ -30,7 +30,9 @@ Then in **Portainer → Stacks → your stack → Update the stack**, with **"Re
 
 ## 3. Download music
 
-**YouTube Music** — browse playlists / liked songs → Download, or **Add URLs** to paste links. Turn on **Auto-Sync** to pull new liked songs automatically. Progress in **Queue**; results in **Files** / **History**.
+**YouTube Music** — browse playlists / liked songs → Download, or **Add URLs** to paste links. Turn on **Auto-Sync** to pull new liked songs automatically. Progress in **Queue**; results in **History**.
+
+With `AUTO_PROMOTE` on (the default), each finished download is **automatically moved into your Music library, copied to the iPod folder, and indexed** — so it's instantly available to playlists with no Audit/Convert needed. The **Files** tab browses your library (deleting a track there also removes its iPod copy). Set `AUTO_PROMOTE=0` to keep downloads in the staging folder only.
 
 ---
 
@@ -67,7 +69,8 @@ The AAC mirror lives in `IPOD_DIR`. On the Mac, import that folder into **Music/
 
 ## Routine: after adding new music
 
-**Download → Audit** (re-index) → Clean/Genres/Analyze as needed → **Convert** → playlists auto-refresh. Just re-run each step; done work is skipped.
+- **Downloaded from YouTube Music:** nothing to do — with `AUTO_PROMOTE` on, new downloads are already in Music + iPod + indexed, and auto-refresh playlists update themselves. (Run **Clean / Complete genres / Analyze** later if you want those tracks tidied or tempo-tagged.)
+- **Added FLACs to the library by hand:** **Audit** (re-index) → Clean/Genres/Analyze as needed → **Convert** to mirror them. Just re-run each step; done work is skipped.
 
 ## Gotchas
 
