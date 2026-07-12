@@ -26,22 +26,61 @@
 
   body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; min-height: 100vh; }
 
-  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 16px; height: 56px; }
-  header h1 { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
-  .ws-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background .3s; }
+  .ws-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background .3s; flex-shrink: 0; }
   .ws-dot.connected { background: var(--accent); }
-
-  .tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--surface); padding: 0 24px; }
-  .tab { padding: 14px 18px; cursor: pointer; color: var(--muted); font-weight: 500; border-bottom: 2px solid transparent; transition: all .2s; display: flex; align-items: center; gap: 8px; }
-  .tab:hover { color: var(--text); }
-  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
   .badge { background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 10px; min-width: 18px; text-align: center; }
-  .badge.warn { background: var(--warn); }
+  .badge.warn { background: var(--warn); color: #111; }
 
-  main { max-width: 900px; margin: 0 auto; padding: 24px; }
+  /* ── App shell: sidebar + content ─────────────────────────────────────── */
+  .app { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+  .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 14px 12px 24px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  .sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 10px; }
+  .sidebar-brand h1 { font-size: 16px; font-weight: 800; letter-spacing: -0.3px; }
+  .nav-group-label { font-size: 10px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); padding: 16px 10px 6px; font-weight: 700; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 7px; cursor: pointer; color: var(--muted); font-weight: 500; font-size: 13.5px; user-select: none; transition: background .12s, color .12s; }
+  .nav-item:hover { background: var(--surface2); color: var(--text); }
+  .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .nav-item .nav-ico { width: 18px; text-align: center; font-size: 14px; flex-shrink: 0; }
+  .nav-item .badge { margin-left: auto; }
 
+  .content { min-width: 0; display: flex; flex-direction: column; }
+  .topbar { height: 56px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; padding: 0 28px; position: sticky; top: 0; background: rgba(15,15,15,.9); backdrop-filter: blur(8px); z-index: 5; }
+  .topbar h2 { font-size: 16px; font-weight: 700; }
+  .topbar .topbar-sub { color: var(--muted); font-size: 12px; margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+  main { max-width: 940px; margin: 0 auto; padding: 28px; width: 100%; }
   .panel { display: none; }
   .panel.active { display: block; }
+
+  /* ── Dashboard ────────────────────────────────────────────────────────── */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 12px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+  .stat-card.click { cursor: pointer; transition: border-color .15s; }
+  .stat-card.click:hover { border-color: var(--muted); }
+  .stat-num { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; line-height: 1; }
+  .stat-num.warn { color: var(--warn); }
+  .stat-label { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 700; margin: 28px 0 12px; }
+  .banner { display: flex; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 20px; }
+  .banner .lib-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  /* ── Guided stepper (Prepare) ─────────────────────────────────────────── */
+  .step { display: flex; gap: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 12px; }
+  .step-num { width: 26px; height: 26px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0; color: var(--muted); }
+  .step.done .step-num { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .step-body { flex: 1; min-width: 0; }
+  .step-title { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .step-status { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .step-status.warn { color: var(--warn); }
+  .step-desc { color: var(--muted); font-size: 13px; margin: 8px 0 12px; line-height: 1.55; }
+  .step-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .step-extra { margin-top: 12px; }
+
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; }
+    .sidebar { position: static; height: auto; }
+    main { padding: 20px 16px; }
+  }
 
   /* Add panel */
   .add-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
@@ -144,31 +183,62 @@
 </head>
 <body>
 
-<header>
-  <img src="/static/logo.svg" alt="" width="36" height="36" style="flex-shrink:0">
-  <h1>Music Monster</h1>
-  <div class="ws-dot" id="wsDot" title="WebSocket status"></div>
-</header>
+<div class="app">
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <img src="/static/logo.svg" alt="" width="30" height="30" style="flex-shrink:0">
+      <h1>Music Monster</h1>
+    </div>
 
-<div class="tabs">
-  <div class="tab active" data-tab="library" onclick="switchTab('library')">Library</div>
-  <div class="tab" data-tab="add" onclick="switchTab('add')">Add</div>
-  <div class="tab" data-tab="queue" onclick="switchTab('queue')">
-    Queue <span class="badge" id="queueBadge" style="display:none"></span>
-  </div>
-  <div class="tab" data-tab="history" onclick="switchTab('history')">
-    History <span class="badge warn" id="histBadge" style="display:none"></span>
-  </div>
-  <div class="tab" data-tab="convert" onclick="switchTab('convert')">
-    Prep <span class="badge" id="convBadge" style="display:none"></span>
-  </div>
-  <div class="tab" data-tab="playlists" onclick="switchTab('playlists')">Playlists</div>
-  <div class="tab" data-tab="files" onclick="switchTab('files')">Files</div>
-</div>
+    <div class="nav-item" data-nav="dashboard" onclick="switchTab('dashboard')">
+      <span class="nav-ico">◉</span> Dashboard
+    </div>
 
-<main>
+    <div class="nav-group-label">Download</div>
+    <div class="nav-item" data-nav="library" onclick="switchTab('library')">
+      <span class="nav-ico">🎵</span> YouTube Music
+    </div>
+    <div class="nav-item" data-nav="add" onclick="switchTab('add')">
+      <span class="nav-ico">＋</span> Add URLs
+    </div>
+    <div class="nav-item" data-nav="queue" onclick="switchTab('queue')">
+      <span class="nav-ico">↓</span> Queue <span class="badge" id="queueBadge" style="display:none"></span>
+    </div>
+    <div class="nav-item" data-nav="history" onclick="switchTab('history')">
+      <span class="nav-ico">🕘</span> History <span class="badge warn" id="histBadge" style="display:none"></span>
+    </div>
+
+    <div class="nav-group-label">Prepare</div>
+    <div class="nav-item" data-nav="convert" onclick="switchTab('convert')">
+      <span class="nav-ico">⚙</span> Prepare library <span class="badge" id="convBadge" style="display:none"></span>
+    </div>
+
+    <div class="nav-group-label">Organize</div>
+    <div class="nav-item" data-nav="playlists" onclick="switchTab('playlists')">
+      <span class="nav-ico">≣</span> Playlists
+    </div>
+    <div class="nav-item" data-nav="files" onclick="switchTab('files')">
+      <span class="nav-ico">📂</span> Files
+    </div>
+  </aside>
+
+  <div class="content">
+    <div class="topbar">
+      <h2 id="pageTitle">Dashboard</h2>
+      <div class="topbar-sub">
+        <span class="ws-dot" id="wsDot" title="Live connection"></span>
+        <span id="wsLabel">connecting…</span>
+      </div>
+    </div>
+
+    <main>
+  <!-- DASHBOARD -->
+  <div class="panel active" id="panel-dashboard">
+    <div id="dashBody"></div>
+  </div>
+
   <!-- LIBRARY -->
-  <div class="panel active" id="panel-library">
+  <div class="panel" id="panel-library">
     <!-- Not connected: OAuth setup -->
     <div id="libSetup">
       <!-- Step 1: enter credentials -->
@@ -346,79 +416,108 @@
     </div>
   </div>
 
-  <!-- PREP (Audit / Clean / Convert) -->
+  <!-- PREPARE (guided pipeline: Audit → Clean → Genres → Enrich → Convert) -->
   <div class="panel" id="panel-convert">
-    <!-- Library directory shared by Audit + Clean -->
     <div class="add-box" style="margin-bottom:20px">
-      <label>Library</label>
+      <label>Music library</label>
       <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.6">
-        Point Audit and Clean at your music library. Audit is read-only; Clean writes
-        tags in place (mount read-write) and every change is reversible.
+        The folder these steps operate on. Audit and Analyze read only; Clean and Complete-genres
+        write tags in place (mount read-write) and every change is reversible.
       </p>
       <input id="libDir" type="text" placeholder="/music"
         style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
-      <div class="add-actions" style="margin-top:14px;flex-wrap:wrap">
-        <button class="btn-primary" id="auditBtn" onclick="startAudit()">🔍 Audit Library</button>
-        <button class="btn-ghost" id="cleanBtn" onclick="startClean()">🧹 Clean Tags</button>
-        <button class="btn-ghost" id="enrichBtn" onclick="startEnrich()">📊 Analyze BPM &amp; Energy</button>
-      </div>
       <div id="prepError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
-      <div id="auditResults" style="margin-top:16px"></div>
     </div>
 
-    <!-- Genre completion + unify -->
-    <div class="add-box" style="margin-bottom:20px">
-      <label>Genre Completion &amp; Unify</label>
-      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.6">
-        Propose one consistent genre per artist — from the curated map, the majority of each
-        artist's existing tags, then optionally MusicBrainz. Review and edit before applying;
-        a sole <strong style="color:var(--text)">Holiday</strong> tag is always preserved, and
-        every change is reversible. Run <strong style="color:var(--text)">Audit</strong> first.
-      </p>
-      <div class="add-actions" style="align-items:center">
-        <button class="btn-primary" id="reviewBtn" onclick="startReview()">🎯 Review Genres</button>
-        <label style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
-          <input type="checkbox" id="reviewOnline" style="width:15px;height:15px;accent-color:var(--accent)">
-          Look up unknown artists online (MusicBrainz — slower)
-        </label>
+    <!-- Step 1: Audit -->
+    <div class="step" id="step-audit">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <div class="step-title">Audit library</div>
+        <div class="step-status" id="stepAuditStatus">Not run yet.</div>
+        <div class="step-desc">A read-only scan that indexes tags, genres, and file sizes. Everything below builds on this — run it first, and after adding music.</div>
+        <div class="step-actions"><button class="btn-primary" id="auditBtn" onclick="startAudit()">🔍 Audit</button></div>
+        <div class="step-extra" id="auditResults"></div>
       </div>
-      <div id="reviewError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
-      <div id="reviewResult" style="margin-top:16px"></div>
     </div>
 
-    <div class="add-box" style="margin-bottom:20px">
-      <label>iPod AAC Mirror</label>
-      <p style="color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.6">
-        Transcode a FLAC library into a 256k AAC mirror for iPod/iTunes. MP3 and AAC files
-        are copied as-is; DRM (<code>.m4p</code>) files are skipped. The source is never
-        modified, and re-running only converts what's missing.
-      </p>
-      <div style="display:flex;flex-direction:column;gap:12px">
-        <div>
-          <label style="display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Source directory (read-only)</label>
-          <input id="convSource" type="text" placeholder="/music"
-            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
-        </div>
-        <div>
-          <label style="display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Output mirror directory</label>
-          <input id="convOutput" type="text" placeholder="/ipod"
-            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
-        </div>
-        <label class="lib-sync-row" style="cursor:pointer;color:var(--muted);font-size:13px;margin:0">
-          <input type="checkbox" id="convDownsample" style="width:16px;height:16px;cursor:pointer;accent-color:var(--accent)">
-          Downsample hi-res (&gt;16-bit / &gt;48kHz) to 44.1kHz/16-bit
-        </label>
+    <!-- Step 2: Clean tags -->
+    <div class="step" id="step-clean">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <div class="step-title">Clean tags</div>
+        <div class="step-status" id="stepCleanStatus">Normalize genres &amp; fill album artists.</div>
+        <div class="step-desc">Maps genres to a controlled vocabulary and fills missing album artists, in place. One-click reversible from the Jobs list.</div>
+        <div class="step-actions"><button class="btn-ghost" id="cleanBtn" onclick="startClean()">🧹 Clean tags</button></div>
       </div>
-      <div class="add-actions" style="margin-top:14px">
-        <button class="btn-primary" id="convStartBtn" onclick="startConvert()">Start Conversion</button>
-        <span id="convBitrateNote" style="color:var(--muted);font-size:12px;align-self:center"></span>
-      </div>
-      <div id="convError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
     </div>
+
+    <!-- Step 3: Complete genres -->
+    <div class="step" id="step-genres">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <div class="step-title">Complete genres</div>
+        <div class="step-status" id="stepGenresStatus">Give every artist one consistent genre.</div>
+        <div class="step-desc">Proposes a genre per artist from the curated map, the majority of existing tags, then optionally MusicBrainz. Review and edit before applying; a sole <strong style="color:var(--text)">Holiday</strong> tag is preserved.</div>
+        <div class="step-actions">
+          <button class="btn-ghost" id="reviewBtn" onclick="startReview()">🎯 Review genres</button>
+          <label style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
+            <input type="checkbox" id="reviewOnline" style="width:15px;height:15px;accent-color:var(--accent)">
+            Look up unknown artists online (MusicBrainz — slower)
+          </label>
+        </div>
+        <div id="reviewError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+        <div class="step-extra" id="reviewResult"></div>
+      </div>
+    </div>
+
+    <!-- Step 4: Analyze BPM & energy -->
+    <div class="step" id="step-enrich">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <div class="step-title">Analyze BPM &amp; energy</div>
+        <div class="step-status" id="stepEnrichStatus">Enables tempo/energy playlist rules.</div>
+        <div class="step-desc">Detects each track's tempo and a 0–100 energy score. Slow (~1–2s/track) but resumable — safe to run overnight.</div>
+        <div class="step-actions"><button class="btn-ghost" id="enrichBtn" onclick="startEnrich()">📊 Analyze</button></div>
+      </div>
+    </div>
+
+    <!-- Step 5: Convert → iPod -->
+    <div class="step" id="step-convert">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <div class="step-title">Convert → iPod</div>
+        <div class="step-status" id="stepConvertStatus">Build the AAC mirror for iPod/iTunes.</div>
+        <div class="step-desc">Transcodes FLAC to a 256k AAC mirror; MP3/AAC copied as-is, DRM skipped. Source is never modified and re-runs only convert what's missing.</div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px">
+          <div>
+            <label style="display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Source (read-only)</label>
+            <input id="convSource" type="text" placeholder="/music"
+              style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:9px 12px;font-size:13px;outline:none;font-family:monospace">
+          </div>
+          <div>
+            <label style="display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Output mirror</label>
+            <input id="convOutput" type="text" placeholder="/ipod"
+              style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:9px 12px;font-size:13px;outline:none;font-family:monospace">
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--muted);font-size:13px">
+            <input type="checkbox" id="convDownsample" style="width:16px;height:16px;cursor:pointer;accent-color:var(--accent)">
+            Downsample hi-res (&gt;16-bit / &gt;48kHz) to 44.1kHz/16-bit
+          </label>
+        </div>
+        <div class="step-actions">
+          <button class="btn-primary" id="convStartBtn" onclick="startConvert()">Start conversion</button>
+          <span id="convBitrateNote" style="color:var(--muted);font-size:12px"></span>
+        </div>
+        <div id="convError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+      </div>
+    </div>
+
+    <div class="section-title">Jobs</div>
     <div class="card-list" id="prepList"></div>
     <div class="empty" id="prepEmpty" style="display:none">
       <div class="empty-icon">🎧</div>
-      <p>No conversion jobs yet</p>
+      <p>No jobs yet</p>
     </div>
   </div>
 
@@ -541,7 +640,9 @@
       <p>No files yet</p>
     </div>
   </div>
-</main>
+    </main>
+  </div>
+</div>
 
 <script>
 // ── State ────────────────────────────────────────────────────────────────────
@@ -551,14 +652,101 @@ let filesData = [];
 const albumOpen = {};    // album name -> bool
 let albumsList = [];     // ordered album names (for index→name lookup)
 
-// ── Tab switching ─────────────────────────────────────────────────────────────
+// ── Navigation ────────────────────────────────────────────────────────────────
+const PAGE_TITLES = {
+  dashboard: 'Dashboard', library: 'YouTube Music', add: 'Add URLs', queue: 'Queue',
+  history: 'History', convert: 'Prepare library', playlists: 'Playlists', files: 'Files',
+};
 function switchTab(name) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.nav-item').forEach(t => t.classList.toggle('active', t.dataset.nav === name));
   document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+  const title = document.getElementById('pageTitle');
+  if (title) title.textContent = PAGE_TITLES[name] || name;
+  document.querySelector('.content')?.scrollTo?.(0, 0);
+  window.scrollTo(0, 0);
+  if (name === 'dashboard') loadDashboard();
   if (name === 'files') loadFiles();
   if (name === 'library') loadLibrary();
   if (name === 'convert') loadConvert();
   if (name === 'playlists') loadPlaylists();
+}
+const navigate = switchTab;
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  const [ytm, pipe, dls, pls] = await Promise.all([
+    fetch('/api/ytm/status').then(r => r.json()).catch(() => ({})),
+    fetch('/api/prep/pipeline').then(r => r.json()).catch(() => ({})),
+    fetch('/api/downloads').then(r => r.json()).catch(() => ({ downloads: [] })),
+    fetch('/api/playlists').then(r => r.json()).catch(() => ({ playlists: [] })),
+  ]);
+  renderDashboard(ytm, pipe, dls, pls);
+}
+
+function renderDashboard(ytm, pipe, dls, pls) {
+  const total = pipe.total_tracks || 0;
+  const a = (pipe.audit && pipe.audit.summary) || {};
+  const needGenre = a.needs_normalization || 0;
+  const missingAA = a.missing_albumartist || 0;
+  const unresolved = (pipe.genres && pipe.genres.summary && pipe.genres.summary.unresolved) || 0;
+  const enriched = (pipe.enrich && pipe.enrich.enriched) || 0;
+  const notEnriched = Math.max(total - enriched, 0);
+  const dlList = dls.downloads || [];
+  const active = dlList.filter(d => d.status === 'pending' || d.status === 'downloading').length;
+  const errs = dlList.filter(d => d.status === 'error').length;
+  const nPlaylists = (pls.playlists || []).length;
+
+  // Connection banner
+  const conn = ytm.connected
+    ? `<div class="banner"><span class="lib-dot" style="background:var(--accent)"></span>
+         <span style="font-weight:600">Connected to YouTube Music</span>
+         <span style="color:var(--muted);font-size:12px">${ytm.auth_type === 'oauth' ? '(OAuth)' : '(browser headers)'}</span>
+         <button class="btn-ghost btn-sm" style="margin-left:auto" onclick="switchTab('library')">Browse & sync →</button></div>`
+    : `<div class="banner"><span class="lib-dot" style="background:var(--muted)"></span>
+         <span style="font-weight:600">YouTube Music not connected</span>
+         <button class="btn-primary btn-sm" style="margin-left:auto" onclick="switchTab('library')">Connect →</button></div>`;
+
+  const stat = (num, label, cls, nav) =>
+    `<div class="stat-card ${nav ? 'click' : ''}" ${nav ? `onclick="switchTab('${nav}')"` : ''}>
+       <div class="stat-num ${cls || ''}">${num}</div><div class="stat-label">${label}</div></div>`;
+
+  const stats = `<div class="stat-grid">
+    ${stat(total.toLocaleString(), 'Tracks indexed', '', 'convert')}
+    ${stat(active, 'In queue', active ? '' : '', 'queue')}
+    ${stat(nPlaylists, 'Playlists', '', 'playlists')}
+    ${errs ? stat(errs, 'Failed downloads', 'warn', 'history') : ''}
+  </div>`;
+
+  // Guided next-step
+  const steps = [
+    { done: total > 0, label: 'Audit library', note: total ? `${total.toLocaleString()} indexed` : 'not run' },
+    { done: !!pipe.clean, label: 'Clean tags', note: needGenre ? `${needGenre} need a genre fix` : (pipe.clean ? 'done' : 'not run') },
+    { done: !!pipe.genres && !unresolved, label: 'Complete genres', note: unresolved ? `${unresolved} unresolved` : (pipe.genres ? 'done' : 'not run') },
+    { done: total > 0 && notEnriched === 0, label: 'Analyze BPM & energy', note: total ? `${enriched}/${total} analyzed` : 'not run' },
+    { done: !!pipe.convert, label: 'Convert → iPod', note: pipe.convert && pipe.convert.summary ? `${pipe.convert.summary.transcoded || 0} transcoded` : 'not run' },
+  ];
+  const stepRows = steps.map(s =>
+    `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--border);font-size:13px">
+       <span style="color:${s.done ? 'var(--accent)' : 'var(--muted)'};font-weight:700">${s.done ? '✓' : '○'}</span>
+       <span style="flex:1">${s.label}</span>
+       <span style="color:var(--muted);font-size:12px">${s.note}</span></div>`).join('');
+
+  const prepBox = total === 0
+    ? `<div class="add-box"><p style="color:var(--muted);font-size:13px;margin-bottom:12px">Your library isn't indexed yet. Point Prepare at your music and run an audit to unlock cleanup, analysis, conversion, and playlists.</p>
+         <button class="btn-primary" onclick="switchTab('convert')">Open Prepare →</button></div>`
+    : `<div class="add-box"><div style="margin-bottom:4px">${stepRows}</div>
+         <div style="margin-top:14px"><button class="btn-primary" onclick="switchTab('convert')">Continue in Prepare →</button></div></div>`;
+
+  const actions = `<div class="stat-grid">
+    <div class="stat-card click" onclick="switchTab('library')"><div style="font-weight:600">🎵 Download from YouTube Music</div><div class="stat-label">Browse playlists & liked songs</div></div>
+    <div class="stat-card click" onclick="switchTab('add')"><div style="font-weight:600">＋ Add URLs</div><div class="stat-label">Paste links to download</div></div>
+    <div class="stat-card click" onclick="switchTab('playlists')"><div style="font-weight:600">≣ Build a playlist</div><div class="stat-label">Smart, AI, or import</div></div>
+  </div>`;
+
+  document.getElementById('dashBody').innerHTML =
+    conn + stats +
+    `<div class="section-title">Prepare your library</div>` + prepBox +
+    `<div class="section-title">Quick actions</div>` + actions;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -813,6 +1001,7 @@ function connectWS() {
 
   ws.onopen = () => {
     document.getElementById('wsDot').className = 'ws-dot connected';
+    const l = document.getElementById('wsLabel'); if (l) l.textContent = 'live';
     if (wsEverOpened) {
       fetch('/api/downloads').then(r => r.json()).then(data => {
         for (const d of (data.downloads || [])) downloads[d.id] = d;
@@ -825,6 +1014,7 @@ function connectWS() {
 
   ws.onclose = () => {
     document.getElementById('wsDot').className = 'ws-dot';
+    const l = document.getElementById('wsLabel'); if (l) l.textContent = 'reconnecting…';
     wsRetry = setTimeout(connectWS, 3000);
   };
 
@@ -908,6 +1098,10 @@ function handleWS(msg) {
       if (msg.status === 'done') prepJobs[id].progress = 100;
       if (msg.status === 'done' && prepJobs[id].type === 'audit') loadLatestAudit();
       if (msg.status === 'done' && prepJobs[id].type === 'review') loadLatestReview();
+      if (msg.status === 'done') {
+        updatePrepSteps();
+        if (document.getElementById('panel-dashboard').classList.contains('active')) loadDashboard();
+      }
     }
     renderPrepJobs();
     return;
@@ -1290,7 +1484,39 @@ async function loadConvert() {
       prepConfigLoaded = true;
     } catch {}
   }
-  await Promise.all([loadPrepJobs(), loadLatestAudit(), loadLatestReview()]);
+  await Promise.all([loadPrepJobs(), loadLatestAudit(), loadLatestReview(), updatePrepSteps()]);
+}
+
+async function updatePrepSteps() {
+  let p;
+  try { p = await (await fetch('/api/prep/pipeline')).json(); } catch { return; }
+  const total = p.total_tracks || 0;
+  const a = (p.audit && p.audit.summary) || {};
+  const unresolved = (p.genres && p.genres.summary && p.genres.summary.unresolved) || 0;
+  const enriched = (p.enrich && p.enrich.enriched) || 0;
+
+  const set = (step, done, status, warn) => {
+    const el = document.getElementById('step-' + step);
+    if (el) el.classList.toggle('done', !!done);
+    const st = document.getElementById('step' + step.charAt(0).toUpperCase() + step.slice(1) + 'Status');
+    if (st) { st.innerHTML = status; st.classList.toggle('warn', !!warn); }
+  };
+
+  set('audit', total > 0,
+    total > 0 ? `${total.toLocaleString()} tracks indexed${a.needs_normalization ? ` · <span style="color:var(--warn)">${a.needs_normalization} need a genre fix</span>` : ''}` : 'Not run yet — start here.',
+    total === 0);
+  set('clean', !!p.clean,
+    p.clean ? `Last run changed ${(p.clean.summary && p.clean.summary.changed) || 0} tracks.` : (a.needs_normalization ? `${a.needs_normalization} tracks could be cleaned.` : 'Normalize genres & fill album artists.'),
+    !p.clean && a.needs_normalization);
+  set('genres', !!p.genres && !unresolved,
+    p.genres ? (unresolved ? `${unresolved} artists still unresolved.` : 'All artists resolved.') : 'Give every artist one consistent genre.',
+    unresolved > 0);
+  set('enrich', total > 0 && enriched >= total,
+    total > 0 ? `${enriched.toLocaleString()}/${total.toLocaleString()} tracks analyzed.` : 'Enables tempo/energy playlist rules.',
+    total > 0 && enriched < total);
+  set('convert', !!p.convert,
+    p.convert && p.convert.summary ? `Last mirror: ${p.convert.summary.transcoded || 0} transcoded, ${p.convert.summary.copied || 0} copied.` : 'Build the AAC mirror for iPod/iTunes.',
+    false);
 }
 
 async function loadLatestAudit() {
@@ -1928,8 +2154,8 @@ async function deletePlaylist(id, name) {
   for (const d of (data.downloads || [])) downloads[d.id] = d;
   renderAll();
   connectWS();
-  loadLibrary();
   loadPrepJobs();
+  switchTab('dashboard');   // land on the dashboard
 })();
 </script>
 </body>

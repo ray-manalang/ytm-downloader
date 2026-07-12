@@ -132,6 +132,7 @@ Auto-generated YTM playlists ("Liked Music", "Episodes for Later", "New Episodes
 | POST | `/api/prep/audit` | Scan the library read-only → genre distribution, missing album-artist, formats, unmapped genres; populates `library_tracks` |
 | POST | `/api/prep/tags` | Clean job — normalize genres + fill album-artist **in place** (requires a writable library); records `prep_changes` |
 | POST | `/api/prep/enrich` | Analyze BPM + energy (librosa) → `library_tracks.bpm/energy`; resumable (skips already-enriched); 400 if librosa unavailable |
+| GET | `/api/prep/pipeline` | Per-step status (audit/clean/genres/enrich/convert + counts) for the Dashboard + Prepare stepper |
 | POST | `/api/prep/genres/review` | Review job — propose a canonical genre per artist from `library_tracks` (`use_online` opt-in MusicBrainz); needs an Audit first |
 | GET | `/api/prep/genres/latest` | Most recent completed review summary (the proposal table) |
 | POST | `/api/prep/genres/apply` | Unify job — apply an approved `{artist_key: [genres]}` map in place; records `prep_changes` |
@@ -291,7 +292,10 @@ The DB `title` column stores the **album/playlist name** (from `playlist_title` 
 
 ## Frontend SPA (`app/static/index.html`)
 
-Single-file, no build step. Seven tabs: **Library** (default), **Add**, **Queue**, **History**, **Prep** (Audit / Clean / Genre / Convert), **Playlists** (smart rule builder), **Files**.
+Single-file, no build step. **Left-sidebar app shell** (`.app` grid: `.sidebar` + `.content` with a sticky `.topbar`) — not a top tab bar. Nav is grouped: **Dashboard** (default landing) · Download (**YouTube Music** / **Add URLs** / **Queue** / **History**) · Prepare (**Prepare library**) · Organize (**Playlists** / **Files**). `switchTab(name)` (aliased `navigate`) toggles `.nav-item.active` + `.panel.active`, sets the topbar title, and calls the page's loader. Internal panel ids are unchanged (`panel-convert` is the Prepare page), so the JS keeps working.
+
+- **Dashboard** (`loadDashboard`/`renderDashboard`) aggregates `/api/ytm/status`, `/api/prep/pipeline`, `/api/downloads`, `/api/playlists` into a connection banner, stat cards, a guided pipeline summary, and quick-action cards.
+- **Prepare** is a **guided 5-step stepper** (Audit → Clean → Complete genres → Analyze BPM → Convert). Each `.step` card carries the tool's existing controls; `updatePrepSteps()` reads `/api/prep/pipeline` to set per-step status + the `.done` state. Prep jobs still render in the "Jobs" list below.
 
 Key JS state:
 - `downloads` — map of id → download object (source of truth for queue/history cards)

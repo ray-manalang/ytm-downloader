@@ -449,6 +449,50 @@ async def apply_genres(body: dict):
     return await _create_and_enqueue("unify", source_dir, "", {"approved": clean})
 
 
+async def _latest_summary(jtype: str) -> Optional[dict]:
+    async with aiosqlite.connect(_db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT created_at, error FROM prep_jobs WHERE type=? AND status='done' "
+            "ORDER BY created_at DESC LIMIT 1", (jtype,)
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None
+    try:
+        summary = json.loads(row["error"] or "{}")
+    except (TypeError, ValueError):
+        summary = {}
+    return {"when": row["created_at"], "summary": summary}
+
+
+@router.get("/pipeline")
+async def pipeline_status():
+    """Per-step status for the Dashboard + the guided Prepare stepper."""
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute("SELECT COUNT(*) FROM library_tracks") as cur:
+            (total,) = await cur.fetchone()
+        async with db.execute("SELECT COUNT(*) FROM library_tracks WHERE bpm IS NOT NULL") as cur:
+            (enriched,) = await cur.fetchone()
+
+    audit = await _latest_summary("audit")
+    clean = await _latest_summary("tags")
+    genres = await _latest_summary("review")
+    unify = await _latest_summary("unify")
+    convert = await _latest_summary("convert")
+
+    return {
+        "music_dir": MUSIC_DIR,
+        "total_tracks": total,
+        "audit": audit,
+        "clean": clean,
+        "genres": genres,
+        "unify": unify,
+        "enrich": {"enriched": enriched, "total": total},
+        "convert": convert,
+    }
+
+
 @router.get("/audit/latest")
 async def latest_audit():
     """Most recent completed audit summary, for the Audit panel."""
