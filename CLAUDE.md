@@ -52,7 +52,7 @@ Single-process FastAPI app. No test suite.
 | `MAX_CONCURRENT_CONVERSIONS` | `2` | Parallel transcode workers |
 | `AAC_BITRATE` | `256k` | Conversion bitrate |
 | `PLAYLIST_DIR_LIBRARY` | `<MUSIC_DIR>/Playlists` | Smart-playlist `.m3u` output for Sonos / Music Assistant |
-| `PLAYLIST_DIR_IPOD` | `<IPOD_DIR>/Playlists` | iPod-target `.m3u` output (P2, not yet wired) |
+| `PLAYLIST_DIR_IPOD` | `<IPOD_DIR>/Playlists` | iPod-target `.m3u` output (mirror paths) |
 
 ## Database schema
 
@@ -146,10 +146,17 @@ Prep jobs run on a **separate** `_prep_queue` + worker pool (`MAX_CONCURRENT_CON
 | GET | `/api/playlists` | List saved playlists |
 | POST | `/api/playlists` | Create a smart playlist (`name`, `spec`) → writes the `.m3u` |
 | PUT | `/api/playlists/{id}` | Update name/spec → regenerate |
-| POST | `/api/playlists/{id}/generate` | Re-run the rules against the current index and rewrite the `.m3u` |
-| DELETE | `/api/playlists/{id}` | Delete the row and its `.m3u` file |
+| POST | `/api/playlists/{id}/generate` | Re-run against the current index and rewrite the `.m3u`(s) |
+| POST | `/api/playlists/import/ytm` | Import a YTM playlist → M3U for owned tracks + enqueue the missing ones |
+| DELETE | `/api/playlists/{id}` | Delete the row and its `.m3u` file(s) |
 
-Smart playlists are **synchronous** (no queue/WS) — the rule engine filters the in-memory `library_tracks` rows. A `spec` is `{match: all|any, rules: [{field, op, value}], sort?, limit?}`; fields are `genre`/`artist`/`albumartist`/`album`/`year`/`decade` (`bpm`/`energy` exist for P4). M3U uses `#EXTINF` + paths **relative to `PLAYLIST_DIR_LIBRARY`** so Music Assistant resolves them. Playlists read the index that Audit populates — re-run Audit to refresh before regenerating.
+Smart playlists are **synchronous** (no queue/WS) — the rule engine filters the in-memory `library_tracks` rows. A smart `spec` is `{match: all|any, rules: [{field, op, value}], sort?, limit?}`; fields are `genre`/`artist`/`albumartist`/`album`/`year`/`decade` (`bpm`/`energy` exist for P4). M3U uses `#EXTINF` + paths **relative to the playlist folder** so Music Assistant resolves them.
+
+**Targets (P2):** a playlist's `targets` is a subset of `["library", "ipod"]`. The **library** target writes source paths to `PLAYLIST_DIR_LIBRARY`; the **ipod** target maps each track to its mirror file via `converter.mirror_path()` (`.flac`→`.m4a`) and writes to `PLAYLIST_DIR_IPOD`, **including only mirror files that already exist** (run Convert first). Renaming or dropping a target removes the stale `.m3u`.
+
+**YTM import (P2):** `type='ytm'` playlists store the fetched YTM track list in `spec.ytm_tracks`. `_match_ytm_tracks` matches by normalized title (stripping `(...)`/`[...]`) + artist-substring overlap against the library; matched tracks go into the M3U, missing ones are enqueued via the download queue. Regenerating re-matches the stored track list against the current library (no YTM call) — so it picks up tracks once their downloads finish and a re-Audit indexes them.
+
+Playlists read the index that Audit populates — re-run Audit to refresh before regenerating.
 
 ### Auto-sync (`ytm.py`)
 

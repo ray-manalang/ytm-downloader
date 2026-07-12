@@ -452,12 +452,45 @@
           <input id="plLimit" type="number" min="0" placeholder="none"
             style="width:80px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-size:13px;outline:none"></span>
       </div>
+      <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:12px">
+        Write to:
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="plTargetLibrary" checked style="accent-color:var(--accent)"> Library (Sonos/MA)</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="plTargetIpod" style="accent-color:var(--accent)"> iPod mirror</label>
+      </div>
       <div class="add-actions" style="margin-top:14px">
         <button class="btn-ghost" id="plPreviewBtn" onclick="previewPlaylist()">Preview</button>
         <button class="btn-primary" id="plSaveBtn" onclick="savePlaylist()">Save Playlist</button>
       </div>
       <div id="plError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
       <div id="plPreview" style="margin-top:14px"></div>
+    </div>
+
+    <!-- Import from YouTube Music -->
+    <div class="add-box" style="margin-bottom:20px" id="plImportBox">
+      <label>Import from YouTube Music</label>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.6">
+        Turn a YTM playlist into a local <code>.m3u</code> — tracks you already have are linked,
+        and anything missing is queued for download.
+      </p>
+      <div id="plImportBody">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <select id="plYtmSelect" style="flex:1;min-width:220px"></select>
+          <button class="btn-primary" id="plImportBtn" onclick="importYtm()">Import</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:12px">
+          Write to:
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="plImpLibrary" checked style="accent-color:var(--accent)"> Library</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="plImpIpod" style="accent-color:var(--accent)"> iPod mirror</label>
+        </div>
+        <div id="plImportResult" style="margin-top:10px;font-size:13px"></div>
+      </div>
+      <div id="plImportDisconnected" style="color:var(--muted);font-size:13px;display:none">
+        Connect YouTube Music in the <strong style="color:var(--text)">Library</strong> tab to import playlists.
+      </div>
     </div>
 
     <div id="plList"></div>
@@ -1602,8 +1635,53 @@ async function loadPlaylists() {
     document.getElementById('plGenres').innerHTML = (cfg.genres || []).map(g => `<option value="${escHtml(g)}">`).join('');
     document.getElementById('plArtists').innerHTML = (cfg.artists || []).map(a => `<option value="${escHtml(a)}">`).join('');
   } catch {}
+  // YTM import box: show playlists if connected, else a hint.
+  const importBody = document.getElementById('plImportBody');
+  const importDisc = document.getElementById('plImportDisconnected');
+  if (plFacets.ytm_connected) {
+    importBody.style.display = ''; importDisc.style.display = 'none';
+    try {
+      const lib = await (await fetch('/api/ytm/library')).json();
+      const sel = document.getElementById('plYtmSelect');
+      sel.innerHTML = (lib.playlists || []).map(p =>
+        `<option value="${escHtml(p.id)}" data-title="${escHtml(p.title)}">${escHtml(p.title)}${p.count ? ` (${p.count})` : ''}</option>`).join('')
+        || '<option value="">No playlists</option>';
+    } catch {}
+  } else {
+    importBody.style.display = 'none'; importDisc.style.display = '';
+  }
   renderRules();
   await loadPlaylistList();
+}
+
+function plTargets(libId, ipodId) {
+  const t = [];
+  if (document.getElementById(libId).checked) t.push('library');
+  if (document.getElementById(ipodId).checked) t.push('ipod');
+  return t;
+}
+
+async function importYtm() {
+  const sel = document.getElementById('plYtmSelect');
+  const playlist_id = sel.value;
+  const name = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].dataset.title : '';
+  const targets = plTargets('plImpLibrary', 'plImpIpod');
+  const out = document.getElementById('plImportResult');
+  if (!playlist_id) { out.innerHTML = '<span style="color:var(--danger)">Pick a playlist.</span>'; return; }
+  if (!targets.length) { out.innerHTML = '<span style="color:var(--danger)">Pick at least one target.</span>'; return; }
+  const btn = document.getElementById('plImportBtn'); btn.disabled = true; btn.textContent = 'Importing…';
+  out.textContent = '';
+  try {
+    const res = await fetch('/api/playlists/import/ytm', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({playlist_id, name, targets}),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { out.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'Import failed.')}</span>`; return; }
+    out.innerHTML = `<span style="color:var(--accent)">✓ ${d.matched}/${d.total} matched</span>
+      <span style="color:var(--muted)"> · ${d.missing} missing${d.enqueued ? ` (${d.enqueued} queued for download)` : ''}</span>`;
+    await loadPlaylistList();
+  } finally { btn.disabled = false; btn.textContent = 'Import'; }
 }
 
 function renderRules() {
@@ -1700,10 +1778,12 @@ async function savePlaylist() {
   const errEl = document.getElementById('plError'); errEl.textContent = '';
   if (!name) { errEl.textContent = 'Name is required.'; return; }
   if (!spec.rules.length) { errEl.textContent = 'Add at least one rule with a value.'; return; }
+  const targets = plTargets('plTargetLibrary', 'plTargetIpod');
+  if (!targets.length) { errEl.textContent = 'Pick at least one target (Library or iPod).'; return; }
   const btn = document.getElementById('plSaveBtn'); btn.disabled = true; btn.textContent = 'Saving…';
   try {
     const res = await fetch('/api/playlists', {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, spec}),
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, spec, targets}),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { errEl.textContent = data.detail || 'Save failed.'; return; }
@@ -1732,12 +1812,19 @@ async function loadPlaylistList() {
   const empty = document.getElementById('plEmpty');
   if (!items.length) { el.innerHTML = ''; empty.style.display = ''; return; }
   empty.style.display = 'none';
-  el.innerHTML = items.map(p => `
+  el.innerHTML = items.map(p => {
+    const summary = p.type === 'ytm'
+      ? `YouTube Music import${p.spec && p.spec.ytm_tracks ? ` · ${p.spec.ytm_tracks.length} source tracks` : ''}`
+      : ruleSummary(p.spec);
+    const targetBadges = (p.targets || []).map(t =>
+      `<span class="status-chip" style="background:var(--surface2);color:var(--muted)">${t === 'ipod' ? 'iPod' : 'Library'}</span>`).join('');
+    const typeBadge = p.type === 'ytm' ? '<span class="status-chip" style="background:var(--accent-soft);color:var(--accent)">YTM</span>' : '';
+    return `
     <div class="card" style="margin-bottom:10px">
       <div class="card-header">
         <div class="card-info">
           <div class="card-title">🎵 ${escHtml(p.name)}</div>
-          <div class="card-url">${escHtml(ruleSummary(p.spec))}</div>
+          <div class="card-url">${escHtml(summary)}</div>
         </div>
         <div style="display:flex;gap:8px;align-items:flex-start">
           <button class="btn-ghost btn-sm" onclick="regeneratePlaylist('${p.id}')" title="Re-run against the current library">↻ Regenerate</button>
@@ -1746,9 +1833,11 @@ async function loadPlaylistList() {
       </div>
       <div class="card-meta">
         <span class="status-chip status-done">${p.track_count} tracks</span>
+        ${typeBadge}${targetBadges}
         <span style="color:var(--muted);font-size:12px">updated ${fmtDate(p.updated_at)}</span>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 async function regeneratePlaylist(id) {

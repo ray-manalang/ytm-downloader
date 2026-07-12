@@ -16,7 +16,7 @@ A self-hosted music-library tool. It started as a YouTube Music downloader and i
 - **Auto-sync** — automatically download new liked songs on a configurable schedule
 - **iPod AAC mirror** — transcode a FLAC library to a 256k AAC mirror for iPod/iTunes; source is never modified, and re-runs only convert what's missing
 - **Tag cleanup** — audit your library, normalize genres to a controlled vocabulary, and fill missing album artists; every change is one-click reversible, and new downloads land normalized
-- **Smart playlists** — build genre/decade/year/artist rules and Music Monster keeps a matching `.m3u` in sync for Sonos / Music Assistant
+- **Smart playlists** — build genre/decade/year/artist rules and Music Monster keeps a matching `.m3u` in sync for Sonos / Music Assistant, the iPod mirror, or both; also import YouTube Music playlists (missing tracks are queued to download)
 - Dark mode UI, no build step, no external JS dependencies
 
 ## Output format
@@ -169,7 +169,11 @@ The **iPod AAC Mirror** section mirrors a FLAC music library into an iPod/iTunes
 
 ## Smart playlists (Playlists tab)
 
-The **Playlists** tab builds rule-based playlists over your library index (populated by Audit). Combine rules on **genre, artist, album artist, album, year, or decade** with match-all or match-any, preview the matches, then save. Music Monster writes an `.m3u` (with `#EXTINF` and paths relative to the playlist folder) into `PLAYLIST_DIR_LIBRARY` — inside your `MUSIC_DIR/Playlists` by default, so **Sonos / Music Assistant** picks it up. Hit **Regenerate** after adding music to refresh a playlist against the current library.
+The **Playlists** tab builds rule-based playlists over your library index (populated by Audit). Combine rules on **genre, artist, album artist, album, year, or decade** with match-all or match-any, preview the matches, then save. Music Monster writes an `.m3u` (with `#EXTINF` and paths relative to the playlist folder) so **Sonos / Music Assistant** picks it up. Hit **Regenerate** after adding music to refresh a playlist against the current library.
+
+**Targets** — each playlist can write to the **Library** target (`PLAYLIST_DIR_LIBRARY`, default `MUSIC_DIR/Playlists`), the **iPod** target (`PLAYLIST_DIR_IPOD`, default `IPOD_DIR/Playlists`, using the AAC mirror's `.m4a` paths), or both. The iPod playlist only lists tracks that already exist in the mirror, so run **Convert** first.
+
+**Import from YouTube Music** — pick one of your YTM playlists and Music Monster builds a local `.m3u` from the tracks you already have, and queues the rest for download. Re-import or Regenerate later to pick up the newly downloaded tracks.
 
 - Set `MUSIC_DIR` (source, mounted **read-only**) and `IPOD_DIR` (output mirror). Both can also be typed into the form per-run.
 - `.flac` (and other lossless) are transcoded to **AAC 256k `.m4a`**, preserving cover art and tags.

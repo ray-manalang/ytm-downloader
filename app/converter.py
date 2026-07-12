@@ -33,6 +33,16 @@ _COPY_EXTS = {".mp3", ".m4a", ".aac", ".m4b", ".aax"}
 _DRM_EXTS = {".m4p"}
 
 
+def mirror_path(source_path, source_dir, output_dir) -> str:
+    """Map a source library file to its mirror counterpart (same relative path;
+    transcoded extensions become .m4a). Used by the iPod-target playlist writer."""
+    src = Path(source_path)
+    rel = src.resolve().relative_to(Path(source_dir).resolve())
+    if src.suffix.lower() in _TRANSCODE_EXTS:
+        rel = rel.with_suffix(".m4a")
+    return str(Path(output_dir) / rel)
+
+
 def _probe_audio(path: Path) -> dict:
     """Return {'sample_rate': int, 'bits': int} for the first audio stream, best-effort."""
     try:

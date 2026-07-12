@@ -20,6 +20,9 @@ from typing import List, Optional
 import aiosqlite
 from fastapi import APIRouter, HTTPException
 
+from . import converter
+from . import ytm as ytm_module
+
 router = APIRouter(prefix="/api/playlists")
 
 MUSIC_DIR = os.environ.get("MUSIC_DIR", "")
@@ -30,11 +33,13 @@ PLAYLIST_DIR_IPOD = os.environ.get("PLAYLIST_DIR_IPOD") or (
     os.path.join(IPOD_DIR, "Playlists") if IPOD_DIR else os.path.join(IPOD_DIR or ".", "Playlists"))
 
 _db_path = ""
+_enqueue_fn = None
 
 
-def set_dependencies(db_path: str):
-    global _db_path
+def set_dependencies(db_path: str, enqueue_fn=None):
+    global _db_path, _enqueue_fn
     _db_path = db_path
+    _enqueue_fn = enqueue_fn
 
 
 # ── Rule engine ─────────────────────────────────────────────────────────────
@@ -167,16 +172,92 @@ async def _all_tracks() -> List[dict]:
             return [dict(r) for r in await cur.fetchall()]
 
 
-async def _generate_file(name: str, spec: dict) -> dict:
-    """Match tracks against the spec and write the library-target .m3u. Returns stats."""
-    tracks = await _all_tracks()
-    matched = _match_tracks(tracks, spec)
-    os.makedirs(PLAYLIST_DIR_LIBRARY, exist_ok=True)
-    out_path = os.path.join(PLAYLIST_DIR_LIBRARY, _safe_filename(name))
-    content = render_m3u(matched, PLAYLIST_DIR_LIBRARY)
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+
+def _clean_title(s: str) -> str:
+    return re.sub(r"[\(\[].*?[\)\]]", "", s or "")
+
+
+def _match_ytm_tracks(ytm_tracks: List[dict], library: List[dict]) -> tuple:
+    """Match YTM tracks to library files by normalized title + artist overlap.
+    Returns (matched_library_tracks_in_order, missing_ytm_tracks)."""
+    idx: dict = {}
+    for t in library:
+        key = _norm(_clean_title(_display_title(t.get("path", ""))))
+        idx.setdefault(key, []).append(t)
+
+    matched, missing = [], []
+    for y in ytm_tracks:
+        key = _norm(_clean_title(y.get("title", "")))
+        y_artist = _norm(y.get("artist", ""))
+        cands = idx.get(key, [])
+        best = None
+        for c in cands:
+            c_artist = _norm(c.get("artist") or c.get("albumartist") or "")
+            if not y_artist or not c_artist or y_artist in c_artist or c_artist in y_artist:
+                best = c
+                break
+        if best:
+            matched.append(best)
+        else:
+            missing.append(y)
+    return matched, missing
+
+
+def _matched_for_spec(spec: dict, tracks: List[dict]) -> List[dict]:
+    """A spec is either a rule set (smart) or a fixed YTM track list."""
+    if spec.get("rules"):
+        return _match_tracks(tracks, spec)
+    if spec.get("ytm_tracks"):
+        matched, _ = _match_ytm_tracks(spec["ytm_tracks"], tracks)
+        return matched
+    return []
+
+
+def _write_target(matched: List[dict], name: str, target: str) -> dict:
+    """Write one target's .m3u. 'library' uses source paths; 'ipod' maps to mirror
+    files and includes only those that already exist in the mirror."""
+    if target == "ipod":
+        out_dir = PLAYLIST_DIR_IPOD
+        rendered = []
+        for t in matched:
+            try:
+                mp = converter.mirror_path(t["path"], MUSIC_DIR, IPOD_DIR)
+            except (ValueError, KeyError):
+                continue
+            if os.path.exists(mp):
+                rendered.append({**t, "path": mp})
+        tracks_out, count = rendered, len(rendered)
+    else:
+        out_dir = PLAYLIST_DIR_LIBRARY
+        tracks_out, count = matched, len(matched)
+
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, _safe_filename(name))
     with open(out_path, "w", encoding="utf-8") as f:
-        f.write(content)
-    return {"track_count": len(matched), "path": out_path}
+        f.write(render_m3u(tracks_out, out_dir))
+    return {"target": target, "path": out_path, "count": count}
+
+
+async def _generate(name: str, spec: dict, targets: List[str]) -> dict:
+    """Match tracks and write an .m3u for each target. Returns match count + per-target stats."""
+    tracks = await _all_tracks()
+    matched = _matched_for_spec(spec, tracks)
+    written = [_write_target(matched, name, t) for t in (targets or ["library"])]
+    return {"track_count": len(matched), "written": written}
+
+
+def _remove_target_files(name: str, targets: List[str]):
+    for target in (targets or ["library"]):
+        d = PLAYLIST_DIR_IPOD if target == "ipod" else PLAYLIST_DIR_LIBRARY
+        path = os.path.join(d, _safe_filename(name))
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
 
 def _row_public(row: dict) -> dict:
@@ -208,11 +289,13 @@ async def playlists_config():
     genre_display = sorted({g.strip() for t in tracks for g in (t.get("genre") or "").split(",") if g.strip()})
     return {
         "playlist_dir_library": PLAYLIST_DIR_LIBRARY,
+        "playlist_dir_ipod": PLAYLIST_DIR_IPOD,
         "indexed_tracks": len(tracks),
         "genres": genre_display,
         "artists": sorted(artists)[:2000],
         "year_min": min(years) if years else None,
         "year_max": max(years) if years else None,
+        "ytm_connected": ytm_module.is_connected(),
     }
 
 
@@ -238,6 +321,11 @@ async def list_playlists():
     return {"playlists": [_row_public(dict(r)) for r in rows]}
 
 
+def _clean_targets(raw) -> List[str]:
+    allowed = [t for t in (raw or ["library"]) if t in ("library", "ipod")]
+    return allowed or ["library"]
+
+
 @router.post("")
 async def create_playlist(body: dict):
     name = (body.get("name") or "").strip()
@@ -246,11 +334,11 @@ async def create_playlist(body: dict):
         raise HTTPException(400, "Name is required")
     if not spec.get("rules"):
         raise HTTPException(400, "Add at least one rule")
+    targets = _clean_targets(body.get("targets"))
 
     pid = str(uuid.uuid4())[:8]
     now = time.time()
-    gen = await _generate_file(name, spec)
-    targets = ["library"]
+    gen = await _generate(name, spec, targets)
     async with aiosqlite.connect(_db_path) as db:
         await db.execute(
             "INSERT INTO playlists (id,name,type,spec,targets,track_count,auto_refresh,updated_at) "
@@ -260,7 +348,62 @@ async def create_playlist(body: dict):
         )
         await db.commit()
     return {"id": pid, "name": name, "type": "smart", "spec": spec, "targets": targets,
-            "track_count": gen["track_count"], "path": gen["path"], "updated_at": now}
+            "track_count": gen["track_count"], "written": gen["written"], "updated_at": now}
+
+
+@router.post("/import/ytm")
+async def import_ytm(body: dict):
+    """Import a YouTube Music playlist: M3U for tracks you already have, and enqueue
+    downloads for the ones you're missing."""
+    playlist_id = (body.get("playlist_id") or "").strip()
+    if not playlist_id:
+        raise HTTPException(400, "playlist_id is required")
+    if not ytm_module.is_connected():
+        raise HTTPException(400, "YouTube Music is not connected")
+    targets = _clean_targets(body.get("targets"))
+
+    try:
+        ytm_tracks = await ytm_module.fetch_playlist_tracks(playlist_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Could not fetch playlist: {e}")
+    if not ytm_tracks:
+        raise HTTPException(400, "Playlist has no tracks")
+
+    name = (body.get("name") or f"YTM {playlist_id}").strip()
+    library = await _all_tracks()
+    matched, missing = _match_ytm_tracks(ytm_tracks, library)
+
+    # Enqueue the misses for download (best-effort).
+    enqueued = 0
+    if _enqueue_fn:
+        for y in missing:
+            vid = y.get("videoId")
+            if not vid:
+                continue
+            try:
+                await _enqueue_fn(f"https://music.youtube.com/watch?v={vid}")
+                enqueued += 1
+            except Exception:
+                pass
+
+    spec = {"source": "ytm", "ytm_playlist_id": playlist_id,
+            "ytm_tracks": [{"videoId": y.get("videoId"), "title": y.get("title"),
+                            "artist": y.get("artist")} for y in ytm_tracks]}
+    pid = str(uuid.uuid4())[:8]
+    now = time.time()
+    gen = await _generate(name, spec, targets)
+    async with aiosqlite.connect(_db_path) as db:
+        await db.execute(
+            "INSERT INTO playlists (id,name,type,spec,targets,track_count,auto_refresh,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (pid, name, "ytm", json.dumps(spec), json.dumps(targets), gen["track_count"], 1, now),
+        )
+        await db.commit()
+    return {"id": pid, "name": name, "type": "ytm", "targets": targets,
+            "total": len(ytm_tracks), "matched": len(matched), "missing": len(missing),
+            "enqueued": enqueued, "updated_at": now}
 
 
 async def _get_row(pid: str) -> Optional[dict]:
@@ -276,46 +419,46 @@ async def update_playlist(pid: str, body: dict):
     row = await _get_row(pid)
     if not row:
         raise HTTPException(404, "Not found")
+    pub = _row_public(row)
     name = (body.get("name") or row["name"]).strip()
-    spec = body.get("spec") if body.get("spec") is not None else _row_public(row)["spec"]
-    if not spec.get("rules"):
+    spec = body.get("spec") if body.get("spec") is not None else pub["spec"]
+    targets = _clean_targets(body.get("targets") if body.get("targets") is not None else pub["targets"])
+    if row["type"] == "smart" and not spec.get("rules"):
         raise HTTPException(400, "Add at least one rule")
 
-    # If renamed, remove the old .m3u file.
+    # Remove stale files if renamed or a target was dropped.
     if name != row["name"]:
-        old = os.path.join(PLAYLIST_DIR_LIBRARY, _safe_filename(row["name"]))
-        if os.path.exists(old):
-            try:
-                os.remove(old)
-            except OSError:
-                pass
+        _remove_target_files(row["name"], pub["targets"])
+    else:
+        dropped = [t for t in pub["targets"] if t not in targets]
+        _remove_target_files(name, dropped)
 
-    gen = await _generate_file(name, spec)
+    gen = await _generate(name, spec, targets)
     now = time.time()
     async with aiosqlite.connect(_db_path) as db:
         await db.execute(
-            "UPDATE playlists SET name=?, spec=?, track_count=?, updated_at=? WHERE id=?",
-            (name, json.dumps(spec), gen["track_count"], now, pid),
+            "UPDATE playlists SET name=?, spec=?, targets=?, track_count=?, updated_at=? WHERE id=?",
+            (name, json.dumps(spec), json.dumps(targets), gen["track_count"], now, pid),
         )
         await db.commit()
-    return {"id": pid, "name": name, "spec": spec, "track_count": gen["track_count"],
-            "path": gen["path"], "updated_at": now}
+    return {"id": pid, "name": name, "spec": spec, "targets": targets,
+            "track_count": gen["track_count"], "written": gen["written"], "updated_at": now}
 
 
 @router.post("/{pid}/generate")
 async def regenerate(pid: str):
-    """Re-run the rules against the current library index and rewrite the .m3u."""
+    """Re-run the playlist against the current library index and rewrite its .m3u(s)."""
     row = await _get_row(pid)
     if not row:
         raise HTTPException(404, "Not found")
-    spec = _row_public(row)["spec"]
-    gen = await _generate_file(row["name"], spec)
+    pub = _row_public(row)
+    gen = await _generate(row["name"], pub["spec"], pub["targets"])
     now = time.time()
     async with aiosqlite.connect(_db_path) as db:
         await db.execute("UPDATE playlists SET track_count=?, updated_at=? WHERE id=?",
                          (gen["track_count"], now, pid))
         await db.commit()
-    return {"id": pid, "track_count": gen["track_count"], "path": gen["path"], "updated_at": now}
+    return {"id": pid, "track_count": gen["track_count"], "written": gen["written"], "updated_at": now}
 
 
 @router.delete("/{pid}")
@@ -323,12 +466,7 @@ async def delete_playlist(pid: str):
     row = await _get_row(pid)
     if not row:
         raise HTTPException(404, "Not found")
-    path = os.path.join(PLAYLIST_DIR_LIBRARY, _safe_filename(row["name"]))
-    if os.path.exists(path):
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+    _remove_target_files(row["name"], _row_public(row)["targets"])
     async with aiosqlite.connect(_db_path) as db:
         await db.execute("DELETE FROM playlists WHERE id=?", (pid,))
         await db.commit()

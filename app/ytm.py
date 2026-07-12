@@ -277,6 +277,24 @@ def set_dependencies(enqueue_fn, db_path: str):
     _db_path = db_path
 
 
+def is_connected() -> bool:
+    return _ytm_client is not None
+
+
+async def fetch_playlist_tracks(playlist_id: str) -> list:
+    """Programmatic version of GET /playlist/{id} — returns [{videoId,title,artist,...}].
+
+    Reused by the playlists module (YTM import). Raises HTTPException(503) if not
+    connected, matching the route behaviour.
+    """
+    yt = _get_client()
+    loop = asyncio.get_event_loop()
+    if _is_oauth():
+        return await loop.run_in_executor(None, lambda: _data_api_get_playlist_tracks(yt, playlist_id))
+    playlist = await loop.run_in_executor(None, lambda: yt.get_playlist(playlist_id, limit=None))
+    return [_fmt_track(t) for t in (playlist.get("tracks") or []) if t.get("videoId")]
+
+
 def _is_oauth() -> bool:
     return os.path.exists(_OAUTH_CREDS_PATH)
 
