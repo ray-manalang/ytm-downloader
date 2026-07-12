@@ -2124,6 +2124,7 @@ async function loadPlaylistList() {
           <div class="card-url">${escHtml(summary)}</div>
         </div>
         <div style="display:flex;gap:8px;align-items:flex-start">
+          ${p.type === 'ai' ? `<button class="btn-ghost btn-sm" onclick="recuratePlaylist('${p.id}')" title="Ask Claude to pick a fresh set of tracks for this prompt">✨ Re-curate</button>` : ''}
           <button class="btn-ghost btn-sm" onclick="regeneratePlaylist('${p.id}')" title="Re-run against the current library">↻ Regenerate</button>
           <button class="btn-danger" onclick="deletePlaylist('${p.id}','${escHtml(p.name)}')">Delete</button>
         </div>
@@ -2139,6 +2140,16 @@ async function loadPlaylistList() {
 
 async function regeneratePlaylist(id) {
   await fetch('/api/playlists/' + id + '/generate', { method: 'POST' });
+  await loadPlaylistList();
+}
+
+async function recuratePlaylist(id) {
+  if (!confirm('Re-curate this playlist? Claude will pick a fresh set of tracks for the saved prompt, replacing the current selection.')) return;
+  const res = await fetch('/api/playlists/' + id + '/recurate', { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert('Re-curate failed: ' + (err.detail || res.statusText));
+  }
   await loadPlaylistList();
 }
 

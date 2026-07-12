@@ -85,8 +85,12 @@ _INTENT_SCHEMA = {
             },
         },
         "limit": {"type": "integer"},
+        # Hard era bounds (applied as an AND filter on candidates); null when the
+        # request has no time period.
+        "year_min": {"type": ["integer", "null"]},
+        "year_max": {"type": ["integer", "null"]},
     },
-    "required": ["name", "match", "rules", "limit"],
+    "required": ["name", "match", "rules", "limit", "year_min", "year_max"],
     "additionalProperties": False,
 }
 
@@ -101,11 +105,14 @@ def prompt_to_intent(prompt: str, facets: dict, controlled_genres: List[str]) ->
     system = (
         "You are a music librarian. Convert the user's request into a filter over THEIR library. "
         "Only reference genres, artists, and years that plausibly exist in the library described below. "
-        "Genres MUST come from the controlled vocabulary. Prefer match=any with a few genre/decade rules "
-        "for mood-style requests. If the request implies a time period or era (e.g. '80s', 'classic rock', "
-        "'hippie/Woodstock era', 'oldies'), also add year/decade rules to focus on it. "
-        "Set limit to the number of tracks the user asks for, else 30. "
-        "Values are strings ('1980' for a decade, '1985' for a year).\n\n"
+        "Genres MUST come from the controlled vocabulary. Prefer match=any with a few genre rules "
+        "for mood-style requests. Set limit to the number of tracks the user asks for, else 30. "
+        "Rule values are strings ('1980' for a decade, '1985' for a year).\n"
+        "If (and only if) the request implies a time period or era, set year_min/year_max to bound it — "
+        "these are a HARD filter, so use them for era requests instead of year rules. Guides: "
+        "'hippie'/'Woodstock'/'flower power' ≈ 1965–1975; '60s' = 1960–1969; '70s' = 1970–1979; "
+        "'80s' = 1980–1989; 'oldies' ≈ 1955–1969; 'classic rock' ≈ 1965–1985. "
+        "Set BOTH year_min and year_max to null when the request has no time period.\n\n"
         f"Controlled genres: {', '.join(controlled_genres)}\n"
         f"Genres present in the library: {genres}\n"
         f"Year range: {yr_min}–{yr_max}\n"
@@ -120,6 +127,12 @@ def prompt_to_intent(prompt: str, facets: dict, controlled_genres: List[str]) ->
                 r["value"] = int(str(r["value"]).strip())
             except (TypeError, ValueError):
                 pass
+    for k in ("year_min", "year_max"):
+        v = intent.get(k)
+        try:
+            intent[k] = int(v) if v not in (None, "", "null") else None
+        except (TypeError, ValueError):
+            intent[k] = None
     return intent
 
 

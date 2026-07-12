@@ -182,7 +182,7 @@ The **Playlists** tab builds rule-based playlists over your library index (popul
 
 **Import from YouTube Music** — pick one of your YTM playlists and Music Monster builds a local `.m3u` from the tracks you already have, and queues the rest for download. Re-import or Regenerate later to pick up the newly downloaded tracks.
 
-**AI Playlist** *(optional)* — describe a vibe (e.g. "upbeat 80s new wave for a road trip") and Claude builds it from your library: it picks a filter grounded in your actual genres/artists, then curates and orders the best matches. Enable it by setting `ANTHROPIC_API_KEY` in the container environment (`ANTHROPIC_MODEL` defaults to the low-cost `claude-haiku-4-5`). Without a key, the feature is hidden and the rest of the app is unaffected.
+**AI Playlist** *(optional)* — describe a vibe (e.g. "upbeat 80s new wave for a road trip") and Claude builds it from your library: it picks a filter grounded in your actual genres/artists, honors any era you imply as a hard year filter, then curates and orders the best matches. Enable it by setting `ANTHROPIC_API_KEY` in the container environment (`ANTHROPIC_MODEL` defaults to the low-cost `claude-haiku-4-5`). Without a key, the feature is hidden and the rest of the app is unaffected. Two refresh buttons on an AI playlist: **↻ Regenerate** cheaply replays the same track selection against the current library (no API call), while **✨ Re-curate** asks Claude for a brand-new selection from the saved prompt (keeps the name + targets).
 
 - Set `MUSIC_DIR` (source, mounted **read-only**) and `IPOD_DIR` (output mirror). Both can also be typed into the form per-run.
 - `.flac` (and other lossless) are transcoded to **AAC 256k `.m4a`**, preserving cover art and tags.

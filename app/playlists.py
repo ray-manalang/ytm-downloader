@@ -375,16 +375,10 @@ def _cap_per_artist(ordered: List[dict], target: int, backfill: List[dict], cap:
     return chosen
 
 
-@router.post("/ai")
-async def create_ai_playlist(body: dict):
-    """Two-stage AI curation: prompt → intent (Claude) → local candidates → Claude re-rank."""
-    if not ai_curator.is_enabled():
-        raise HTTPException(400, "AI curation is disabled — set ANTHROPIC_API_KEY to enable it.")
-    prompt = (body.get("prompt") or "").strip()
-    if not prompt:
-        raise HTTPException(400, "A prompt is required")
-    targets = _clean_targets(body.get("targets"))
-
+async def _run_ai_curation(prompt: str) -> dict:
+    """The two-stage Claude curation: prompt → intent → candidates (+ era filter) →
+    re-rank. Returns {intent, selected tracks, candidates count, suggested name}.
+    Shared by create + re-curate."""
     tracks = await _all_tracks()
     if not tracks:
         raise HTTPException(400, "No indexed tracks — run Audit first.")
@@ -405,6 +399,13 @@ async def create_ai_playlist(body: dict):
     candidates = _match_tracks(tracks, {"match": intent.get("match", "any"), "rules": rules}) if rules else []
     if not candidates and rules:  # nothing matched all — broaden to any-match
         candidates = _match_tracks(tracks, {"match": "any", "rules": rules})
+    # Hard era filter: for time-based prompts, drop out-of-range dated tracks so wrong
+    # decades can't even reach the re-rank. Undated tracks are kept (benefit of doubt).
+    ymin, ymax = intent.get("year_min"), intent.get("year_max")
+    if ymin is not None or ymax is not None:
+        lo = ymin if ymin is not None else -10 ** 9
+        hi = ymax if ymax is not None else 10 ** 9
+        candidates = [t for t in candidates if t.get("year") is None or lo <= t["year"] <= hi]
     # Diversify so a prolific artist doesn't dominate the 150 Claude sees.
     candidates = _diversify_by_artist(candidates)[:150]
 
@@ -429,21 +430,65 @@ async def create_ai_playlist(body: dict):
     selected = selected[:target] if artist_specific else _cap_per_artist(selected, target, [], AI_MAX_PER_ARTIST)
 
     name = ((intent.get("name") or f"AI: {prompt}").strip())[:80] or "AI playlist"
-    spec = {"source": "ai", "prompt": prompt, "intent": intent,
-            "ai_paths": [t["path"] for t in selected]}
+    return {"intent": intent, "selected": selected, "candidates": len(candidates), "name": name}
+
+
+@router.post("/ai")
+async def create_ai_playlist(body: dict):
+    """Two-stage AI curation: prompt → intent (Claude) → local candidates → Claude re-rank."""
+    if not ai_curator.is_enabled():
+        raise HTTPException(400, "AI curation is disabled — set ANTHROPIC_API_KEY to enable it.")
+    prompt = (body.get("prompt") or "").strip()
+    if not prompt:
+        raise HTTPException(400, "A prompt is required")
+    targets = _clean_targets(body.get("targets"))
+
+    cur = await _run_ai_curation(prompt)
+    spec = {"source": "ai", "prompt": prompt, "intent": cur["intent"],
+            "ai_paths": [t["path"] for t in cur["selected"]]}
     pid = str(uuid.uuid4())[:8]
     now = time.time()
-    gen = await _generate(name, spec, targets)
+    gen = await _generate(cur["name"], spec, targets)
     async with aiosqlite.connect(_db_path) as db:
         await db.execute(
             "INSERT INTO playlists (id,name,type,spec,targets,track_count,auto_refresh,updated_at) "
             "VALUES (?,?,?,?,?,?,?,?)",
-            (pid, name, "ai", json.dumps(spec), json.dumps(targets), gen["track_count"], 1, now),
+            (pid, cur["name"], "ai", json.dumps(spec), json.dumps(targets), gen["track_count"], 1, now),
         )
         await db.commit()
-    return {"id": pid, "name": name, "type": "ai", "targets": targets,
-            "candidates": len(candidates), "matched": gen["track_count"],
+    return {"id": pid, "name": cur["name"], "type": "ai", "targets": targets,
+            "candidates": cur["candidates"], "matched": gen["track_count"],
             "written": gen["written"], "updated_at": now}
+
+
+@router.post("/{pid}/recurate")
+async def recurate_playlist(pid: str):
+    """Re-run the Claude curation for an existing AI playlist (new selection), keeping
+    its name + targets. Distinct from `/generate`, which deterministically replays the
+    frozen `ai_paths` without calling Claude."""
+    if not ai_curator.is_enabled():
+        raise HTTPException(400, "AI curation is disabled — set ANTHROPIC_API_KEY to enable it.")
+    row = await _get_row(pid)
+    if not row:
+        raise HTTPException(404, "Not found")
+    if row["type"] != "ai":
+        raise HTTPException(400, "Only AI playlists can be re-curated")
+    pub = _row_public(row)
+    prompt = (pub["spec"].get("prompt") or "").strip()
+    if not prompt:
+        raise HTTPException(400, "This playlist has no saved prompt to re-curate")
+
+    cur = await _run_ai_curation(prompt)
+    spec = {"source": "ai", "prompt": prompt, "intent": cur["intent"],
+            "ai_paths": [t["path"] for t in cur["selected"]]}
+    now = time.time()
+    gen = await _generate(row["name"], spec, pub["targets"])   # keep the user's name + targets
+    async with aiosqlite.connect(_db_path) as db:
+        await db.execute("UPDATE playlists SET spec=?, track_count=?, updated_at=? WHERE id=?",
+                         (json.dumps(spec), gen["track_count"], now, pid))
+        await db.commit()
+    return {"id": pid, "name": row["name"], "candidates": cur["candidates"],
+            "matched": gen["track_count"], "written": gen["written"], "updated_at": now}
 
 
 @router.get("")
