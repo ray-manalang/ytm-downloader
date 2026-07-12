@@ -9,19 +9,23 @@ services:
       - "8503:8080"
     volumes:
       - /mnt/data/supervisor/share:/share
+      # Source FLAC library — mounted read-write so Clean Tags can edit tags in
+      # place (Audit + Convert only read). Add :ro to make it read-only.
+      - /mnt/data/supervisor/share/Music:/music
+      # iPod AAC mirror output — read-write.
+      - /mnt/data/supervisor/share/iPod:/ipod
+      # Cookies for age-restricted videos — no :ro (yt-dlp writes back).
+      - /mnt/data/supervisor/share/cookies.txt:/cookies.txt
       - ytm_data:/data
-      # Source music library. Convert + Audit only read it, so :ro is safe for
-      # those; the Clean Tags tool writes tags in place, so drop :ro if you use it.
-      # - /mnt/data/supervisor/share/Music:/music:ro
-      # iPod AAC mirror output — read-write (e.g. NAS mount):
-      # - /Volumes/Terradrive/ipodMusic:/ipod
     environment:
       DOWNLOADS_DIR: /share
       DB_PATH: /data/downloads.db
+      YTM_AUTH_PATH: /data/ytm_auth.json
+      COOKIES_FILE: /cookies.txt
       MAX_CONCURRENT_DOWNLOADS: "2"
       # ── iPod-Prep / Music Monster ──
-      # MUSIC_DIR: /music
-      # IPOD_DIR: /ipod
+      MUSIC_DIR: /music
+      IPOD_DIR: /ipod
       MAX_CONCURRENT_CONVERSIONS: "2"
       AAC_BITRATE: 256k
 

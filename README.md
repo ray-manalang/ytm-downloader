@@ -80,6 +80,8 @@ services:
       - "8503:8080"
     volumes:
       - /mnt/data/supervisor/share:/share
+      - /mnt/data/supervisor/share/Music:/music        # FLAC library (read-write: Clean edits tags in place)
+      - /mnt/data/supervisor/share/iPod:/ipod          # AAC mirror output
       - /mnt/data/supervisor/share/cookies.txt:/cookies.txt
       - ytm_data:/data
     environment:
@@ -88,12 +90,16 @@ services:
       YTM_AUTH_PATH: /data/ytm_auth.json
       MAX_CONCURRENT_DOWNLOADS: "2"
       COOKIES_FILE: /cookies.txt
+      MUSIC_DIR: /music
+      IPOD_DIR: /ipod
+      MAX_CONCURRENT_CONVERSIONS: "2"
+      AAC_BITRATE: 256k
 
 volumes:
   ytm_data:
 ```
 
-This maps the native HAOS `/share` directory into the container so downloaded files are accessible from other HA add-ons and the Samba share.
+This maps the native HAOS `/share` directory into the container so downloaded files are accessible from other HA add-ons and the Samba share. `Music` and `iPod` are subfolders of that share, so the AAC mirror is reachable from your Mac over Samba for import into Music/iTunes.
 
 ## Environment variables
 
