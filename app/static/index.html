@@ -215,14 +215,6 @@
   .pl-adv-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
   .pl-adv-desc { color: var(--muted); font-size: 13px; line-height: 1.55; margin-bottom: 12px; }
 
-  /* Dashboard genre analytic */
-  .genre-row { display: flex; align-items: center; gap: 12px; padding: 5px 0; }
-  .genre-label { width: 130px; flex-shrink: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .genre-track { flex: 1; height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
-  .genre-fill { height: 100%; background: var(--accent); border-radius: 4px; }
-  .genre-count { width: 84px; flex-shrink: 0; text-align: right; font-size: 12px; color: var(--text); display: flex; justify-content: flex-end; gap: 6px; align-items: baseline; }
-  .genre-share { color: var(--muted); font-size: 11px; min-width: 30px; text-align: right; }
-
   /* Process new additions card */
   .process-box { border-color: var(--accent-soft); }
   .process-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
@@ -889,7 +881,7 @@ function renderDashboard(ytm, pipe, dls, pls) {
     `<div class="section-title">Quick actions</div>` + actions;
 }
 
-// Top genres as horizontal bars, from the latest audit's genre distribution.
+// Top genres as a radial column chart, from the latest audit's genre distribution.
 function genreAnalyticHTML(dist) {
   const entries = Object.entries(dist || {})
     .filter(([g]) => g && g !== '(none)')
@@ -899,17 +891,45 @@ function genreAnalyticHTML(dist) {
   const top = entries.slice(0, TOP);
   const max = top[0][1] || 1;
   const totalTagged = entries.reduce((s, [, n]) => s + n, 0);
-  const rows = top.map(([g, n]) => {
+  const N = top.length;
+
+  // Wide-but-short viewBox so long radial labels never clip.
+  const cx = 300, cy = 240, r0 = 52, r1 = 150, labelR = 158;
+  const P = 2 * Math.PI;
+
+  const columns = [], labels = [];
+  top.forEach(([g, n], i) => {
+    const ang = (i / N) * P - Math.PI / 2;               // start at 12 o'clock
+    const len = r0 + (n / max) * (r1 - r0);
+    const co = Math.cos(ang), si = Math.sin(ang);
+    const x0 = (cx + r0 * co).toFixed(1), y0 = (cy + r0 * si).toFixed(1);
+    const x1 = (cx + len * co).toFixed(1), y1 = (cy + len * si).toFixed(1);
     const share = totalTagged ? Math.round((n / totalTagged) * 100) : 0;
-    return `<div class="genre-row">
-      <div class="genre-label" title="${escHtml(g)}">${escHtml(g)}</div>
-      <div class="genre-track"><div class="genre-fill" style="width:${Math.max((n / max) * 100, 2)}%"></div></div>
-      <div class="genre-count">${n.toLocaleString()}<span class="genre-share">${share}%</span></div>
-    </div>`;
-  }).join('');
+    const op = (0.55 + 0.45 * (n / max)).toFixed(2);     // taller = more opaque
+    columns.push(`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="var(--accent)" stroke-width="15" stroke-linecap="round" opacity="${op}"><title>${escHtml(g)}: ${n.toLocaleString()} (${share}%)</title></line>`);
+    // Radial label, flipped on the left half so it stays upright.
+    const lx = (cx + labelR * co).toFixed(1), ly = (cy + labelR * si).toFixed(1);
+    const deg = ang * 180 / Math.PI;
+    const left = co < -0.01;
+    const rot = (left ? deg + 180 : deg).toFixed(1);
+    const anchor = left ? 'end' : 'start';
+    labels.push(`<text x="${lx}" y="${ly}" transform="rotate(${rot} ${lx} ${ly})" text-anchor="${anchor}" dominant-baseline="middle" font-size="10.5" fill="var(--muted)">${escHtml(g)} <tspan fill="var(--text)" font-weight="700">${n.toLocaleString()}</tspan></text>`);
+  });
+
+  const rings = [1 / 3, 2 / 3, 1].map(f =>
+    `<circle cx="${cx}" cy="${cy}" r="${(r0 + f * (r1 - r0)).toFixed(1)}" fill="none" stroke="var(--border)" stroke-width="1" opacity="0.45"/>`).join('');
+  const hub = `<circle cx="${cx}" cy="${cy}" r="${r0}" fill="none" stroke="var(--border)" stroke-width="1"/>`;
+
+  const svg = `<svg viewBox="0 0 600 480" width="100%" style="max-width:600px;display:block;margin:0 auto" role="img" aria-label="Genre distribution radial chart">
+    ${rings}${hub}
+    ${columns.join('')}
+    ${labels.join('')}
+    <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="24" font-weight="800" fill="var(--text)">${totalTagged.toLocaleString()}</text>
+    <text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="10" letter-spacing="0.5" fill="var(--muted)">TAGGED TRACKS</text>
+  </svg>`;
   const more = entries.length > TOP
-    ? `<div style="color:var(--muted);font-size:12px;margin-top:10px">+${entries.length - TOP} more genres across ${totalTagged.toLocaleString()} tagged tracks</div>` : '';
-  return `<div class="section-title">Genre distribution</div><div class="add-box">${rows}${more}</div>`;
+    ? `<div style="color:var(--muted);font-size:12px;text-align:center;margin-top:4px">Top ${TOP} of ${entries.length} genres</div>` : '';
+  return `<div class="section-title">Genre distribution</div><div class="add-box">${svg}${more}</div>`;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
