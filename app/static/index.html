@@ -789,7 +789,8 @@ function renderDashboard(ytm, pipe, dls, pls) {
   const missingAA = a.missing_albumartist || 0;
   const unresolved = (pipe.genres && pipe.genres.summary && pipe.genres.summary.unresolved) || 0;
   const enriched = (pipe.enrich && pipe.enrich.enriched) || 0;
-  const notEnriched = Math.max(total - enriched, 0);
+  const enrichErrors = (pipe.enrich && pipe.enrich.errors) || 0;
+  const notEnriched = Math.max(total - enriched - enrichErrors, 0);
   const dlList = dls.downloads || [];
   const active = dlList.filter(d => d.status === 'pending' || d.status === 'downloading').length;
   const errs = dlList.filter(d => d.status === 'error').length;
@@ -821,7 +822,7 @@ function renderDashboard(ytm, pipe, dls, pls) {
     { done: total > 0, label: 'Audit library', note: total ? `${total.toLocaleString()} indexed` : 'not run' },
     { done: !!pipe.clean, label: 'Clean tags', note: needGenre ? `${needGenre} need a genre fix` : (pipe.clean ? 'done' : 'not run') },
     { done: !!pipe.genres && !unresolved, label: 'Complete genres', note: unresolved ? `${unresolved} unresolved` : (pipe.genres ? 'done' : 'not run') },
-    { done: total > 0 && notEnriched === 0, label: 'Analyze BPM & energy', note: total ? `${enriched}/${total} analyzed` : 'not run' },
+    { done: total > 0 && notEnriched === 0, label: 'Analyze BPM & energy', note: total ? `${enriched}/${total} analyzed${enrichErrors ? ` · ${enrichErrors} skipped` : ''}` : 'not run' },
     { done: !!pipe.convert, label: 'Convert → iPod', note: pipe.convert && pipe.convert.summary ? `${pipe.convert.summary.transcoded || 0} transcoded` : 'not run' },
   ];
   const stepRows = steps.map(s =>
@@ -1657,6 +1658,8 @@ async function updatePrepSteps() {
   const a = (p.audit && p.audit.summary) || {};
   const unresolved = (p.genres && p.genres.summary && p.genres.summary.unresolved) || 0;
   const enriched = (p.enrich && p.enrich.enriched) || 0;
+  const enrichErrors = (p.enrich && p.enrich.errors) || 0;
+  const enrichPending = Math.max(total - enriched - enrichErrors, 0);
 
   const set = (step, done, status, warn) => {
     const el = document.getElementById('step-' + step);
@@ -1674,9 +1677,9 @@ async function updatePrepSteps() {
   set('genres', !!p.genres && !unresolved,
     p.genres ? (unresolved ? `${unresolved} artists still unresolved.` : 'All artists resolved.') : 'Give every artist one consistent genre.',
     unresolved > 0);
-  set('enrich', total > 0 && enriched >= total,
-    total > 0 ? `${enriched.toLocaleString()}/${total.toLocaleString()} tracks analyzed.` : 'Enables tempo/energy playlist rules.',
-    total > 0 && enriched < total);
+  set('enrich', total > 0 && enrichPending === 0,
+    total > 0 ? `${enriched.toLocaleString()}/${total.toLocaleString()} tracks analyzed${enrichErrors ? ` · <span style="color:var(--warn)">${enrichErrors} couldn't be analyzed</span>` : ''}.` : 'Enables tempo/energy playlist rules.',
+    total > 0 && enrichPending > 0);
   set('convert', !!p.convert,
     p.convert && p.convert.summary ? `Last mirror: ${p.convert.summary.transcoded || 0} transcoded, ${p.convert.summary.copied || 0} copied.` : 'Build the AAC mirror for iPod/iTunes.',
     false);
@@ -1708,6 +1711,7 @@ function renderAuditResults(s) {
         <span><strong>${s.total_tracks || 0}</strong> <span style="color:var(--muted)">tracks · ${fmtSize(s.total_bytes || 0)}</span></span>
         <span><strong style="color:var(--warn)">${s.needs_normalization || 0}</strong> <span style="color:var(--muted)">need genre fix</span></span>
         <span><strong style="color:var(--warn)">${s.missing_albumartist || 0}</strong> <span style="color:var(--muted)">missing album artist</span></span>
+        ${s.pruned ? `<span><strong>${s.pruned}</strong> <span style="color:var(--muted)">removed (gone from disk)</span></span>` : ''}
       </div>
       <div style="color:var(--muted);font-size:12px;margin-bottom:8px">${fmts}</div>
       <div style="color:var(--muted);font-size:12px;margin-bottom:4px">Genre distribution</div>
@@ -1776,6 +1780,7 @@ function prepSummaryChips(type, s) {
     if (s.total_tracks != null) parts.push(`${s.total_tracks} tracks`);
     if (s.needs_normalization) parts.push(`${s.needs_normalization} need genre fix`);
     if (s.missing_albumartist) parts.push(`${s.missing_albumartist} missing album artist`);
+    if (s.pruned) parts.push(`${s.pruned} removed`);
   } else if (type === 'tags') {
     if (s.changed != null) parts.push(`${s.changed} changed`);
     if (s.genre_changes) parts.push(`${s.genre_changes} genres`);

@@ -111,6 +111,29 @@ async def _upsert_tracks(tracks: list):
         await db.commit()
 
 
+async def _reconcile_tracks(source_dir: str, scanned_paths) -> int:
+    """Drop index rows under ``source_dir`` whose file wasn't seen in this scan.
+
+    An audit UPSERTs every file it finds but, without this, rows for files that
+    were deleted/renamed on disk linger forever — inflating the track count and
+    leaving the Analyze step stuck at N-1/N. Scoped to ``source_dir`` so auditing
+    a subfolder never prunes tracks outside it. Index-only (never deletes audio).
+    """
+    base = str(Path(source_dir).resolve())
+    prefix = base + os.sep
+    keep = set(scanned_paths)
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute("SELECT path FROM library_tracks") as cur:
+            all_paths = [r[0] for r in await cur.fetchall()]
+        stale = [p for p in all_paths
+                 if (p == base or p.startswith(prefix)) and p not in keep]
+        if stale:
+            await db.executemany("DELETE FROM library_tracks WHERE path=?",
+                                 [(p,) for p in stale])
+            await db.commit()
+    return len(stale)
+
+
 async def _insert_change(job_id: str, path: str, field: str, old_value: str, new_value: str):
     async with aiosqlite.connect(_db_path) as db:
         await db.execute(
@@ -217,6 +240,14 @@ async def _prep_worker():
                             job_spec["source_dir"], progress_cb, cancel_ev.is_set)
                     )
                     await _upsert_tracks(result["tracks"])
+                    # Reconcile the index with disk — but only on a complete scan;
+                    # a cancelled scan has a partial file list and would wrongly
+                    # prune everything it hadn't reached yet.
+                    if not cancel_ev.is_set():
+                        pruned = await _reconcile_tracks(
+                            job_spec["source_dir"], [t["path"] for t in result["tracks"]])
+                        if pruned:
+                            result["summary"]["pruned"] = pruned
                     summary = result["summary"]
                 elif jtype == "tags":
                     # record_cb persists each pre-image durably BEFORE the file is
@@ -678,6 +709,10 @@ async def pipeline_status():
     genres = await _latest_summary("review")
     unify = await _latest_summary("unify")
     convert = await _latest_summary("convert")
+    enrich_latest = await _latest_summary("enrich")
+    # Tracks the last run couldn't analyze (corrupt/DRM/etc.) — so the step can
+    # read "done" once every *analyzable* track is done, not stay stuck at N-1/N.
+    enrich_errors = int(((enrich_latest or {}).get("summary") or {}).get("errors") or 0)
 
     return {
         "music_dir": MUSIC_DIR,
@@ -686,7 +721,7 @@ async def pipeline_status():
         "clean": clean,
         "genres": genres,
         "unify": unify,
-        "enrich": {"enriched": enriched, "total": total},
+        "enrich": {"enriched": enriched, "total": total, "errors": enrich_errors},
         "convert": convert,
     }
 
