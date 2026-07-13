@@ -121,6 +121,11 @@ def _match_tracks(tracks: List[dict], spec: dict) -> List[dict]:
     sort = spec.get("sort")
     if sort == "random":
         random.shuffle(matched)
+    elif sort == "diverse":
+        # Round-robin interleave by artist so a prolific artist doesn't stack up
+        # (e.g. 8 Calvin Harris in a row) — album order within each artist.
+        matched.sort(key=lambda t: t.get("path", "").lower())
+        matched = _diversify_by_artist(matched)
     elif sort == "year":
         matched.sort(key=lambda t: (t.get("year") is None, t.get("year") or 0))
     elif sort in ("artist", "album"):
