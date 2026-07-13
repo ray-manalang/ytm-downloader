@@ -203,7 +203,7 @@ Playlists read the index that Audit populates — re-run Audit to refresh before
 4. The callback schedules `_handle_progress` / `_handle_finished` coroutines on the main loop via `asyncio.run_coroutine_threadsafe`
 5. Those coroutines write to SQLite and broadcast JSON over WebSocket to all connected clients
 6. After yt-dlp finishes, `_resize_cover()` re-embeds the cover art at 600×600 via three sequential ffmpeg calls; `run_download` returns `info["files"]` (the new `.m4a` paths)
-7. **Promote** (`_promote_download`, `AUTO_PROMOTE` on + `MUSIC_DIR` set): each finished file is **moved** into `MUSIC_DIR` (staged locally first for speed; `shutil.move` handles the cross-SMB hop), **copied** to `IPOD_DIR` (m4a is copy-only — already AAC), and **indexed** via `prep._upsert_tracks` with the **resolved MUSIC_DIR path** (required — else `converter.mirror_path` raises and iPod playlists silently drop the track). Then `playlists.regenerate_all_auto()` refreshes auto playlists, a `promoted` WS event fires, and `prep.schedule_autoprocess()` is (re)armed (no-op unless the auto-process toggle is on). Isolated from the worker's error path — a promotion failure never flips a successful download to `error` (the file stays safe in staging).
+7. **Promote** (`_promote_download`, `AUTO_PROMOTE` on + `MUSIC_DIR` set): each finished file is **moved** into `MUSIC_DIR` **organized as `<AlbumArtist>/<Album>/<file>`** (staging only has `<Album>/<file>`; the album-artist/album come from the file's tags via `_safe_component`, falling back to the staging folder / "Unknown"), **copied** to `IPOD_DIR` in the same tree (m4a is copy-only — already AAC), and **indexed** via `prep._upsert_tracks` with the **resolved MUSIC_DIR path** (required — else `converter.mirror_path` raises and iPod playlists silently drop the track). Then `playlists.regenerate_all_auto()` refreshes auto playlists, a `promoted` WS event fires, and `prep.schedule_autoprocess()` is (re)armed (no-op unless the auto-process toggle is on). Isolated from the worker's error path — a promotion failure never flips a successful download to `error` (the file stays safe in staging).
 
 **Files browser repoint:** when promotion is active, `GET/DELETE /api/files` operate on `MUSIC_DIR` (the library), not `DOWNLOADS_DIR`. `delete_file` cascades — removes the iPod mirror copy (`converter.mirror_path`), deletes the `library_tracks` row(s), and regenerates auto playlists.
 
@@ -302,12 +302,13 @@ With `downsample_hires` and a source >16-bit/>48 kHz, `-ar 44100` is added. **No
 - **Never add `extractor_args` with a custom `player_client` list** — it restricts the format list and causes lower-bitrate streams to be selected
 - `outtmpl`: `%(album,playlist_title)s/%(playlist_index)02d %(title)s.%(ext)s`
 
-## Cover-art resize (`_resize_cover`)
+## Cover art (`_apply_album_cover` → else `_resize_cover`)
 
-yt-dlp embeds the thumbnail as an **ffmpeg video stream** (not a mutagen `covr` tag). The resize uses three sequential `subprocess.run` ffmpeg calls:
-1. Extract: `-map 0:v -frames:v 1` → temp jpg
-2. Resize: `-vf crop=ih:ih,scale=600:600` → resized jpg
-3. Re-embed: `-map 0:a -map 1:v -c:a copy -disposition:v:0 attached_pic` → replaces original file
+yt-dlp embeds the thumbnail as an **ffmpeg video stream** (not a mutagen `covr` tag), and for a YTM album/playlist it also leaves the **full-size album cover** in a sibling **`Album - <album>`** folder (or `Album - <album>.<ext>` file). Per new file, in order:
+1. **`_apply_album_cover`** — if that sibling art exists, embed the largest image from it (cropped to a 600×600 square, `-pix_fmt yuvj420p`), then delete the `Album - …` leftover once embedded. This replaces the often-wrong-size embedded per-track thumbnail with the real album cover.
+2. **`_resize_cover`** (fallback, when there's no sibling art) — extract the embedded thumbnail (`-map 0:v -frames:v 1`), resize (`crop=ih:ih,scale=600:600`), re-embed (`-map 0:a -map 1:v -c:a copy -disposition:v:0 attached_pic`).
+
+Both re-embed with the same `attached_pic` command. (Note: ffmpeg 8.x has a local `attached_pic` regression that breaks this pattern in dev; the image's ffmpeg handles it.) On embed failure the `Album - …` folder is kept (not deleted) and the file falls back to the thumbnail.
 
 ## History title vs. track title
 

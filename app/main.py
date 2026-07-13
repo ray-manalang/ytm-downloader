@@ -238,12 +238,19 @@ def _promotion_active() -> bool:
     return bool(AUTO_PROMOTE and prep_module.MUSIC_DIR)
 
 
+def _safe_component(name) -> str:
+    """Sanitize one path component (artist/album) for use as a folder name."""
+    name = str(name).strip() or "Unknown"
+    for ch in '/\\:*?"<>|':
+        name = name.replace(ch, "_")
+    return name.strip(". ") or "Unknown"
+
+
 def _promote_files_sync(files: list) -> list:
     """Blocking: move each finished file into MUSIC_DIR, copy to IPOD_DIR, and build
     library_tracks upsert dicts. Runs in an executor. Returns the dicts for landed files."""
     downloads_root = Path(DOWNLOADS_DIR).resolve()
     music_root = Path(prep_module.MUSIC_DIR).resolve()
-    same_root = downloads_root == music_root
     ipod = prep_module.IPOD_DIR
     ipod_root = Path(ipod).resolve() if ipod else None
     do_ipod = ipod_root is not None and ipod_root != music_root
@@ -259,10 +266,17 @@ def _promote_files_sync(files: list) -> list:
             except ValueError:
                 continue  # not under staging — leave it alone
 
-            if same_root:
-                lib_dst = src
-            else:
-                lib_dst = music_root / rel
+            # Organize the library as <AlbumArtist>/<Album>/<file> (staging only has
+            # <Album>/<file>), reading the tags to place it. Album falls back to the
+            # staging folder; artist/album fall back to "Unknown".
+            tags = tagtools.read_tags(src)
+            artist = _safe_component(tags.get("albumartist") or tags.get("artist") or "Unknown Artist")
+            album = _safe_component(tags.get("album") or (rel.parts[0] if len(rel.parts) > 1 else "Unknown Album"))
+            rel = Path(artist) / album / src.name
+
+            lib_dst = music_root / rel
+            moved = lib_dst.resolve() != src
+            if moved:
                 lib_dst.parent.mkdir(parents=True, exist_ok=True)
                 if lib_dst.exists():
                     lib_dst.unlink()
@@ -284,8 +298,8 @@ def _promote_files_sync(files: list) -> list:
                 "duration": tags.get("duration"),
             })
 
-            # Prune now-empty staging dirs (skip when we didn't move anything).
-            if not same_root:
+            # Prune now-empty staging dirs left behind by the move.
+            if moved:
                 parent = src.parent
                 while parent != downloads_root and parent.is_dir() and not any(parent.iterdir()):
                     parent.rmdir()

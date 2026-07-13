@@ -1,8 +1,9 @@
 import contextlib
 import os
+import shutil
 import subprocess
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 import yt_dlp
 
@@ -77,16 +78,100 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
-    # Resize cover art + normalize genre tags in every newly created m4a
+    # Cover art + normalize genre tags in every newly created m4a. YTM albums come
+    # with a proper full-size cover in a sibling "Album - <album>" folder; prefer
+    # that over the (often wrong-size) embedded per-track thumbnail, then remove it.
     files_after = set(base.rglob("*.m4a")) if base.exists() else set()
     new_files = files_after - files_before
+    cover_leftovers = set()
     for path in new_files:
-        _resize_cover(path)
+        used = _apply_album_cover(path)
+        if used is not None:
+            cover_leftovers.add(used)
+        else:
+            _resize_cover(path)          # fallback: the embedded thumbnail
         _normalize_tags(path)
+    for leftover in cover_leftovers:     # the art has been embedded — clean it up
+        with contextlib.suppress(Exception):
+            if leftover.is_dir():
+                shutil.rmtree(leftover)
+            elif leftover.is_file():
+                leftover.unlink()
 
     # Expose the created files so the worker can promote them to the library + iPod.
     info["files"] = sorted(str(p) for p in new_files)
     return info
+
+
+_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def _find_cover_image(folder: Path) -> Optional[Path]:
+    """The largest (highest-res) image file directly inside ``folder``, or None."""
+    imgs = [p for p in folder.iterdir()
+            if p.is_file() and p.suffix.lower() in _IMAGE_EXTS]
+    return max(imgs, key=lambda p: p.stat().st_size) if imgs else None
+
+
+def _album_cover_source(m4a_path: Path):
+    """Locate the sibling album-cover art for a track, as (image_path, leftover).
+
+    yt-dlp leaves a playlist/album cover next to the album's track folder, named
+    ``Album - <album>`` — either a folder holding the image or an ``Album -
+    <album>.<ext>`` file. ``leftover`` is what to delete once embedded.
+    """
+    album_dir = m4a_path.parent               # …/<album>/
+    parent = album_dir.parent
+    stem = f"Album - {album_dir.name}"
+    folder = parent / stem
+    if folder.is_dir():
+        img = _find_cover_image(folder)
+        if img:
+            return img, folder
+    for ext in _IMAGE_EXTS:
+        f = parent / (stem + ext)
+        if f.is_file():
+            return f, f
+    return None, None
+
+
+def _apply_album_cover(m4a_path: Path) -> Optional[Path]:
+    """Embed the sibling album cover (if any) into the track. Returns the leftover
+    art path to delete on success, else None (caller falls back to the thumbnail)."""
+    img, leftover = _album_cover_source(m4a_path)
+    if img and _embed_cover_from(m4a_path, img):
+        return leftover
+    return None
+
+
+def _embed_cover_from(path: Path, cover_src: Path) -> bool:
+    """Embed ``cover_src`` into the m4a at ``path`` as a 600×600 square cover."""
+    tmp_resized = str(path) + ".albumcover.jpg"
+    tmp_out = str(path) + ".tmp.m4a"
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(cover_src),
+             "-vf", "crop=ih:ih,scale=600:600", "-pix_fmt", "yuvj420p", tmp_resized],
+            capture_output=True,
+        )
+        if r.returncode != 0 or not os.path.exists(tmp_resized):
+            return False
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(path), "-i", tmp_resized,
+             "-map", "0:a", "-map", "1:v", "-map_metadata", "0",
+             "-c:a", "copy", "-disposition:v:0", "attached_pic", tmp_out],
+            capture_output=True,
+        )
+        if r.returncode == 0 and os.path.exists(tmp_out):
+            os.replace(tmp_out, path)
+            tmp_out = None
+            return True
+        return False
+    finally:
+        for f in [tmp_resized, tmp_out]:
+            with contextlib.suppress(Exception):
+                if f and os.path.exists(f):
+                    os.unlink(f)
 
 
 def _normalize_tags(path: Path):
