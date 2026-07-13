@@ -175,6 +175,46 @@
   select { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font-size: 13px; outline: none; cursor: pointer; }
   select:focus { border-color: var(--accent); }
 
+  /* Equalizer brand mark (echoes logo.svg) */
+  .eq-ico { vertical-align: -2px; flex-shrink: 0; }
+
+  /* Collapsible Jobs header */
+  .jobs-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .jobs-toggle:hover { color: var(--text); }
+  .jobs-toggle .album-chevron { font-size: 11px; }
+  .jobs-count { color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+  /* Enrich (and other) per-job error details */
+  .prep-errors { margin-top: 10px; }
+  .prep-errors > summary { cursor: pointer; color: var(--danger); font-size: 12px; list-style: none; user-select: none; }
+  .prep-errors > summary::-webkit-details-marker { display: none; }
+  .prep-errors > summary::before { content: '▶ '; font-size: 10px; color: var(--danger); }
+  .prep-errors[open] > summary::before { content: '▼ '; }
+  .prep-errors-list { margin-top: 8px; max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+  .prep-err-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 10px; border-top: 1px solid var(--border); font-size: 12px; }
+  .prep-err-row:first-child { border-top: none; }
+  .prep-err-file { color: var(--text); word-break: break-all; }
+  .prep-err-reason { color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+
+  /* ── Unified playlist creator ─────────────────────────────────────────── */
+  .pl-creator-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+  .pl-mark { color: var(--text); flex-shrink: 0; line-height: 1; margin-top: 1px; }
+  .pl-creator-title { font-weight: 700; font-size: 16px; }
+  .pl-creator-sub { color: var(--muted); font-size: 13px; line-height: 1.55; margin-top: 3px; }
+  .pl-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+  .pl-targets { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 13px; }
+  .pl-targets label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .pl-advanced { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 4px; }
+  .pl-advanced > summary { cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 600; padding: 10px 0 4px; list-style: none; user-select: none; }
+  .pl-advanced > summary::-webkit-details-marker { display: none; }
+  .pl-advanced > summary::before { content: '▶'; display: inline-block; font-size: 10px; margin-right: 8px; transition: transform .15s; }
+  .pl-advanced[open] > summary::before { transform: rotate(90deg); }
+  .pl-advanced > summary:hover { color: var(--text); }
+  .pl-adv-section { padding: 14px 0; border-top: 1px solid var(--border); }
+  .pl-adv-section:first-of-type { border-top: none; }
+  .pl-adv-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+  .pl-adv-desc { color: var(--muted); font-size: 13px; line-height: 1.55; margin-bottom: 12px; }
+
   /* Scrollbar */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
@@ -191,34 +231,34 @@
     </div>
 
     <div class="nav-item" data-nav="dashboard" onclick="switchTab('dashboard')">
-      <span class="nav-ico">◉</span> Dashboard
+      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></span> Dashboard
     </div>
 
     <div class="nav-group-label">Download</div>
     <div class="nav-item" data-nav="library" onclick="switchTab('library')">
-      <span class="nav-ico">🎵</span> YouTube Music
+      <span class="nav-ico"><svg class="eq-ico" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><rect x="3" y="9" width="4" height="6" rx="2" fill="currentColor" opacity=".55"/><rect x="10" y="4" width="4" height="16" rx="2" fill="var(--accent)"/><rect x="17" y="7" width="4" height="10" rx="2" fill="currentColor" opacity=".8"/></svg></span> YouTube Music
     </div>
     <div class="nav-item" data-nav="add" onclick="switchTab('add')">
-      <span class="nav-ico">＋</span> Add URLs
+      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span> Add URLs
     </div>
     <div class="nav-item" data-nav="queue" onclick="switchTab('queue')">
-      <span class="nav-ico">↓</span> Queue <span class="badge" id="queueBadge" style="display:none"></span>
+      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v3.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5V15"/><polyline points="7.5 10.5 12 15 16.5 10.5"/><line x1="12" y1="4" x2="12" y2="15"/></svg></span> Queue <span class="badge" id="queueBadge" style="display:none"></span>
     </div>
     <div class="nav-item" data-nav="history" onclick="switchTab('history')">
-      <span class="nav-ico">🕘</span> History <span class="badge warn" id="histBadge" style="display:none"></span>
+      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3.2 2"/></svg></span> History <span class="badge warn" id="histBadge" style="display:none"></span>
     </div>
 
     <div class="nav-group-label">Prepare</div>
     <div class="nav-item" data-nav="convert" onclick="switchTab('convert')">
-      <span class="nav-ico">⚙</span> Prepare library <span class="badge" id="convBadge" style="display:none"></span>
+      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><line x1="15" y1="5" x2="15" y2="9"/><line x1="9" y1="10" x2="9" y2="14"/><line x1="16" y1="15" x2="16" y2="19"/></svg></span> Prepare library <span class="badge" id="convBadge" style="display:none"></span>
     </div>
 
     <div class="nav-group-label">Organize</div>
     <div class="nav-item" data-nav="playlists" onclick="switchTab('playlists')">
-      <span class="nav-ico">≣</span> Playlists
+      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="16" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span> Playlists
     </div>
     <div class="nav-item" data-nav="files" onclick="switchTab('files')">
-      <span class="nav-ico">📂</span> Files
+      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a1.6 1.6 0 0 1 1.6-1.6h3.7l2 2.2h8.1A1.6 1.6 0 0 1 21 9.2v8.2a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 17.4z"/></svg></span> Files
     </div>
   </aside>
 
@@ -411,7 +451,7 @@
   <div class="panel" id="panel-history">
     <div class="card-list" id="histList"></div>
     <div class="empty" id="histEmpty" style="display:none">
-      <div class="empty-icon">📋</div>
+      <div class="empty-icon"><svg viewBox="0 0 24 24" width="46" height="46" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:.5"><circle cx="12" cy="12" r="9"/><path d="M12 6.5V12l3.5 2.2"/></svg></div>
       <p>No download history</p>
     </div>
   </div>
@@ -517,115 +557,127 @@
       </div>
     </div>
 
-    <div class="section-title">Jobs</div>
-    <div class="card-list" id="prepList"></div>
-    <div class="empty" id="prepEmpty" style="display:none">
-      <div class="empty-icon">🎧</div>
-      <p>No jobs yet</p>
+    <div class="section-title jobs-toggle" id="jobsToggle" onclick="toggleJobs()">
+      <span class="album-chevron open" id="jobsChevron">▶</span> Jobs
+      <span class="jobs-count" id="jobsCount"></span>
+    </div>
+    <div id="jobsBody">
+      <div class="card-list" id="prepList"></div>
+      <div class="empty" id="prepEmpty" style="display:none">
+        <div class="empty-icon">🎧</div>
+        <p>No jobs yet</p>
+      </div>
     </div>
   </div>
 
   <!-- PLAYLISTS -->
   <div class="panel" id="panel-playlists">
-    <div class="add-box" style="margin-bottom:20px">
-      <label>Create Smart Playlist</label>
-      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.6">
-        Build a rule over your library and Music Monster keeps a matching
-        <code>.m3u</code> in sync for Sonos / Music Assistant.
-        <span id="plIndexNote"></span>
-      </p>
-      <input id="plName" type="text" placeholder="Playlist name — e.g. 80s Alternative"
-        style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;margin-bottom:12px">
-      <div style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;margin-bottom:10px">
-        Match
-        <select id="plMatch"><option value="all">all</option><option value="any">any</option></select>
-        of these rules:
+    <!-- Unified creator: AI-first, advanced (smart rules + YTM import) below -->
+    <div class="add-box" id="plCreator" style="margin-bottom:24px">
+      <div class="pl-creator-head">
+        <span class="pl-mark"><svg class="eq-ico" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="3" y="9" width="4" height="6" rx="2" fill="currentColor" opacity=".55"/><rect x="10" y="4" width="4" height="16" rx="2" fill="var(--accent)"/><rect x="17" y="7" width="4" height="10" rx="2" fill="currentColor" opacity=".8"/></svg></span>
+        <div>
+          <div class="pl-creator-title">Create a playlist</div>
+          <div class="pl-creator-sub">Describe a vibe and Claude builds it from your library — or open Advanced to hand-craft a rule or import from YouTube Music. <span id="plIndexNote"></span></div>
+        </div>
       </div>
-      <div id="plRulesTable"></div>
-      <button class="btn-ghost btn-sm" style="margin-top:8px" onclick="addRule()">+ Add rule</button>
-      <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:14px;flex-wrap:wrap">
-        <span style="display:flex;align-items:center;gap:6px">Sort
-          <select id="plSort">
-            <option value="">album order</option>
-            <option value="artist">artist</option>
-            <option value="album">album</option>
-            <option value="year">year</option>
-            <option value="random">random</option>
-          </select></span>
-        <span style="display:flex;align-items:center;gap:6px">Limit
-          <input id="plLimit" type="number" min="0" placeholder="none"
-            style="width:80px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-size:13px;outline:none"></span>
+
+      <!-- Primary: AI -->
+      <div id="plAiBox">
+        <div id="plAiBody">
+          <textarea id="plAiPrompt" placeholder="e.g. upbeat 80s new wave for a road trip"
+            style="min-height:76px;font-family:inherit"></textarea>
+          <div class="pl-row">
+            <div class="pl-targets">Write to:
+              <label><input type="checkbox" id="plAiLibrary" checked style="accent-color:var(--accent)"> Library</label>
+              <label><input type="checkbox" id="plAiIpod" style="accent-color:var(--accent)"> iPod mirror</label>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <span id="plAiModel" style="color:var(--muted);font-weight:400;font-size:11px"></span>
+              <button class="btn-primary" id="plAiBtn" onclick="generateAi()">✨ Generate with AI</button>
+            </div>
+          </div>
+          <div id="plAiResult" style="margin-top:10px;font-size:13px"></div>
+        </div>
+        <div id="plAiDisabled" style="color:var(--muted);font-size:13px;display:none">
+          AI curation is off. Set <code>ANTHROPIC_API_KEY</code> in the container environment to enable it — or use Advanced below to build a smart playlist by rules.
+        </div>
       </div>
-      <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:12px">
-        Write to:
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-          <input type="checkbox" id="plTargetLibrary" checked style="accent-color:var(--accent)"> Library (Sonos/MA)</label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-          <input type="checkbox" id="plTargetIpod" style="accent-color:var(--accent)"> iPod mirror</label>
-      </div>
-      <div class="add-actions" style="margin-top:14px">
-        <button class="btn-ghost" id="plPreviewBtn" onclick="previewPlaylist()">Preview</button>
-        <button class="btn-primary" id="plSaveBtn" onclick="savePlaylist()">Save Playlist</button>
-      </div>
-      <div id="plError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
-      <div id="plPreview" style="margin-top:14px"></div>
+
+      <!-- Advanced: smart rules + YTM import -->
+      <details class="pl-advanced">
+        <summary>Advanced — smart rules &amp; YouTube Music import</summary>
+
+        <!-- Smart (rule-based) playlist -->
+        <div class="pl-adv-section">
+          <div class="pl-adv-title">Smart playlist</div>
+          <p class="pl-adv-desc">Build a rule over your library and Music Monster keeps a matching <code>.m3u</code> in sync for Sonos / Music Assistant.</p>
+          <input id="plName" type="text" placeholder="Playlist name — e.g. 80s Alternative"
+            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;margin-bottom:10px">
+            Match
+            <select id="plMatch"><option value="all">all</option><option value="any">any</option></select>
+            of these rules:
+          </div>
+          <div id="plRulesTable"></div>
+          <button class="btn-ghost btn-sm" style="margin-top:8px" onclick="addRule()">+ Add rule</button>
+          <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:14px;flex-wrap:wrap">
+            <span style="display:flex;align-items:center;gap:6px">Sort
+              <select id="plSort">
+                <option value="">album order</option>
+                <option value="artist">artist</option>
+                <option value="album">album</option>
+                <option value="year">year</option>
+                <option value="random">random</option>
+              </select></span>
+            <span style="display:flex;align-items:center;gap:6px">Limit
+              <input id="plLimit" type="number" min="0" placeholder="none"
+                style="width:80px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-size:13px;outline:none"></span>
+          </div>
+          <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:12px">
+            Write to:
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="plTargetLibrary" checked style="accent-color:var(--accent)"> Library (Sonos/MA)</label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="plTargetIpod" style="accent-color:var(--accent)"> iPod mirror</label>
+          </div>
+          <div class="add-actions" style="margin-top:14px">
+            <button class="btn-ghost" id="plPreviewBtn" onclick="previewPlaylist()">Preview</button>
+            <button class="btn-primary" id="plSaveBtn" onclick="savePlaylist()">Save Playlist</button>
+          </div>
+          <div id="plError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+          <div id="plPreview" style="margin-top:14px"></div>
+        </div>
+
+        <!-- Import from YouTube Music -->
+        <div class="pl-adv-section" id="plImportBox">
+          <div class="pl-adv-title">Import from YouTube Music</div>
+          <p class="pl-adv-desc">Turn a YTM playlist into a local <code>.m3u</code> — tracks you already have are linked, and anything missing is queued for download.</p>
+          <div id="plImportBody">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <select id="plYtmSelect" style="flex:1;min-width:220px"></select>
+              <button class="btn-primary" id="plImportBtn" onclick="importYtm()">Import</button>
+            </div>
+            <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:12px">
+              Write to:
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="checkbox" id="plImpLibrary" checked style="accent-color:var(--accent)"> Library</label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="checkbox" id="plImpIpod" style="accent-color:var(--accent)"> iPod mirror</label>
+            </div>
+            <div id="plImportResult" style="margin-top:10px;font-size:13px"></div>
+          </div>
+          <div id="plImportDisconnected" style="color:var(--muted);font-size:13px;display:none">
+            Connect YouTube Music in the <strong style="color:var(--text)">YouTube Music</strong> tab to import playlists.
+          </div>
+        </div>
+      </details>
     </div>
 
-    <!-- Import from YouTube Music -->
-    <div class="add-box" style="margin-bottom:20px" id="plImportBox">
-      <label>Import from YouTube Music</label>
-      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.6">
-        Turn a YTM playlist into a local <code>.m3u</code> — tracks you already have are linked,
-        and anything missing is queued for download.
-      </p>
-      <div id="plImportBody">
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <select id="plYtmSelect" style="flex:1;min-width:220px"></select>
-          <button class="btn-primary" id="plImportBtn" onclick="importYtm()">Import</button>
-        </div>
-        <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:12px">
-          Write to:
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="plImpLibrary" checked style="accent-color:var(--accent)"> Library</label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="plImpIpod" style="accent-color:var(--accent)"> iPod mirror</label>
-        </div>
-        <div id="plImportResult" style="margin-top:10px;font-size:13px"></div>
-      </div>
-      <div id="plImportDisconnected" style="color:var(--muted);font-size:13px;display:none">
-        Connect YouTube Music in the <strong style="color:var(--text)">Library</strong> tab to import playlists.
-      </div>
-    </div>
-
-    <!-- AI playlist -->
-    <div class="add-box" style="margin-bottom:20px" id="plAiBox">
-      <label>AI Playlist <span id="plAiModel" style="color:var(--muted);font-weight:400;font-size:11px"></span></label>
-      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.6">
-        Describe a vibe and Claude builds it from your library — it picks a filter, then curates and orders the best matches.
-      </p>
-      <div id="plAiBody">
-        <textarea id="plAiPrompt" placeholder="e.g. upbeat 80s new wave for a road trip"
-          style="min-height:70px;font-family:inherit"></textarea>
-        <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:12px">
-          Write to:
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="plAiLibrary" checked style="accent-color:var(--accent)"> Library</label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="plAiIpod" style="accent-color:var(--accent)"> iPod mirror</label>
-        </div>
-        <div class="add-actions" style="margin-top:12px">
-          <button class="btn-primary" id="plAiBtn" onclick="generateAi()">✨ Generate with AI</button>
-        </div>
-        <div id="plAiResult" style="margin-top:10px;font-size:13px"></div>
-      </div>
-      <div id="plAiDisabled" style="color:var(--muted);font-size:13px;display:none">
-        AI curation is off. Set <code>ANTHROPIC_API_KEY</code> in the container environment to enable it.
-      </div>
-    </div>
-
+    <div class="section-title">Your playlists</div>
     <div id="plList"></div>
     <div class="empty" id="plEmpty" style="display:none">
-      <div class="empty-icon">🎵</div>
+      <div class="empty-icon"><svg class="eq-ico" viewBox="0 0 24 24" width="46" height="46" aria-hidden="true"><rect x="3" y="9" width="4" height="6" rx="2" fill="currentColor" opacity=".4"/><rect x="10" y="4" width="4" height="16" rx="2" fill="var(--accent)" opacity=".7"/><rect x="17" y="7" width="4" height="10" rx="2" fill="currentColor" opacity=".55"/></svg></div>
       <p>No playlists yet</p>
     </div>
     <datalist id="plGenres"></datalist>
@@ -641,7 +693,7 @@
     <p style="color:var(--muted);font-size:12px;margin:-8px 0 12px">Browses your music library. Deleting a track also removes its iPod-mirror copy.</p>
     <div id="filesList"></div>
     <div class="empty" id="filesEmpty" style="display:none">
-      <div class="empty-icon">📂</div>
+      <div class="empty-icon"><svg viewBox="0 0 24 24" width="46" height="46" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:.5"><path d="M3 7a1.6 1.6 0 0 1 1.6-1.6h3.7l2 2.2h8.1A1.6 1.6 0 0 1 21 9.2v8.2a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 17.4z"/></svg></div>
       <p>No files yet</p>
     </div>
   </div>
@@ -656,6 +708,12 @@ const tracksDone = {};   // id -> [track name, ...]
 let filesData = [];
 const albumOpen = {};    // album name -> bool
 let albumsList = [];     // ordered album names (for index→name lookup)
+
+// Equalizer brand mark (echoes logo.svg) — side bars inherit currentColor,
+// center bar is always the accent. Used wherever a music note used to sit.
+function eqMark(size = 15) {
+  return `<svg class="eq-ico" viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true"><rect x="3" y="9" width="4" height="6" rx="2" fill="currentColor" opacity=".55"/><rect x="10" y="4" width="4" height="16" rx="2" fill="var(--accent)"/><rect x="17" y="7" width="4" height="10" rx="2" fill="currentColor" opacity=".8"/></svg>`;
+}
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 const PAGE_TITLES = {
@@ -743,7 +801,7 @@ function renderDashboard(ytm, pipe, dls, pls) {
          <div style="margin-top:14px"><button class="btn-primary" onclick="switchTab('convert')">Continue in Prepare →</button></div></div>`;
 
   const actions = `<div class="stat-grid">
-    <div class="stat-card click" onclick="switchTab('library')"><div style="font-weight:600">🎵 Download from YouTube Music</div><div class="stat-label">Browse playlists & liked songs</div></div>
+    <div class="stat-card click" onclick="switchTab('library')"><div style="font-weight:600">${eqMark(14)} Download from YouTube Music</div><div class="stat-label">Browse playlists & liked songs</div></div>
     <div class="stat-card click" onclick="switchTab('add')"><div style="font-weight:600">＋ Add URLs</div><div class="stat-label">Paste links to download</div></div>
     <div class="stat-card click" onclick="switchTab('playlists')"><div style="font-weight:600">≣ Build a playlist</div><div class="stat-label">Smart, AI, or import</div></div>
   </div>`;
@@ -1013,6 +1071,11 @@ function connectWS() {
         renderAll();
       }).catch(() => {});
       loadPrepJobs();
+      // A job may have finished while the socket was down — resync the
+      // pipeline-derived UI too, else the dashboard/stepper stay stale
+      // (e.g. a long enrich run whose `done` event we missed).
+      updatePrepSteps();
+      if (document.getElementById('panel-dashboard').classList.contains('active')) loadDashboard();
     }
     wsEverOpened = true;
   };
@@ -1570,6 +1633,21 @@ async function loadPrepJobs() {
   } catch {}
 }
 
+// ── Collapsible Jobs section ──────────────────────────────────────────────────
+let jobsCollapsed = localStorage.getItem('mm_jobs_collapsed') === '1';
+function applyJobsCollapsed() {
+  const body = document.getElementById('jobsBody');
+  const chev = document.getElementById('jobsChevron');
+  if (!body || !chev) return;
+  body.style.display = jobsCollapsed ? 'none' : '';
+  chev.classList.toggle('open', !jobsCollapsed);
+}
+function toggleJobs() {
+  jobsCollapsed = !jobsCollapsed;
+  localStorage.setItem('mm_jobs_collapsed', jobsCollapsed ? '1' : '0');
+  applyJobsCollapsed();
+}
+
 function renderPrepJobs() {
   const el = document.getElementById('prepList');
   const empty = document.getElementById('prepEmpty');
@@ -1579,6 +1657,11 @@ function renderPrepJobs() {
   const active = jobs.filter(j => j.status === 'pending' || j.status === 'running').length;
   const cb = document.getElementById('convBadge');
   if (active > 0) { cb.textContent = active; cb.style.display = ''; } else cb.style.display = 'none';
+
+  // Jobs header count (visible even when the section is collapsed)
+  const jc = document.getElementById('jobsCount');
+  if (jc) jc.textContent = jobs.length ? (active ? `${jobs.length} · ${active} active` : `${jobs.length}`) : '';
+  applyJobsCollapsed();
 
   if (!jobs.length) { el.innerHTML = ''; empty.style.display = ''; return; }
   empty.style.display = 'none';
@@ -1646,6 +1729,15 @@ function prepCardHTML(j) {
   }
   const summaryHtml = (summary && typeof summary === 'object') ? prepSummaryChips(type, summary) : '';
 
+  // Per-track failures (currently enrich) — expandable list of file + reason.
+  const errFiles = (summary && Array.isArray(summary.error_files)) ? summary.error_files : [];
+  const errDetailsHtml = errFiles.length ? `
+    <details class="prep-errors">
+      <summary>${errFiles.length} track${errFiles.length > 1 ? 's' : ''} failed to analyze — show details</summary>
+      <div class="prep-errors-list">${errFiles.map(e =>
+        `<div class="prep-err-row"><span class="prep-err-file">${escHtml(e.file || '')}</span><span class="prep-err-reason">${escHtml(e.reason || '')}</span></div>`).join('')}</div>
+    </details>` : '';
+
   const errorMsg = (j.status === 'error' && j.error) ? `<div class="error-msg">${escHtml(j.error)}</div>` : '';
   const btnLabel = (j.status === 'running' || j.status === 'pending') ? 'Cancel' : 'Remove';
   const dateStr = (j.status !== 'pending' && j.status !== 'running')
@@ -1673,6 +1765,7 @@ function prepCardHTML(j) {
       </div>
       ${currentFileHtml}
       ${progressBar}
+      ${errDetailsHtml}
       ${errorMsg}
     </div>`;
 }
@@ -2136,7 +2229,7 @@ async function loadPlaylistList() {
     <div class="card" style="margin-bottom:10px">
       <div class="card-header">
         <div class="card-info">
-          <div class="card-title">🎵 ${escHtml(p.name)}</div>
+          <div class="card-title">${eqMark(15)} ${escHtml(p.name)}</div>
           <div class="card-url">${escHtml(summary)}</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center">

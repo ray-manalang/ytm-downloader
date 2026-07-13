@@ -30,8 +30,13 @@ def is_available() -> bool:
     return True
 
 
-def analyze_track(path) -> Optional[dict]:
-    """Return {'bpm': float, 'energy': int 0-100} for one file, or None on failure."""
+def analyze_track(path) -> dict:
+    """Analyze one file.
+
+    Returns ``{'bpm': float, 'energy': int 0-100}`` on success, or
+    ``{'error': '<reason>'}`` when the file can't be analyzed — so callers can
+    surface *why* a track failed instead of a bare count.
+    """
     import librosa
     import numpy as np
     try:
@@ -41,7 +46,7 @@ def analyze_track(path) -> Optional[dict]:
     try:
         y, sr = librosa.load(str(path), sr=_SR, mono=True, duration=_ANALYZE_SECONDS)
         if y is None or len(y) == 0:
-            return None
+            return {"error": "empty or unreadable audio"}
         # The dedicated tempo estimator is more reliable than beat_track's tempo,
         # which can return 0 on sparse/percussive material.
         onset_env = librosa.onset.onset_strength(y=y, sr=sr)
@@ -52,8 +57,8 @@ def analyze_track(path) -> Optional[dict]:
         rms_db = 20.0 * math.log10(max(rms, 1e-6))
         energy = int(round(min(max((rms_db + 60.0) / 60.0, 0.0), 1.0) * 100))
         return {"bpm": round(bpm, 1), "energy": energy}
-    except Exception:
-        return None
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
 
 
 def _iter_audio(source_dir):
@@ -75,6 +80,10 @@ def run_enrich(source_dir, progress_cb, update_cb, should_cancel, enriched: set)
     total = len(files)
     analyzed = skipped = errors = 0
     done = 0
+    # Keep a bounded list of what failed and why, so the job can report the
+    # actual reason instead of an opaque "N errors" count.
+    error_files: list = []
+    _MAX_ERRORS_LOGGED = 100
 
     for path in files:
         if should_cancel():
@@ -88,11 +97,13 @@ def run_enrich(source_dir, progress_cb, update_cb, should_cancel, enriched: set)
             continue
 
         result = analyze_track(path)
-        if result:
+        if "bpm" in result:
             update_cb(sp, result["bpm"], result["energy"])
             analyzed += 1
         else:
             errors += 1
+            if len(error_files) < _MAX_ERRORS_LOGGED:
+                error_files.append({"file": rel, "reason": result.get("error", "unknown error")})
         done += 1
         progress_cb({"done": done, "total": total, "current_file": rel, "action": "enrich"})
 
@@ -101,5 +112,6 @@ def run_enrich(source_dir, progress_cb, update_cb, should_cancel, enriched: set)
         "analyzed": analyzed,
         "skipped": skipped,
         "errors": errors,
+        "error_files": error_files,
         "cancelled": bool(should_cancel()),
     }
