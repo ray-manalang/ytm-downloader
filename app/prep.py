@@ -756,6 +756,45 @@ async def pipeline_status():
     }
 
 
+def _scan_drm(source_dir: str) -> dict:
+    """Blocking: find DRM-protected `.m4p` files under source_dir, grouped by
+    artist → album. These are excluded from the index (not `is_audio_file`) and
+    can't be transcoded, so they need a dedicated report."""
+    base = Path(source_dir).resolve()
+    artists: dict = {}
+    total = 0
+    for p in sorted(base.rglob("*")):
+        if not p.is_file() or p.suffix.lower() != ".m4p":
+            continue
+        total += 1
+        try:
+            tags = tagtools.read_tags(p)
+        except Exception:
+            tags = {}
+        artist = str(tags.get("albumartist") or tags.get("artist") or "").strip() or "Unknown Artist"
+        album = str(tags.get("album") or "").strip() or "Unknown Album"
+        title = str(tags.get("title") or "").strip() or p.stem
+        artists.setdefault(artist, {}).setdefault(album, []).append(
+            {"title": title, "path": str(p)})
+    out = []
+    for artist in sorted(artists, key=str.lower):
+        albums = [{"album": alb,
+                   "tracks": sorted(artists[artist][alb], key=lambda t: t["title"].lower())}
+                  for alb in sorted(artists[artist], key=str.lower)]
+        out.append({"artist": artist, "albums": albums,
+                    "count": sum(len(a["tracks"]) for a in albums)})
+    return {"total": total, "artists": out}
+
+
+@router.get("/drm")
+async def drm_report():
+    """List DRM-protected (`.m4p`) files grouped by artist → album."""
+    source = MUSIC_DIR
+    if not source or not Path(source).is_dir():
+        raise HTTPException(400, "No library directory (set MUSIC_DIR)")
+    return await asyncio.get_event_loop().run_in_executor(None, lambda: _scan_drm(source))
+
+
 @router.get("/audit/latest")
 async def latest_audit():
     """Most recent completed audit summary, for the Audit panel (durable — survives

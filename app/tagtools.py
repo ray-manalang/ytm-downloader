@@ -249,6 +249,7 @@ def read_tags(path: Union[str, Path]) -> dict:
         "artist": _first(tags.get("artist")),
         "albumartist": _first(tags.get("albumartist")),
         "album": _first(tags.get("album")),
+        "title": _first(tags.get("title")),
         "year": year,
         "duration": duration,
     }

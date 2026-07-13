@@ -144,6 +144,7 @@ Auto-generated YTM playlists ("Liked Music", "Episodes for Later", "New Episodes
 | GET | `/api/prep/genres/latest` | Most recent completed review summary (the proposal table) |
 | POST | `/api/prep/genres/apply` | Unify job — apply an approved `{artist_key: [genres]}` map in place; records `prep_changes` |
 | GET | `/api/prep/audit/latest` | Most recent completed audit summary |
+| GET | `/api/prep/drm` | List DRM-protected `.m4p` files grouped by artist → album (read-only scan; these aren't in `library_tracks` since `is_audio_file` excludes `.m4p`) |
 | POST | `/api/prep/jobs/{id}/rollback` | Restore a `tags` or `unify` job from its `prep_changes` pre-images |
 | GET | `/api/prep/jobs` | List all prep jobs |
 | DELETE | `/api/prep/jobs/{id}` | Cancel a running/pending job or remove a finished one |

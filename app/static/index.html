@@ -229,6 +229,14 @@
   .genre-count { width: 84px; flex-shrink: 0; text-align: right; font-size: 12px; color: var(--text); display: flex; justify-content: flex-end; gap: 6px; align-items: baseline; }
   .genre-share { color: var(--muted); font-size: 11px; min-width: 30px; text-align: right; }
 
+  /* DRM report */
+  .drm-artist { margin-bottom: 12px; }
+  .drm-artist-name { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+  .drm-album { margin: 4px 0 6px 14px; }
+  .drm-album-name { color: var(--muted); font-size: 12px; font-style: italic; margin-bottom: 2px; }
+  .drm-track { font-size: 13px; padding: 1px 0 1px 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .drm-track::before { content: '♪ '; color: var(--muted); }
+
   /* Process new additions card */
   .process-box { border-color: var(--accent-soft); }
   .process-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
@@ -630,6 +638,11 @@
           <span id="convBitrateNote" style="color:var(--muted);font-size:12px"></span>
         </div>
         <div id="convError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+        <div class="step-extra">
+          <button class="btn-ghost btn-sm" id="drmBtn" onclick="loadDrmReport()">🔒 List DRM-protected files</button>
+          <span style="color:var(--muted);font-size:12px;margin-left:6px">.m4p files can't be transcoded — they're skipped by Convert.</span>
+          <div id="drmReport" style="margin-top:12px"></div>
+        </div>
       </div>
     </div>
 
@@ -2051,6 +2064,30 @@ function updatePrepCardInPlace(id) {
   const active = Object.values(prepJobs).filter(x => x.status === 'pending' || x.status === 'running').length;
   const cb = document.getElementById('convBadge');
   if (active > 0) { cb.textContent = active; cb.style.display = ''; } else cb.style.display = 'none';
+}
+
+async function loadDrmReport() {
+  const el = document.getElementById('drmReport');
+  const btn = document.getElementById('drmBtn');
+  btn.disabled = true;
+  el.innerHTML = '<span style="color:var(--muted);font-size:13px">Scanning library for .m4p files…</span>';
+  try {
+    const res = await fetch('/api/prep/drm');
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Scan failed.')}</span>`; return; }
+    if (!d.total) { el.innerHTML = '<span style="color:var(--accent);font-size:13px">✓ No DRM-protected (.m4p) files found.</span>'; return; }
+    const groups = (d.artists || []).map(a => {
+      const albums = a.albums.map(al => {
+        const tracks = al.tracks.map(t =>
+          `<div class="drm-track" title="${escHtml(t.path)}">${escHtml(t.title)}</div>`).join('');
+        return `<div class="drm-album"><div class="drm-album-name">${escHtml(al.album)}</div>${tracks}</div>`;
+      }).join('');
+      return `<div class="drm-artist"><div class="drm-artist-name">${escHtml(a.artist)} <span style="color:var(--muted);font-weight:400">· ${a.count}</span></div>${albums}</div>`;
+    }).join('');
+    el.innerHTML = `<div style="border-top:1px solid var(--border);padding-top:12px">
+      <div style="font-size:13px;margin-bottom:10px"><strong style="color:var(--warn)">${d.total}</strong> DRM-protected file${d.total !== 1 ? 's' : ''} across ${(d.artists || []).length} artist${(d.artists || []).length !== 1 ? 's' : ''}</div>
+      ${groups}</div>`;
+  } finally { btn.disabled = false; }
 }
 
 async function startConvert() {
