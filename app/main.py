@@ -246,6 +246,35 @@ def _safe_component(name) -> str:
     return name.strip(". ") or "Unknown"
 
 
+def _primary_artist(tags: dict) -> str:
+    """The album's primary artist — the first of a comma/semicolon list, so a
+    track that features guests ("The Black Eyed Peas, Sting") still files under
+    the band, not a per-track combo folder."""
+    raw = tags.get("albumartist") or tags.get("artist") or "Unknown Artist"
+    primary = str(raw).split(",")[0].split(";")[0].strip()
+    return primary or "Unknown Artist"
+
+
+def _normalize_artist(s) -> str:
+    """Loose key for matching artist folders — case-insensitive, ignoring a
+    leading 'The' (so 'The Black Eyed Peas' merges into 'Black Eyed Peas')."""
+    s = str(s).strip().casefold()
+    if s.startswith("the "):
+        s = s[4:]
+    return s.strip()
+
+
+def _resolve_artist(existing: dict, primary: str) -> str:
+    """Return an existing artist folder name that matches ``primary`` (loose
+    match), else the sanitized name — recording it so sibling tracks reuse it."""
+    key = _normalize_artist(primary)
+    if key in existing:
+        return existing[key]
+    name = _safe_component(primary)
+    existing[key] = name
+    return name
+
+
 def _promote_files_sync(files: list) -> list:
     """Blocking: move each finished file into MUSIC_DIR, copy to IPOD_DIR, and build
     library_tracks upsert dicts. Runs in an executor. Returns the dicts for landed files."""
@@ -254,6 +283,16 @@ def _promote_files_sync(files: list) -> list:
     ipod = prep_module.IPOD_DIR
     ipod_root = Path(ipod).resolve() if ipod else None
     do_ipod = ipod_root is not None and ipod_root != music_root
+
+    # Map existing artist folders (loose key → actual name) so downloads merge
+    # into the user's structure instead of creating near-duplicate folders.
+    existing_artists: dict = {}
+    try:
+        for child in music_root.iterdir():
+            if child.is_dir():
+                existing_artists.setdefault(_normalize_artist(child.name), child.name)
+    except OSError:
+        pass
 
     dicts = []
     for f in files:
@@ -266,11 +305,12 @@ def _promote_files_sync(files: list) -> list:
             except ValueError:
                 continue  # not under staging — leave it alone
 
-            # Organize the library as <AlbumArtist>/<Album>/<file> (staging only has
-            # <Album>/<file>), reading the tags to place it. Album falls back to the
-            # staging folder; artist/album fall back to "Unknown".
+            # Organize the library as <Artist>/<Album>/<file> (staging only has
+            # <Album>/<file>). Use the primary album artist and merge into an
+            # existing folder when one matches; album falls back to the staging
+            # folder; both fall back to "Unknown".
             tags = tagtools.read_tags(src)
-            artist = _safe_component(tags.get("albumartist") or tags.get("artist") or "Unknown Artist")
+            artist = _resolve_artist(existing_artists, _primary_artist(tags))
             album = _safe_component(tags.get("album") or (rel.parts[0] if len(rel.parts) > 1 else "Unknown Album"))
             rel = Path(artist) / album / src.name
 
