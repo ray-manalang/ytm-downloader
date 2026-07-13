@@ -787,6 +787,37 @@ def _scan_drm(source_dir: str) -> dict:
     return {"total": total, "artists": out}
 
 
+def _group_by_artist_album(rows) -> dict:
+    """Shape (path, artist, album) rows into {total, artists:[{artist,albums:[{album,tracks}]}]}."""
+    artists: dict = {}
+    total = 0
+    for path, artist, album in rows:
+        total += 1
+        a = (artist or "").strip() or "(no artist)"
+        alb = (album or "").strip() or "Unknown Album"
+        artists.setdefault(a, {}).setdefault(alb, []).append(
+            {"title": Path(path).stem, "path": path})
+    out = []
+    for a in sorted(artists, key=str.lower):
+        albums = [{"album": alb, "tracks": sorted(artists[a][alb], key=lambda t: t["title"].lower())}
+                  for alb in sorted(artists[a], key=str.lower)]
+        out.append({"artist": a, "albums": albums,
+                    "count": sum(len(al["tracks"]) for al in albums)})
+    return {"total": total, "artists": out}
+
+
+@router.get("/missing-albumartist")
+async def missing_albumartist_report():
+    """Indexed files with no album-artist, grouped by artist → album (needs an Audit)."""
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute(
+            "SELECT path, artist, album FROM library_tracks "
+            "WHERE albumartist IS NULL OR TRIM(albumartist) = ''"
+        ) as cur:
+            rows = await cur.fetchall()
+    return _group_by_artist_album(rows)
+
+
 @router.get("/drm")
 async def drm_report():
     """List DRM-protected (`.m4p`) files grouped by artist → album."""
