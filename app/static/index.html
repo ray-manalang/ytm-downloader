@@ -778,7 +778,7 @@
   <div class="panel" id="panel-files">
     <div class="files-toolbar">
       <h2>Music files</h2>
-      <button class="btn-ghost btn-sm" onclick="loadFiles()">↻ Refresh</button>
+      <button class="btn-ghost btn-sm" onclick="loadFiles(true)">↻ Refresh</button>
     </div>
     <p style="color:var(--muted);font-size:12px;margin:-8px 0 12px">Browses your music library. Deleting a track also removes its iPod-mirror copy.</p>
     <div id="filesList"></div>
@@ -1122,8 +1122,8 @@ function escHtml(s) {
 }
 
 // ── Files ─────────────────────────────────────────────────────────────────────
-async function loadFiles() {
-  const res = await fetch('/api/files');
+async function loadFiles(refresh = false) {
+  const res = await fetch('/api/files' + (refresh ? '?refresh=1' : ''));
   const data = await res.json();
   filesData = data.files || [];
   renderFiles();

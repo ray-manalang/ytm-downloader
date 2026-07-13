@@ -22,6 +22,7 @@ from . import prep as prep_module
 from . import playlists as playlists_module
 from . import converter
 from . import tagtools
+from . import filecache
 
 DB_PATH = os.environ.get("DB_PATH", "./data/downloads.db")
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "2"))
@@ -310,6 +311,7 @@ async def _promote_download(files: list, dl_id: str):
     except Exception as exc:
         logger.warning("promote: playlist refresh failed: %s", exc)
     await broadcast({"type": "promoted", "id": dl_id, "count": len(dicts)})
+    filecache.invalidate()  # library gained files — drop the cached listing
     # If "auto-process after downloads" is on, (re)arm the debounced trigger so
     # the whole batch is processed once it settles. No-op when disabled.
     try:
@@ -480,19 +482,28 @@ def _files_root() -> str:
     return prep_module.MUSIC_DIR if _promotion_active() else DOWNLOADS_DIR
 
 
+_FILE_EXTS = (".m4a", ".mp3", ".opus", ".flac", ".wav")
+
+
 @app.get("/api/files")
-async def list_files():
-    base = Path(_files_root())
+async def list_files(refresh: bool = False):
+    """List library files. Served from a cached directory walk (see filecache) so
+    re-opening the Files tab doesn't re-scan the network mount; ?refresh=1 forces
+    a rescan (the Refresh button)."""
+    root = _files_root()
+    base = Path(root)
+    entries = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: filecache.list_files(root, refresh=refresh))
     files = []
-    if base.exists():
-        for item in sorted(base.rglob("*")):
-            if item.is_file() and item.suffix in (".m4a", ".mp3", ".opus", ".flac", ".wav"):
-                stat = item.stat()
-                files.append({
-                    "path": str(item.relative_to(base)),
-                    "size": stat.st_size,
-                    "modified": stat.st_mtime,
-                })
+    for e in entries:
+        p = Path(e["path"])
+        if p.suffix.lower() in _FILE_EXTS:
+            try:
+                rel = str(p.relative_to(base))
+            except ValueError:
+                continue
+            files.append({"path": rel, "size": e["size"], "modified": e["mtime"]})
+    files.sort(key=lambda f: f["path"].lower())
     return {"files": files}
 
 
@@ -550,6 +561,7 @@ async def delete_file(body: dict):
         except Exception as exc:
             logger.warning("delete: playlist refresh failed: %s", exc)
 
+    filecache.invalidate()  # listing changed — drop the cache
     return {"ok": True}
 
 

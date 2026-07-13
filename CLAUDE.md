@@ -105,7 +105,7 @@ Single-process FastAPI app. No test suite.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/files` | List downloaded files grouped by folder |
+| GET | `/api/files` | List downloaded files grouped by folder (served from the `filecache` directory-walk cache; `?refresh=1` forces a rescan) |
 | DELETE | `/api/files` | Delete a file or entire folder by path |
 
 ### YouTube Music auth (`ytm.py`)
@@ -206,6 +206,8 @@ Playlists read the index that Audit populates — re-run Audit to refresh before
 7. **Promote** (`_promote_download`, `AUTO_PROMOTE` on + `MUSIC_DIR` set): each finished file is **moved** into `MUSIC_DIR` (staged locally first for speed; `shutil.move` handles the cross-SMB hop), **copied** to `IPOD_DIR` (m4a is copy-only — already AAC), and **indexed** via `prep._upsert_tracks` with the **resolved MUSIC_DIR path** (required — else `converter.mirror_path` raises and iPod playlists silently drop the track). Then `playlists.regenerate_all_auto()` refreshes auto playlists, a `promoted` WS event fires, and `prep.schedule_autoprocess()` is (re)armed (no-op unless the auto-process toggle is on). Isolated from the worker's error path — a promotion failure never flips a successful download to `error` (the file stays safe in staging).
 
 **Files browser repoint:** when promotion is active, `GET/DELETE /api/files` operate on `MUSIC_DIR` (the library), not `DOWNLOADS_DIR`. `delete_file` cascades — removes the iPod mirror copy (`converter.mirror_path`), deletes the `library_tracks` row(s), and regenerates auto playlists.
+
+**Directory-walk cache (`filecache.py`):** walking a network-mounted library (`rglob` + a `stat` per file) is slow and the Files tab / DRM scan hit it repeatedly. `filecache.list_files(root)` caches `(path,size,mtime)` per root with a 300 s TTL; `GET /api/files` and `prep._scan_drm` read through it. Writers call `filecache.invalidate()` — `_promote_download` (files added) and `delete_file` (files removed) — so the next read re-walks; `?refresh=1` (the Files tab's Refresh button) forces it. The mutating pipeline (Audit/Clean/Convert/Enrich) still walks fresh — it's the source of truth — and only tags/mtimes change, not the listing.
 
 ## WebSocket message types
 

@@ -25,6 +25,7 @@ from . import tagtools
 from . import enrich as enrich_module
 from . import playlists as playlists_module
 from . import ai_curator
+from . import filecache
 
 logger = logging.getLogger(__name__)
 
@@ -759,13 +760,13 @@ async def pipeline_status():
 def _scan_drm(source_dir: str) -> dict:
     """Blocking: find DRM-protected `.m4p` files under source_dir, grouped by
     artist → album. These are excluded from the index (not `is_audio_file`) and
-    can't be transcoded, so they need a dedicated report."""
-    base = Path(source_dir).resolve()
+    can't be transcoded, so they need a dedicated report. Uses the cached file
+    listing so repeat scans don't re-walk the network mount."""
     artists: dict = {}
     total = 0
-    for p in sorted(base.rglob("*")):
-        if not p.is_file() or p.suffix.lower() != ".m4p":
-            continue
+    m4p = [Path(e["path"]) for e in filecache.list_files(source_dir)
+           if e["path"].lower().endswith(".m4p")]
+    for p in sorted(m4p):
         total += 1
         try:
             tags = tagtools.read_tags(p)
