@@ -5,6 +5,7 @@ import os
 import shutil
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import List, Set
 
@@ -275,7 +276,32 @@ def _resolve_artist(existing: dict, primary: str) -> str:
     return name
 
 
-def _promote_files_sync(files: list) -> list:
+def _fill_missing_tags(path, primary_artist: str, genre_by_artist: dict):
+    """YouTube provides no album-artist or genre — fill them in place so new grabs
+    land usable. Album-artist ← the primary artist; genre ← the curated map, else
+    the dominant genre of that artist's existing library tracks. Leaves whatever's
+    already set alone; unknown-artist genre stays empty for the Complete-genres step."""
+    try:
+        tags = tagtools.read_tags(path)
+    except Exception:
+        return
+    new_aa = primary_artist if (not (tags.get("albumartist") or "").strip() and primary_artist) else None
+
+    new_genre = None
+    if not tagtools.normalize_genre(tagtools._genre_list(tags.get("genre"))):
+        g = (tagtools.ARTIST_GENRES.get(primary_artist.strip().lower())
+             or genre_by_artist.get(_normalize_artist(primary_artist)))
+        if g:
+            new_genre = g if isinstance(g, list) else [g]
+
+    if new_aa is not None or new_genre is not None:
+        try:
+            tagtools.write_tags(path, genre=new_genre, albumartist=new_aa)
+        except Exception:
+            pass
+
+
+def _promote_files_sync(files: list, genre_by_artist: dict = None) -> list:
     """Blocking: move each finished file into MUSIC_DIR, copy to IPOD_DIR, and build
     library_tracks upsert dicts. Runs in an executor. Returns the dicts for landed files."""
     downloads_root = Path(DOWNLOADS_DIR).resolve()
@@ -283,6 +309,7 @@ def _promote_files_sync(files: list) -> list:
     ipod = prep_module.IPOD_DIR
     ipod_root = Path(ipod).resolve() if ipod else None
     do_ipod = ipod_root is not None and ipod_root != music_root
+    genre_by_artist = genre_by_artist or {}
 
     # Map existing artist folders (loose key → actual name) so downloads merge
     # into the user's structure instead of creating near-duplicate folders.
@@ -310,7 +337,8 @@ def _promote_files_sync(files: list) -> list:
             # existing folder when one matches; album falls back to the staging
             # folder; both fall back to "Unknown".
             tags = tagtools.read_tags(src)
-            artist = _resolve_artist(existing_artists, _primary_artist(tags))
+            primary = _primary_artist(tags)
+            artist = _resolve_artist(existing_artists, primary)
             album = _safe_component(tags.get("album") or (rel.parts[0] if len(rel.parts) > 1 else "Unknown Album"))
             rel = Path(artist) / album / src.name
 
@@ -321,6 +349,9 @@ def _promote_files_sync(files: list) -> list:
                 if lib_dst.exists():
                     lib_dst.unlink()
                 shutil.move(str(src), str(lib_dst))  # copy+unlink across filesystems/SMB
+
+            # Fill album-artist + genre before mirroring, so the iPod copy has them too.
+            _fill_missing_tags(lib_dst, primary, genre_by_artist)
 
             if do_ipod:
                 ipod_dst = ipod_root / rel
@@ -349,11 +380,34 @@ def _promote_files_sync(files: list) -> list:
     return dicts
 
 
+async def _build_genre_by_artist() -> dict:
+    """{normalized-artist → dominant genre} from the existing index, so a new
+    download by an artist you already have inherits that artist's genre."""
+    counts: dict = {}
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                "SELECT albumartist, artist, genre FROM library_tracks "
+                "WHERE genre IS NOT NULL AND genre != ''"
+            ) as cur:
+                rows = await cur.fetchall()
+    except Exception:
+        return {}
+    for aa, ar, genre in rows:
+        key = _normalize_artist(aa or ar or "")
+        first = (genre or "").split(",")[0].strip()
+        if key and first:
+            counts.setdefault(key, Counter())[first] += 1
+    return {k: c.most_common(1)[0][0] for k, c in counts.items()}
+
+
 async def _promote_download(files: list, dl_id: str):
     """Move finished downloads into the library, mirror to iPod, and index them."""
     if not (_promotion_active() and files):
         return
-    dicts = await asyncio.get_event_loop().run_in_executor(None, lambda: _promote_files_sync(files))
+    genre_by_artist = await _build_genre_by_artist()
+    dicts = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _promote_files_sync(files, genre_by_artist))
     if not dicts:
         return
     try:
