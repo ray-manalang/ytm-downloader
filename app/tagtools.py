@@ -13,6 +13,7 @@ keys are uniform across FLAC, MP3 (ID3) and M4A (MP4).
 import json
 import os
 import re
+import shutil
 import time
 from collections import Counter
 from pathlib import Path
@@ -21,21 +22,40 @@ from typing import List, Optional, Union
 import requests
 from mutagen import File as MutagenFile
 
-_DATA_PATH = Path(__file__).parent / "data" / "genres.json"
-_ARTIST_PATH = Path(__file__).parent / "data" / "artist_genres.json"
+# The bundled maps ship in the image; GENRES_FILE / ARTIST_GENRES_FILE let a
+# deployment point at a mounted copy so the vocabulary can be edited live.
+_BUNDLED_DATA = Path(__file__).parent / "data" / "genres.json"
+_BUNDLED_ARTIST = Path(__file__).parent / "data" / "artist_genres.json"
+_DATA_PATH = Path(os.environ.get("GENRES_FILE") or _BUNDLED_DATA)
+_ARTIST_PATH = Path(os.environ.get("ARTIST_GENRES_FILE") or _BUNDLED_ARTIST)
 
 # Separators that split a compound genre string into parts.
 _SPLIT_RE = re.compile(r"\s*[/;,|]\s*|\s+&\s+|\s+\band\b\s+", re.IGNORECASE)
 
 
+def _seed_override(path: Path, bundled: Path):
+    """If an override path is configured but empty, seed it from the bundled copy
+    so the user has a real file to edit (no crash on a fresh mount)."""
+    if path != bundled and not path.exists():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(bundled, path)
+        except OSError:
+            pass  # read-only mount / race — _load_* falls back to the bundled copy
+
+
 def _load_data() -> dict:
-    with open(_DATA_PATH, "r", encoding="utf-8") as f:
+    _seed_override(_DATA_PATH, _BUNDLED_DATA)
+    path = _DATA_PATH if _DATA_PATH.exists() else _BUNDLED_DATA
+    with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def _load_artist_genres() -> dict:
+    _seed_override(_ARTIST_PATH, _BUNDLED_ARTIST)
+    path = _ARTIST_PATH if _ARTIST_PATH.exists() else _BUNDLED_ARTIST
     try:
-        with open(_ARTIST_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             raw = json.load(f).get("artists", {})
     except (OSError, ValueError):
         return {}
@@ -66,6 +86,36 @@ def reload_data():
     _COMPILATION_KEYWORDS = [k.lower() for k in _DATA.get("compilation_dir_keywords", [])]
     _CONTROLLED_LOWER = {g.lower(): g for g in CONTROLLED_GENRES}
     ARTIST_GENRES = _load_artist_genres()
+
+
+def _current_mtimes() -> dict:
+    m = {}
+    for p in (_DATA_PATH, _ARTIST_PATH):
+        try:
+            m[str(p)] = p.stat().st_mtime
+        except OSError:
+            m[str(p)] = None
+    return m
+
+
+_MTIMES = _current_mtimes()
+
+
+def maybe_reload():
+    """Reload the maps if genres.json / artist_genres.json changed on disk.
+
+    Lets a mounted vocabulary be edited on a live deployment and picked up on the
+    next Audit/Clean/Review — no restart. A malformed edit is swallowed so it
+    can't break a job (the last good maps stay in effect).
+    """
+    global _MTIMES
+    now = _current_mtimes()
+    if now != _MTIMES:
+        try:
+            reload_data()
+        except (OSError, ValueError, KeyError):
+            pass  # keep the previous good maps on a bad/partial edit
+        _MTIMES = now
 
 
 def _map_token(token: str) -> Optional[str]:
@@ -251,6 +301,7 @@ def run_audit(source_dir: Union[str, Path], progress_cb, should_cancel) -> dict:
     missing album-artist count, per-format counts/sizes, and a sample of raw
     genre strings that map to nothing (so the vocabulary can be extended).
     """
+    maybe_reload()  # pick up any edits to a mounted genres.json
     base = Path(source_dir).resolve()
     files = list(_iter_audio(base))
     total = len(files)
@@ -338,6 +389,7 @@ def run_clean(source_dir: Union[str, Path], progress_cb, record_cb, should_cance
     pre-image before the file is written, so a crash mid-run still leaves every
     modified file rollback-able. Returns a summary dict.
     """
+    maybe_reload()  # pick up any edits to a mounted genres.json
     base = Path(source_dir).resolve()
     files = list(_iter_audio(base))
     total = len(files)
@@ -478,6 +530,7 @@ def run_genre_review(tracks: List[dict], use_online: bool, progress_cb, should_c
     Claude by the caller). It runs ONCE, batched, over the artists still unresolved
     after local + MusicBrainz resolution — so it augments rather than replaces those.
     """
+    maybe_reload()  # pick up any edits to a mounted genres.json / artist_genres.json
     groups: dict = {}
     for t in tracks:
         key = artist_key(t.get("albumartist"), t.get("artist"))
@@ -604,6 +657,7 @@ def run_unify(tracks: List[dict], approved: dict, progress_cb, record_cb, should
     ``record_cb`` persists each pre-image to prep_changes before the write. Returns a
     summary plus ``updated`` [(path, genre_str)] so the caller can refresh library_tracks.
     """
+    maybe_reload()  # pick up any edits to a mounted genres.json / artist_genres.json
     targets = [t for t in tracks
                if artist_key(t.get("albumartist"), t.get("artist")).lower() in approved]
     total = len(targets)

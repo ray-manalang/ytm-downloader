@@ -58,6 +58,8 @@ Single-process FastAPI app. No test suite.
 | `PLAYLIST_DIR_IPOD` | `<IPOD_DIR>/Playlists` | iPod-target `.m3u` output (mirror paths) |
 | `ANTHROPIC_API_KEY` | *(empty)* | Enables the AI playlist engine. **Runtime env only — never commit.** AI degrades to smart-only if unset |
 | `ANTHROPIC_MODEL` | `claude-haiku-4-5` | Model for AI curation (cheap by design; overridable) |
+| `GENRES_FILE` | *(bundled `app/data/genres.json`)* | Override path for the genre vocabulary/maps. Bind-mount a file here to edit the vocab on a live deployment — `tagtools.maybe_reload()` re-reads it (mtime-based) at the start of each Audit/Clean/Review/Unify, no restart. A malformed edit is ignored (last-good maps stay) |
+| `ARTIST_GENRES_FILE` | *(bundled `app/data/artist_genres.json`)* | Override path for the curated artist→genre map; same live-reload behavior |
 
 ## Database schema
 
