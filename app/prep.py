@@ -313,6 +313,10 @@ async def _prep_worker():
                     await _broadcast({
                         "type": "prep_status", "id": job_id, "status": "done", "summary": summary,
                     })
+                    # Persist the derived state durably so removing this job card
+                    # later doesn't reset the Dashboard/stepper.
+                    if isinstance(summary, dict):
+                        await _save_pipeline_state(jtype, summary)
                     # A library/mirror change → refresh auto-refresh playlists.
                     if jtype in ("convert", "tags", "unify", "enrich"):
                         try:
@@ -638,21 +642,12 @@ async def start_genre_review(body: dict):
 
 @router.get("/genres/latest")
 async def latest_review():
-    async with aiosqlite.connect(_db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM prep_jobs WHERE type='review' AND status='done' "
-            "ORDER BY created_at DESC LIMIT 1"
-        ) as cur:
-            row = await cur.fetchone()
-    if not row:
+    """Most recent completed genre-review proposal (durable — survives removing
+    the review job card)."""
+    st = await _latest_summary("review")
+    if not st:
         return {"review": None}
-    job = _job_public(dict(row))
-    try:
-        job["summary"] = json.loads(row["error"] or "{}")
-    except (TypeError, ValueError):
-        job["summary"] = {}
-    return {"review": job}
+    return {"review": {"summary": st["summary"], "created_at": st["when"]}}
 
 
 @router.post("/genres/apply")
@@ -678,21 +673,56 @@ async def apply_genres(body: dict):
     return await _create_and_enqueue("unify", source_dir, "", {"approved": clean})
 
 
+async def _save_pipeline_state(jtype: str, summary):
+    """Persist the latest completed summary for a step, independent of the job
+    row (which the user may remove from the Jobs list)."""
+    try:
+        payload = json.dumps(summary if isinstance(summary, dict) else {})
+    except (TypeError, ValueError):
+        payload = "{}"
+    async with aiosqlite.connect(_db_path) as db:
+        await db.execute(
+            "INSERT INTO pipeline_state (type,summary,updated_at) VALUES (?,?,?) "
+            "ON CONFLICT(type) DO UPDATE SET summary=excluded.summary, updated_at=excluded.updated_at",
+            (jtype, payload, time.time()),
+        )
+        await db.commit()
+
+
+async def backfill_pipeline_state():
+    """One-time seed of pipeline_state from existing job history, so upgrading to
+    the durable table doesn't lose the current Dashboard/stepper state."""
+    async with aiosqlite.connect(_db_path) as db:
+        db.row_factory = aiosqlite.Row
+        for jtype in ("audit", "tags", "review", "unify", "enrich", "convert"):
+            async with db.execute("SELECT 1 FROM pipeline_state WHERE type=?", (jtype,)) as cur:
+                if await cur.fetchone():
+                    continue
+            async with db.execute(
+                "SELECT error, created_at FROM prep_jobs WHERE type=? AND status='done' "
+                "ORDER BY created_at DESC LIMIT 1", (jtype,)) as cur:
+                row = await cur.fetchone()
+            if row:
+                await db.execute(
+                    "INSERT INTO pipeline_state (type,summary,updated_at) VALUES (?,?,?)",
+                    (jtype, row["error"] or "{}", row["created_at"]))
+        await db.commit()
+
+
 async def _latest_summary(jtype: str) -> Optional[dict]:
     async with aiosqlite.connect(_db_path) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT created_at, error FROM prep_jobs WHERE type=? AND status='done' "
-            "ORDER BY created_at DESC LIMIT 1", (jtype,)
+            "SELECT summary, updated_at FROM pipeline_state WHERE type=?", (jtype,)
         ) as cur:
             row = await cur.fetchone()
     if not row:
         return None
     try:
-        summary = json.loads(row["error"] or "{}")
+        summary = json.loads(row["summary"] or "{}")
     except (TypeError, ValueError):
         summary = {}
-    return {"when": row["created_at"], "summary": summary}
+    return {"when": row["updated_at"], "summary": summary}
 
 
 @router.get("/pipeline")
@@ -728,22 +758,12 @@ async def pipeline_status():
 
 @router.get("/audit/latest")
 async def latest_audit():
-    """Most recent completed audit summary, for the Audit panel."""
-    async with aiosqlite.connect(_db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM prep_jobs WHERE type='audit' AND status='done' "
-            "ORDER BY created_at DESC LIMIT 1"
-        ) as cur:
-            row = await cur.fetchone()
-    if not row:
+    """Most recent completed audit summary, for the Audit panel (durable — survives
+    removing the audit job card)."""
+    st = await _latest_summary("audit")
+    if not st:
         return {"audit": None}
-    job = _job_public(dict(row))
-    try:
-        job["summary"] = json.loads(row["error"] or "{}")
-    except (TypeError, ValueError):
-        job["summary"] = {}
-    return {"audit": job}
+    return {"audit": {"summary": st["summary"], "created_at": st["when"]}}
 
 
 def _apply_rollback(changes_by_path: dict) -> dict:

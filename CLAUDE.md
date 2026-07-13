@@ -85,7 +85,9 @@ Single-process FastAPI app. No test suite.
 | `added_at` | REAL | Unix timestamp from YTM |
 | `downloaded_at` | REAL | Unix timestamp when enqueued, or NULL |
 
-**iPod-Prep tables** (all created in `db_init`, per the HANDOFF §7): `prep_jobs` (job queue/history; `type` = `audit`\|`tags`\|`unify`\|`convert`; done-job summary counts are stored as JSON in the `error` column), `prep_changes` (tag-edit rollback log), `library_tracks` (scanned library index), `playlists` (playlist specs). M1 uses only `prep_jobs`; the rest are seeded ahead for later milestones.
+**iPod-Prep tables** (all created in `db_init`, per the HANDOFF §7): `prep_jobs` (job queue/history; `type` = `audit`\|`tags`\|`unify`\|`convert`; done-job summary counts are stored as JSON in the `error` column), `prep_changes` (tag-edit rollback log), `library_tracks` (scanned library index), `playlists` (playlist specs), `pipeline_state` (latest completed summary **per step type** — the durable source of truth for the Dashboard/stepper). M1 uses only `prep_jobs`; the rest are seeded ahead for later milestones.
+
+**`pipeline_state` — why it exists:** the Dashboard/stepper (and the genre analytic, Complete-genres/Convert "done" flags, Audit/Review panels) read `_latest_summary(type)` and the `/audit/latest` + `/genres/latest` endpoints. These now read `pipeline_state`, **not** the latest `prep_jobs` row — so *removing a completed job card no longer resets derived state*. The worker upserts `pipeline_state[type]` on every successful `done` (via `_save_pipeline_state`); `backfill_pipeline_state()` (run at startup) one-time-seeds it from existing job history so upgrading loses nothing. Enrich-derived counts still come live from `library_tracks` (bpm), independent of both.
 
 ## API endpoints
 

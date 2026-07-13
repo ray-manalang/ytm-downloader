@@ -134,6 +134,15 @@ async def db_init():
                 updated_at   REAL
             )
         """)
+        # Latest completed summary per prep step — the source of truth for the
+        # Dashboard/stepper, so removing a job card doesn't wipe derived state.
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS pipeline_state (
+                type       TEXT PRIMARY KEY,           -- audit|tags|review|unify|enrich|convert
+                summary    TEXT,                       -- JSON of the latest completed run
+                updated_at REAL
+            )
+        """)
         await db.commit()
 
 
@@ -402,6 +411,7 @@ async def startup():
     # iPod-Prep: wire dependencies, reset interrupted jobs, start conversion workers
     prep_module.set_dependencies(_enqueue_download, broadcast, DB_PATH)
     await prep_module.reset_stuck_jobs()
+    await prep_module.backfill_pipeline_state()  # seed durable state from job history
     prep_module.start_prep_task()
     playlists_module.set_dependencies(DB_PATH, _enqueue_download)
     playlists_module.start_refresh_task()
