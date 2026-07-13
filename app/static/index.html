@@ -215,6 +215,14 @@
   .pl-adv-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
   .pl-adv-desc { color: var(--muted); font-size: 13px; line-height: 1.55; margin-bottom: 12px; }
 
+  /* Dashboard genre analytic */
+  .genre-row { display: flex; align-items: center; gap: 12px; padding: 5px 0; }
+  .genre-label { width: 130px; flex-shrink: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .genre-track { flex: 1; height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+  .genre-fill { height: 100%; background: var(--accent); border-radius: 4px; }
+  .genre-count { width: 84px; flex-shrink: 0; text-align: right; font-size: 12px; color: var(--text); display: flex; justify-content: flex-end; gap: 6px; align-items: baseline; }
+  .genre-share { color: var(--muted); font-size: 11px; min-width: 30px; text-align: right; }
+
   /* Process new additions card */
   .process-box { border-color: var(--accent-soft); }
   .process-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
@@ -274,6 +282,11 @@
     <div class="nav-item" data-nav="files" onclick="switchTab('files')">
       <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a1.6 1.6 0 0 1 1.6-1.6h3.7l2 2.2h8.1A1.6 1.6 0 0 1 21 9.2v8.2a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 17.4z"/></svg></span> Files
     </div>
+
+    <div class="nav-group-label">Settings</div>
+    <div class="nav-item" data-nav="setup" onclick="switchTab('setup')">
+      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Setup
+    </div>
   </aside>
 
   <div class="content">
@@ -291,8 +304,29 @@
     <div id="dashBody"></div>
   </div>
 
-  <!-- LIBRARY -->
-  <div class="panel" id="panel-library">
+  <!-- SETUP -->
+  <div class="panel" id="panel-setup">
+    <!-- Music library folder -->
+    <div class="add-box" style="margin-bottom:24px">
+      <label>Music library folder</label>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.6">
+        The library the Prepare steps operate on. Audit and Analyze read only; Clean and Complete-genres
+        write tags in place (mount read-write) and every change is reversible.
+      </p>
+      <input id="libDir" type="text" placeholder="/music" oninput="onLibDirChange()"
+        style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
+    </div>
+
+    <!-- YouTube Music connection -->
+    <div class="section-title" style="margin-top:0">YouTube Music</div>
+    <div id="setupConnected" style="display:none">
+      <div class="lib-connected-bar">
+        <span class="lib-dot"></span>
+        <span style="font-weight:600">Connected to YouTube Music</span>
+        <span id="authTypeBadge" style="font-size:11px;color:var(--muted);margin-left:6px"></span>
+        <button class="btn-ghost btn-sm" style="margin-left:auto" onclick="disconnectYTM()">Disconnect</button>
+      </div>
+    </div>
     <!-- Not connected: OAuth setup -->
     <div id="libSetup">
       <!-- Step 1: enter credentials -->
@@ -371,16 +405,18 @@
         <div id="ytmSetupError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
       </div>
     </div>
+  </div>
+
+  <!-- LIBRARY (YouTube Music browsing) -->
+  <div class="panel" id="panel-library">
+    <div id="libDisconnectedPrompt" class="empty" style="display:none">
+      <div class="empty-icon"><svg viewBox="0 0 24 24" width="46" height="46" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:.5"><path d="M9 2v6"/><path d="M15 2v6"/><path d="M7 8h10v3a5 5 0 0 1-10 0z"/><path d="M12 16v6"/></svg></div>
+      <p>YouTube Music isn't connected.</p>
+      <button class="btn-primary" style="margin-top:14px" onclick="switchTab('setup')">Connect in Setup →</button>
+    </div>
 
     <!-- Connected -->
     <div id="libConnected" style="display:none">
-      <div class="lib-connected-bar">
-        <span class="lib-dot"></span>
-        <span style="font-weight:600">Connected to YouTube Music</span>
-        <span id="authTypeBadge" style="font-size:11px;color:var(--muted);margin-left:6px"></span>
-        <button class="btn-ghost btn-sm" style="margin-left:auto" onclick="disconnectYTM()">Disconnect</button>
-      </div>
-
       <!-- Liked Songs -->
       <div class="lib-section">
         <div class="lib-playlist-header" onclick="toggleLiked()" style="cursor:pointer">
@@ -472,16 +508,14 @@
 
   <!-- PREPARE (guided pipeline: Audit → Clean → Genres → Enrich → Convert) -->
   <div class="panel" id="panel-convert">
-    <div class="add-box" style="margin-bottom:20px">
-      <label>Music library</label>
-      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.6">
-        The folder these steps operate on. Audit and Analyze read only; Clean and Complete-genres
-        write tags in place (mount read-write) and every change is reversible.
-      </p>
-      <input id="libDir" type="text" placeholder="/music"
-        style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
-      <div id="prepError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+    <div class="add-box" style="margin-bottom:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:3px">Music library</div>
+        <div id="prepLibDisplay" style="font-family:monospace;font-size:13px">—</div>
+      </div>
+      <button class="btn-ghost btn-sm" onclick="switchTab('setup')">Change in Setup →</button>
     </div>
+    <div id="prepError" style="color:var(--danger);font-size:13px;margin:-8px 0 12px"></div>
 
     <!-- Process new additions (chained Audit → Clean → Analyze → Convert) -->
     <div class="add-box process-box" style="margin-bottom:20px">
@@ -755,6 +789,7 @@ function eqMark(size = 15) {
 const PAGE_TITLES = {
   dashboard: 'Dashboard', library: 'YouTube Music', add: 'Add URLs', queue: 'Queue',
   history: 'History', convert: 'Prepare library', playlists: 'Playlists', files: 'Files',
+  setup: 'Setup',
 };
 function switchTab(name) {
   document.querySelectorAll('.nav-item').forEach(t => t.classList.toggle('active', t.dataset.nav === name));
@@ -768,6 +803,7 @@ function switchTab(name) {
   if (name === 'library') loadLibrary();
   if (name === 'convert') loadConvert();
   if (name === 'playlists') loadPlaylists();
+  if (name === 'setup') loadSetup();
 }
 const navigate = switchTab;
 
@@ -804,7 +840,7 @@ function renderDashboard(ytm, pipe, dls, pls) {
          <button class="btn-ghost btn-sm" style="margin-left:auto" onclick="switchTab('library')">Browse & sync →</button></div>`
     : `<div class="banner"><span class="lib-dot" style="background:var(--muted)"></span>
          <span style="font-weight:600">YouTube Music not connected</span>
-         <button class="btn-primary btn-sm" style="margin-left:auto" onclick="switchTab('library')">Connect →</button></div>`;
+         <button class="btn-primary btn-sm" style="margin-left:auto" onclick="switchTab('setup')">Connect →</button></div>`;
 
   const stat = (num, label, cls, nav) =>
     `<div class="stat-card ${nav ? 'click' : ''}" ${nav ? `onclick="switchTab('${nav}')"` : ''}>
@@ -843,10 +879,37 @@ function renderDashboard(ytm, pipe, dls, pls) {
     <div class="stat-card click" onclick="switchTab('playlists')"><div style="font-weight:600">≣ Build a playlist</div><div class="stat-label">Smart, AI, or import</div></div>
   </div>`;
 
+  const genreDist = (pipe.audit && pipe.audit.summary && pipe.audit.summary.genre_distribution) || {};
+  const genreSection = genreAnalyticHTML(genreDist);
+
   document.getElementById('dashBody').innerHTML =
     conn + stats +
     `<div class="section-title">Prepare your library</div>` + prepBox +
+    genreSection +
     `<div class="section-title">Quick actions</div>` + actions;
+}
+
+// Top genres as horizontal bars, from the latest audit's genre distribution.
+function genreAnalyticHTML(dist) {
+  const entries = Object.entries(dist || {})
+    .filter(([g]) => g && g !== '(none)')
+    .sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return '';
+  const TOP = 12;
+  const top = entries.slice(0, TOP);
+  const max = top[0][1] || 1;
+  const totalTagged = entries.reduce((s, [, n]) => s + n, 0);
+  const rows = top.map(([g, n]) => {
+    const share = totalTagged ? Math.round((n / totalTagged) * 100) : 0;
+    return `<div class="genre-row">
+      <div class="genre-label" title="${escHtml(g)}">${escHtml(g)}</div>
+      <div class="genre-track"><div class="genre-fill" style="width:${Math.max((n / max) * 100, 2)}%"></div></div>
+      <div class="genre-count">${n.toLocaleString()}<span class="genre-share">${share}%</span></div>
+    </div>`;
+  }).join('');
+  const more = entries.length > TOP
+    ? `<div style="color:var(--muted);font-size:12px;margin-top:10px">+${entries.length - TOP} more genres across ${totalTagged.toLocaleString()} tagged tracks</div>` : '';
+  return `<div class="section-title">Genre distribution</div><div class="add-box">${rows}${more}</div>`;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1271,17 +1334,44 @@ function showBrowserAuth() {
   document.getElementById('browserAuthBox').style.display = '';
 }
 
-async function loadLibrary() {
-  const res = await fetch('/api/ytm/status');
-  const data = await res.json();
-  ytmConnected = data.connected;
-  document.getElementById('libSetup').style.display = ytmConnected ? 'none' : '';
-  document.getElementById('libConnected').style.display = ytmConnected ? '' : 'none';
-  if (ytmConnected) {
-    const badge = document.getElementById('authTypeBadge');
-    badge.textContent = data.auth_type === 'oauth' ? '(OAuth)' : '(browser headers)';
-    await Promise.all([fetchLibraryData(), loadSyncConfig()]);
-  }
+// Connection UI lives on the Setup page; the YouTube Music page just browses.
+// Both react to the same status, so a single refresh drives them.
+function applyYtmConnection(connected, authType) {
+  ytmConnected = connected;
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  // Setup page
+  show('setupConnected', connected);
+  show('libSetup', !connected);
+  const badge = document.getElementById('authTypeBadge');
+  if (badge) badge.textContent = connected ? (authType === 'oauth' ? '(OAuth)' : '(browser headers)') : '';
+  // YouTube Music page
+  show('libConnected', connected);
+  show('libDisconnectedPrompt', !connected);
+}
+
+async function refreshYtm() {
+  const data = await fetch('/api/ytm/status').then(r => r.json()).catch(() => ({}));
+  applyYtmConnection(!!data.connected, data.auth_type);
+  if (data.connected) await Promise.all([fetchLibraryData(), loadSyncConfig()]);
+}
+
+async function loadLibrary() { await refreshYtm(); }
+
+async function loadSetup() {
+  await refreshYtm();
+  try {
+    const cfg = await (await fetch('/api/prep/config')).json();
+    const el = document.getElementById('libDir');
+    if (cfg.music_dir && el && !el.value) el.value = cfg.music_dir;
+  } catch {}
+  onLibDirChange();
+}
+
+// Keep the Prepare page's read-only library reference in sync with Setup's input.
+function onLibDirChange() {
+  const el = document.getElementById('libDir');
+  const disp = document.getElementById('prepLibDisplay');
+  if (disp) disp.textContent = (el && el.value.trim()) || '—';
 }
 
 async function fetchLibraryData() {
@@ -1518,8 +1608,7 @@ async function connectYTM() {
 async function disconnectYTM() {
   if (!confirm('Disconnect YouTube Music? This will remove your saved credentials.')) return;
   await fetch('/api/ytm/setup', {method: 'DELETE'});
-  ytmConnected = false;
-  loadLibrary();
+  await refreshYtm();
 }
 
 async function syncNow() {
@@ -1592,6 +1681,7 @@ async function loadConvert() {
       prepConfigLoaded = true;
     } catch {}
   }
+  onLibDirChange();  // reflect the Setup-page library folder in the Prepare header
   await Promise.all([loadPrepJobs(), loadLatestAudit(), loadLatestReview(), updatePrepSteps(), loadProcessConfig()]);
 }
 
