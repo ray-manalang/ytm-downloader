@@ -235,7 +235,7 @@
   .drm-album { margin: 4px 0 6px 14px; }
   .drm-album-name { color: var(--muted); font-size: 12px; font-style: italic; margin-bottom: 2px; }
   .drm-track { font-size: 13px; padding: 1px 0 1px 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .drm-track::before { content: '♪ '; color: var(--muted); }
+  .drm-track::before { content: '·'; color: var(--muted); margin-right: 6px; }
 
   /* Process new additions card */
   .process-box { border-color: var(--accent-soft); }
@@ -639,7 +639,7 @@
         </div>
         <div id="convError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
         <div class="step-extra">
-          <button class="btn-ghost btn-sm" id="drmBtn" onclick="loadDrmReport()">🔒 List DRM-protected files</button>
+          <button class="btn-ghost btn-sm" id="drmBtn" onclick="loadDrmReport()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>List DRM-protected files</button>
           <span style="color:var(--muted);font-size:12px;margin-left:6px">.m4p files can't be transcoded — they're skipped by Convert.</span>
           <div id="drmReport" style="margin-top:12px"></div>
         </div>
