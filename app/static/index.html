@@ -2267,7 +2267,7 @@ async function loadPlaylists() {
     const cfg = await (await fetch('/api/playlists/config')).json();
     plFacets = cfg;
     document.getElementById('plIndexNote').innerHTML = cfg.indexed_tracks
-      ? `<span style="color:var(--muted)">${cfg.indexed_tracks} tracks indexed · saved to <code>${escHtml(cfg.playlist_dir_library)}</code></span>`
+      ? `<span style="color:var(--muted)">${cfg.indexed_tracks} tracks indexed · Library → <code>${escHtml(cfg.playlist_dir_library)}</code> · iPod → <code>${escHtml(cfg.playlist_dir_ipod)}</code></span>`
       : `<span style="color:var(--warn)">No indexed tracks yet — run <strong>Audit</strong> in the Prep tab first.</span>`;
     document.getElementById('plGenres').innerHTML = (cfg.genres || []).map(g => `<option value="${escHtml(g)}">`).join('');
     document.getElementById('plArtists').innerHTML = (cfg.artists || []).map(a => `<option value="${escHtml(a)}">`).join('');
@@ -2458,11 +2458,29 @@ async function savePlaylist() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { errEl.textContent = data.detail || 'Save failed.'; return; }
     document.getElementById('plName').value = '';
-    document.getElementById('plPreview').innerHTML = '';
     plRules = [{ field: 'genre', op: 'is', value: '' }];
     renderRules();
+    document.getElementById('plPreview').innerHTML = writeResultHTML(name, data);
     await loadPlaylistList();
   } finally { btn.disabled = false; btn.textContent = 'Save Playlist'; }
+}
+
+// Show where each target's .m3u landed + its count, so an empty iPod mirror
+// (or a playlist written to an unexpected path) isn't a silent surprise.
+function writeResultHTML(name, data) {
+  const written = data.written || [];
+  const parts = written.map(w => `${w.target === 'ipod' ? 'iPod' : 'Library'}: <strong>${w.count}</strong> track${w.count !== 1 ? 's' : ''}`);
+  let html = `<div style="border-top:1px solid var(--border);padding-top:12px">
+    <div style="color:var(--accent);font-size:13px">✓ Saved "${escHtml(name)}"${parts.length ? ' — ' + parts.join(' · ') : ''}</div>`;
+  for (const w of written) {
+    html += `<div style="color:var(--muted);font-size:12px;margin-top:4px">${w.target === 'ipod' ? 'iPod' : 'Library'} .m3u → <code>${escHtml(w.path)}</code></div>`;
+    if (w.error) html += `<div style="color:var(--danger);font-size:12px;margin-top:2px">✗ write failed: ${escHtml(w.error)} (is that mount writable?)</div>`;
+  }
+  const ipod = written.find(w => w.target === 'ipod');
+  if (ipod && ipod.count === 0 && (data.track_count || 0) > 0) {
+    html += `<div style="color:var(--warn);font-size:12px;margin-top:6px">⚠ The iPod playlist is empty: it only includes tracks that already have an AAC mirror. Run <strong>Convert → iPod</strong> in Prepare (so the mirror exists), then <strong>Regenerate</strong> this playlist. The mirror must live at the same <code>IPOD_DIR</code> the playlist writes to (above).</div>`;
+  }
+  return html + `</div>`;
 }
 
 function ruleSummary(spec) {

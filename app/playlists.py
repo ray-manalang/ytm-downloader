@@ -10,6 +10,7 @@ Mirrors ``ytm.py``/``prep.py``: an ``APIRouter`` included by ``main.py`` and a
 
 import asyncio
 import json
+import logging
 import os
 import random
 import re
@@ -20,6 +21,8 @@ from typing import List, Optional
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException
+
+logger = logging.getLogger(__name__)
 
 from . import converter
 from . import ytm as ytm_module
@@ -229,26 +232,33 @@ def _matched_for_spec(spec: dict, tracks: List[dict]) -> List[dict]:
 
 def _write_target(matched: List[dict], name: str, target: str) -> dict:
     """Write one target's .m3u. 'library' uses source paths; 'ipod' maps to mirror
-    files and includes only those that already exist in the mirror."""
+    files and includes only those that already exist in the mirror.
+
+    A per-target failure (e.g. a read-only iPod mount) is caught and reported in
+    the result rather than raised, so it never blocks the other target or errors
+    the whole save.
+    """
+    out_dir = PLAYLIST_DIR_IPOD if target == "ipod" else PLAYLIST_DIR_LIBRARY
     if target == "ipod":
-        out_dir = PLAYLIST_DIR_IPOD
-        rendered = []
+        tracks_out = []
         for t in matched:
             try:
                 mp = converter.mirror_path(t["path"], MUSIC_DIR, IPOD_DIR)
             except (ValueError, KeyError):
                 continue
             if os.path.exists(mp):
-                rendered.append({**t, "path": mp})
-        tracks_out, count = rendered, len(rendered)
+                tracks_out.append({**t, "path": mp})
     else:
-        out_dir = PLAYLIST_DIR_LIBRARY
-        tracks_out, count = matched, len(matched)
-
-    os.makedirs(out_dir, exist_ok=True)
+        tracks_out = matched
+    count = len(tracks_out)
     out_path = os.path.join(out_dir, _safe_filename(name))
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(render_m3u(tracks_out, out_dir))
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(render_m3u(tracks_out, out_dir))
+    except OSError as exc:
+        logger.warning("playlist: %s target write failed (%s): %s", target, out_dir, exc)
+        return {"target": target, "path": out_path, "count": count, "error": str(exc)}
     return {"target": target, "path": out_path, "count": count}
 
 
