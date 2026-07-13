@@ -288,6 +288,20 @@ async def _prep_worker():
                             await playlists_module.regenerate_all_auto()
                         except Exception:
                             pass
+                    # Chained "Process new additions" run — enqueue the next step
+                    # now that this one finished cleanly. (Skipped on cancel/error,
+                    # which stops the chain.)
+                    remaining = (job_spec.get("settings") or {}).get("chain")
+                    if remaining and not cancel_ev.is_set():
+                        try:
+                            await _enqueue_chain(
+                                remaining, job_spec["source_dir"],
+                                job_spec["settings"].get("chain_output") or IPOD_DIR,
+                                job_spec["settings"].get("chain_downsample"),
+                                job_spec["settings"].get("chain_auto"),
+                            )
+                        except Exception as exc:
+                            logger.warning("process chain: next step failed to enqueue: %s", exc)
             except Exception as exc:
                 err = str(exc)
                 await _job_update(job_id, status="error", error=err)
@@ -319,6 +333,126 @@ async def reset_stuck_jobs():
         await db.commit()
 
 
+# ── "Process new additions" — chained Audit → Clean → Analyze → Convert ───────
+#
+# Rather than a mega-job, each step is a normal typed job that, on success,
+# enqueues the next one via its ``settings.chain``. This reuses every existing
+# engine, summary, rollback, and stepper/dashboard update for free, and the
+# user sees the steps run in sequence as ordinary cards.
+
+_PROCESS_STEPS = ("audit", "tags", "enrich", "convert")   # canonical order
+_DEFAULT_PROCESS_CFG = {"enabled": False, "steps": list(_PROCESS_STEPS), "downsample": False}
+_AUTOPROCESS_DELAY_S = 45          # debounce: wait for a download batch to settle
+_autoprocess_timer: Optional[asyncio.TimerHandle] = None
+
+
+def _process_config_path() -> str:
+    return os.path.join(os.path.dirname(_db_path) or ".", "prep_process.json")
+
+
+def _load_process_config() -> dict:
+    cfg = dict(_DEFAULT_PROCESS_CFG)
+    try:
+        with open(_process_config_path()) as f:
+            saved = json.load(f)
+        if isinstance(saved, dict):
+            if "enabled" in saved:
+                cfg["enabled"] = bool(saved["enabled"])
+            if isinstance(saved.get("steps"), list):
+                cfg["steps"] = [s for s in _PROCESS_STEPS if s in saved["steps"]]
+            if "downsample" in saved:
+                cfg["downsample"] = bool(saved["downsample"])
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    return cfg
+
+
+def _save_process_config(cfg: dict):
+    try:
+        with open(_process_config_path(), "w") as f:
+            json.dump(cfg, f)
+    except OSError as exc:
+        logger.warning("process config: save failed: %s", exc)
+
+
+def _valid_chain(steps, source_dir: str, output_dir: str) -> list:
+    """Filter+order the requested steps to those actually runnable right now."""
+    out = []
+    for s in _PROCESS_STEPS:
+        if s not in steps:
+            continue
+        if s == "tags" and not os.access(source_dir, os.W_OK):
+            continue
+        if s == "enrich" and not enrich_module.is_available():
+            continue
+        if s == "convert" and not output_dir:
+            continue
+        out.append(s)
+    return out
+
+
+async def _enqueue_chain(steps, source_dir: str, output_dir: str,
+                         downsample, auto) -> Optional[dict]:
+    """Enqueue the first of ``steps``; it carries the rest in its settings.chain."""
+    if not steps:
+        return None
+    first, rest = steps[0], list(steps[1:])
+    settings = {
+        "chain": rest,
+        "chain_output": output_dir,
+        "chain_downsample": bool(downsample),
+        "chain_auto": bool(auto),
+    }
+    out = ""
+    if first == "convert":
+        out = output_dir
+        settings["downsample_hires"] = bool(downsample)
+    return await _create_and_enqueue(first, source_dir, out, settings)
+
+
+async def _prep_busy() -> bool:
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM prep_jobs WHERE status IN ('pending','running')"
+        ) as cur:
+            (n,) = await cur.fetchone()
+    return n > 0
+
+
+def schedule_autoprocess():
+    """Debounced trigger: (re)arm a timer so a finished download *batch* kicks off
+    one Process run. Called by main.py after each promote; no-op unless enabled."""
+    global _autoprocess_timer
+    if _loop is None or not _load_process_config().get("enabled"):
+        return
+    if _autoprocess_timer:
+        _autoprocess_timer.cancel()
+    _autoprocess_timer = _loop.call_later(
+        _AUTOPROCESS_DELAY_S, lambda: asyncio.ensure_future(_run_autoprocess())
+    )
+
+
+async def _run_autoprocess():
+    global _autoprocess_timer
+    _autoprocess_timer = None
+    cfg = _load_process_config()
+    if not cfg.get("enabled"):
+        return
+    source = MUSIC_DIR
+    if not source or not Path(source).is_dir():
+        return
+    # Don't stack onto in-flight prep work (manual or a prior auto run) — wait
+    # for it to drain, then try again.
+    if await _prep_busy():
+        schedule_autoprocess()
+        return
+    valid = _valid_chain(cfg.get("steps") or list(_PROCESS_STEPS), source, IPOD_DIR)
+    if not valid:
+        return
+    logger.info("auto-process: starting chain %s on %s", valid, source)
+    await _enqueue_chain(valid, source, IPOD_DIR, cfg.get("downsample"), auto=True)
+
+
 # ── REST API ────────────────────────────────────────────────────────────────
 
 @router.get("/config")
@@ -331,6 +465,51 @@ async def prep_config():
         "max_concurrent": MAX_CONCURRENT_CONVERSIONS,
         "ai_enabled": ai_curator.is_enabled(),
     }
+
+
+@router.get("/process/config")
+async def get_process_config():
+    """Steps + auto-after-download toggle for the 'Process new additions' flow."""
+    cfg = _load_process_config()
+    return {**cfg, "librosa": enrich_module.is_available(),
+            "music_dir": MUSIC_DIR, "ipod_dir": IPOD_DIR}
+
+
+@router.put("/process/config")
+async def put_process_config(body: dict):
+    cfg = _load_process_config()
+    if "enabled" in body:
+        cfg["enabled"] = bool(body["enabled"])
+    if isinstance(body.get("steps"), list):
+        cfg["steps"] = [s for s in _PROCESS_STEPS if s in body["steps"]]
+    if "downsample" in body:
+        cfg["downsample"] = bool(body["downsample"])
+    _save_process_config(cfg)
+    return cfg
+
+
+@router.post("/process")
+async def start_process(body: dict):
+    """Run Audit → Clean → Analyze → Convert in sequence over new/changed files.
+
+    Each selected step is enqueued as an ordinary job that chains to the next on
+    success. Steps that can't run right now (e.g. Convert with no output dir) are
+    skipped. Idempotent/resumable by design — the engines only touch what's new.
+    """
+    source_dir = (body.get("source_dir") or MUSIC_DIR or "").strip()
+    if not source_dir:
+        raise HTTPException(400, "No library directory (set MUSIC_DIR or pass source_dir)")
+    if not Path(source_dir).is_dir():
+        raise HTTPException(400, f"Library directory not found: {source_dir}")
+    output_dir = (body.get("output_dir") or IPOD_DIR or "").strip()
+    steps = body.get("steps") or list(_PROCESS_STEPS)
+    downsample = bool(body.get("downsample_hires"))
+
+    valid = _valid_chain(steps, source_dir, output_dir)
+    if not valid:
+        raise HTTPException(400, "No runnable steps (check the library is writable / librosa installed / an output dir is set).")
+    entry = await _enqueue_chain(valid, source_dir, output_dir, downsample, auto=False)
+    return {"steps": valid, "first": entry}
 
 
 async def _create_and_enqueue(jtype: str, source_dir: str, output_dir: str, settings: dict) -> dict:

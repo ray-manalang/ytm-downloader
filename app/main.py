@@ -301,6 +301,12 @@ async def _promote_download(files: list, dl_id: str):
     except Exception as exc:
         logger.warning("promote: playlist refresh failed: %s", exc)
     await broadcast({"type": "promoted", "id": dl_id, "count": len(dicts)})
+    # If "auto-process after downloads" is on, (re)arm the debounced trigger so
+    # the whole batch is processed once it settles. No-op when disabled.
+    try:
+        prep_module.schedule_autoprocess()
+    except Exception as exc:
+        logger.warning("promote: autoprocess schedule failed: %s", exc)
 
 
 # ── Download worker ──────────────────────────────────────────────────────────

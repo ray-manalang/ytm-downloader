@@ -215,6 +215,20 @@
   .pl-adv-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
   .pl-adv-desc { color: var(--muted); font-size: 13px; line-height: 1.55; margin-bottom: 12px; }
 
+  /* Process new additions card */
+  .process-box { border-color: var(--accent-soft); }
+  .process-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+  .process-mark { flex-shrink: 0; margin-top: 1px; line-height: 1; }
+  .process-title { font-weight: 700; font-size: 15px; }
+  .process-sub { color: var(--muted); font-size: 13px; line-height: 1.55; margin-top: 3px; }
+  .process-steps { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 12px; }
+  .process-steps label, .process-auto { display: flex; align-items: center; gap: 7px; font-size: 13px; cursor: pointer; }
+  .process-steps input, .process-auto input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+  .process-steps label span { color: var(--muted); }
+  .process-steps input:disabled + span, .process-steps input:disabled { opacity: .5; cursor: default; }
+  .process-auto { color: var(--muted); padding: 10px 0; border-top: 1px solid var(--border); margin-bottom: 12px; }
+  .process-actions { display: flex; align-items: center; gap: 12px; }
+
   /* Scrollbar */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
@@ -467,6 +481,28 @@
       <input id="libDir" type="text" placeholder="/music"
         style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
       <div id="prepError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+    </div>
+
+    <!-- Process new additions (chained Audit → Clean → Analyze → Convert) -->
+    <div class="add-box process-box" style="margin-bottom:20px">
+      <div class="process-head">
+        <span class="process-mark"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 11 14 11 22 21 10 13 10 13 2"/></svg></span>
+        <div>
+          <div class="process-title">Process new additions</div>
+          <div class="process-sub">Runs the selected steps in order over new/changed files. Every engine is resumable, so it only touches what's new. Complete-genres is left out — it needs your review.</div>
+        </div>
+      </div>
+      <div class="process-steps">
+        <label><input type="checkbox" id="procAudit" checked onchange="saveProcessConfig()"> Audit <span>(re-index)</span></label>
+        <label><input type="checkbox" id="procTags" checked onchange="saveProcessConfig()"> Clean tags</label>
+        <label><input type="checkbox" id="procEnrich" checked onchange="saveProcessConfig()"> Analyze BPM &amp; energy</label>
+        <label><input type="checkbox" id="procConvert" checked onchange="saveProcessConfig()"> Convert → iPod</label>
+      </div>
+      <label class="process-auto"><input type="checkbox" id="procAuto" onchange="saveProcessConfig()"> Auto-process after downloads finish</label>
+      <div class="process-actions">
+        <button class="btn-primary" id="procBtn" onclick="startProcess()">⚡ Process now</button>
+        <span id="procStatus" style="color:var(--muted);font-size:12px"></span>
+      </div>
     </div>
 
     <!-- Step 1: Audit -->
@@ -1555,7 +1591,63 @@ async function loadConvert() {
       prepConfigLoaded = true;
     } catch {}
   }
-  await Promise.all([loadPrepJobs(), loadLatestAudit(), loadLatestReview(), updatePrepSteps()]);
+  await Promise.all([loadPrepJobs(), loadLatestAudit(), loadLatestReview(), updatePrepSteps(), loadProcessConfig()]);
+}
+
+async function loadProcessConfig() {
+  try {
+    const cfg = await (await fetch('/api/prep/process/config')).json();
+    const steps = cfg.steps || [];
+    document.getElementById('procAudit').checked = steps.includes('audit');
+    document.getElementById('procTags').checked = steps.includes('tags');
+    document.getElementById('procEnrich').checked = steps.includes('enrich');
+    document.getElementById('procConvert').checked = steps.includes('convert');
+    document.getElementById('procAuto').checked = !!cfg.enabled;
+    // Analyze can't run without librosa — reflect that.
+    const enr = document.getElementById('procEnrich');
+    if (!cfg.librosa) { enr.checked = false; enr.disabled = true; enr.parentElement.title = 'librosa not installed'; }
+  } catch {}
+}
+
+function procSelectedSteps() {
+  const s = [];
+  if (document.getElementById('procAudit').checked) s.push('audit');
+  if (document.getElementById('procTags').checked) s.push('tags');
+  if (document.getElementById('procEnrich').checked) s.push('enrich');
+  if (document.getElementById('procConvert').checked) s.push('convert');
+  return s;
+}
+
+async function saveProcessConfig() {
+  try {
+    await fetch('/api/prep/process/config', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled: document.getElementById('procAuto').checked, steps: procSelectedSteps()}),
+    });
+  } catch {}
+}
+
+async function startProcess() {
+  const source_dir = document.getElementById('libDir').value.trim();
+  const output_dir = document.getElementById('convOutput').value.trim();
+  const steps = procSelectedSteps();
+  const status = document.getElementById('procStatus');
+  if (!source_dir) { status.innerHTML = '<span style="color:var(--danger)">Set the library folder above first.</span>'; return; }
+  if (!steps.length) { status.innerHTML = '<span style="color:var(--danger)">Pick at least one step.</span>'; return; }
+  const btn = document.getElementById('procBtn'); btn.disabled = true; btn.textContent = 'Starting…';
+  status.textContent = '';
+  try {
+    const res = await fetch('/api/prep/process', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({source_dir, output_dir, steps}),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { status.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'Failed to start.')}</span>`; return; }
+    const names = { audit: 'Audit', tags: 'Clean', enrich: 'Analyze', convert: 'Convert' };
+    status.innerHTML = `<span style="color:var(--accent)">Started: ${(d.steps || []).map(s => names[s] || s).join(' → ')}</span>`;
+    // Jobs appear + chain via WS; refresh the list immediately for the first one.
+    loadPrepJobs();
+  } finally { btn.disabled = false; btn.textContent = '⚡ Process now'; }
 }
 
 async function updatePrepSteps() {
