@@ -302,10 +302,7 @@
 
     <div class="nav-group-label">Download</div>
     <div class="nav-item" data-nav="library" onclick="switchTab('library')">
-      <span class="nav-ico"><svg class="eq-ico" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><rect x="3" y="9" width="4" height="6" rx="2" fill="currentColor" opacity=".55"/><rect x="10" y="4" width="4" height="16" rx="2" fill="var(--accent)"/><rect x="17" y="7" width="4" height="10" rx="2" fill="currentColor" opacity=".8"/></svg></span> YouTube Music
-    </div>
-    <div class="nav-item" data-nav="add" onclick="switchTab('add')">
-      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span> Add URLs
+      <span class="nav-ico"><svg class="eq-ico" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><rect x="3" y="9" width="4" height="6" rx="2" fill="currentColor" opacity=".55"/><rect x="10" y="4" width="4" height="16" rx="2" fill="var(--accent)"/><rect x="17" y="7" width="4" height="10" rx="2" fill="currentColor" opacity=".8"/></svg></span> Add music
     </div>
 
     <div class="nav-group-label">Prepare</div>
@@ -443,14 +440,49 @@
         <div id="ytmSetupError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
       </div>
     </div>
+
+    <!-- Auto-sync liked songs -->
+    <div class="section-title">Auto-sync liked songs</div>
+    <div class="lib-sync-box">
+      <div class="lib-sync-row">
+        <input type="checkbox" id="syncEnabled" onchange="updateSyncConfig()" style="width:16px;height:16px;cursor:pointer;accent-color:var(--accent)">
+        <label for="syncEnabled" style="cursor:pointer">Automatically download new liked songs</label>
+      </div>
+      <div class="lib-sync-row" style="color:var(--muted);font-size:13px">
+        <span>Check every</span>
+        <select id="syncInterval" onchange="updateSyncConfig()">
+          <option value="15">15 minutes</option>
+          <option value="60" selected>1 hour</option>
+          <option value="360">6 hours</option>
+          <option value="1440">24 hours</option>
+        </select>
+        <span id="lastSyncTime" style="margin-left:4px"></span>
+      </div>
+      <div class="lib-sync-row" style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
+        <span style="color:var(--muted);font-size:12px;flex:1">Reset to re-download all liked songs on next sync</span>
+        <button class="btn-ghost btn-sm" onclick="clearSyncHistory()">Reset sync history</button>
+      </div>
+    </div>
   </div>
 
-  <!-- LIBRARY (YouTube Music browsing) -->
+  <!-- ADD MUSIC (unified: URLs + YouTube Music browsing) -->
   <div class="panel" id="panel-library">
-    <div id="libDisconnectedPrompt" class="empty" style="display:none">
-      <div class="empty-icon"><svg viewBox="0 0 24 24" width="46" height="46" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:.5"><path d="M9 2v6"/><path d="M15 2v6"/><path d="M7 8h10v3a5 5 0 0 1-10 0z"/><path d="M12 16v6"/></svg></div>
-      <p>YouTube Music isn't connected.</p>
-      <button class="btn-primary" style="margin-top:14px" onclick="switchTab('setup')">Connect in Setup →</button>
+    <!-- Add by URL -->
+    <div class="add-box" style="margin-bottom:24px">
+      <label>Add by URL — one per line, playlists supported</label>
+      <textarea id="urlInput" placeholder="https://music.youtube.com/playlist?list=...&#10;https://music.youtube.com/playlist?list=..."></textarea>
+      <div class="add-actions">
+        <button class="btn-primary" id="downloadBtn" onclick="submitDownloads()">Download</button>
+        <button class="btn-ghost" onclick="document.getElementById('urlInput').value=''">Clear</button>
+      </div>
+    </div>
+
+    <!-- YouTube Music -->
+    <div class="section-title" style="margin-top:0">YouTube Music</div>
+    <div id="libDisconnectedPrompt" class="banner" style="display:none">
+      <span class="lib-dot" style="background:var(--muted)"></span>
+      <span style="font-weight:600">YouTube Music isn't connected</span>
+      <button class="btn-primary btn-sm" style="margin-left:auto" onclick="switchTab('setup')">Connect in Setup →</button>
     </div>
 
     <!-- Connected -->
@@ -477,46 +509,10 @@
         </div>
       </div>
 
-      <!-- Auto-Sync -->
-      <div class="lib-section">
-        <div class="lib-section-title">Auto-Sync</div>
-        <div class="lib-sync-box">
-          <div class="lib-sync-row">
-            <input type="checkbox" id="syncEnabled" onchange="updateSyncConfig()" style="width:16px;height:16px;cursor:pointer;accent-color:var(--accent)">
-            <label for="syncEnabled" style="cursor:pointer">Automatically download new liked songs</label>
-          </div>
-          <div class="lib-sync-row" style="color:var(--muted);font-size:13px">
-            <span>Check every</span>
-            <select id="syncInterval" onchange="updateSyncConfig()">
-              <option value="15">15 minutes</option>
-              <option value="60" selected>1 hour</option>
-              <option value="360">6 hours</option>
-              <option value="1440">24 hours</option>
-            </select>
-            <span id="lastSyncTime" style="margin-left:4px"></span>
-          </div>
-          <div class="lib-sync-row" style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
-            <span style="color:var(--muted);font-size:12px;flex:1">Reset to re-download all liked songs on next sync</span>
-            <button class="btn-ghost btn-sm" onclick="clearSyncHistory()">Reset sync history</button>
-          </div>
-        </div>
-      </div>
     </div>
 
     <div class="empty" id="libLoading" style="display:none">
       <p style="color:var(--muted)">Loading…</p>
-    </div>
-  </div>
-
-  <!-- ADD -->
-  <div class="panel" id="panel-add">
-    <div class="add-box">
-      <label>YouTube Music URLs — one per line, playlists supported</label>
-      <textarea id="urlInput" placeholder="https://music.youtube.com/playlist?list=...&#10;https://music.youtube.com/playlist?list=..."></textarea>
-      <div class="add-actions">
-        <button class="btn-primary" id="downloadBtn" onclick="submitDownloads()">Download</button>
-        <button class="btn-ghost" onclick="document.getElementById('urlInput').value=''">Clear</button>
-      </div>
     </div>
   </div>
 
@@ -844,7 +840,7 @@ function eqMark(size = 15) {
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 const PAGE_TITLES = {
-  dashboard: 'Dashboard', activity: 'Activity', library: 'YouTube Music', add: 'Add URLs',
+  dashboard: 'Dashboard', activity: 'Activity', library: 'Add music',
   convert: 'Prepare library', playlists: 'Playlists', files: 'Files', setup: 'Setup',
 };
 function switchTab(name) {
@@ -932,8 +928,7 @@ function renderDashboard(ytm, pipe, dls, pls) {
          <div style="margin-top:14px"><button class="btn-primary" onclick="switchTab('convert')">Continue in Prepare →</button></div></div>`;
 
   const actions = `<div class="stat-grid">
-    <div class="stat-card click" onclick="switchTab('library')"><div style="font-weight:600">${eqMark(14)} Download from YouTube Music</div><div class="stat-label">Browse playlists & liked songs</div></div>
-    <div class="stat-card click" onclick="switchTab('add')"><div style="font-weight:600">＋ Add URLs</div><div class="stat-label">Paste links to download</div></div>
+    <div class="stat-card click" onclick="switchTab('library')"><div style="font-weight:600">${eqMark(14)} Add music</div><div class="stat-label">YouTube Music & URLs</div></div>
     <div class="stat-card click" onclick="switchTab('playlists')"><div style="font-weight:600">≣ Build a playlist</div><div class="stat-label">Smart, AI, or import</div></div>
   </div>`;
 
