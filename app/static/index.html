@@ -138,9 +138,15 @@
   .empty p { font-size: 15px; }
 
   /* Files panel */
-  .files-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .files-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
   .files-toolbar h2 { font-size: 16px; font-weight: 600; }
-  .album-group { margin-bottom: 16px; }
+  .file-alpha { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 12px; position: sticky; top: 56px; background: var(--bg); padding: 6px 0; z-index: 3; }
+  .file-alpha button { min-width: 22px; height: 22px; padding: 0 4px; background: transparent; border: none; border-radius: 4px; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; }
+  .file-alpha button:hover:not(:disabled) { background: var(--surface2); color: var(--text); }
+  .file-alpha button:disabled { opacity: .28; cursor: default; }
+  .album-group.flash > .album-header { animation: albumflash 1.1s ease; }
+  @keyframes albumflash { 0%,40% { background: var(--accent-soft); } 100% { background: transparent; } }
+  .album-group { margin-bottom: 16px; scroll-margin-top: 96px; }
   .album-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; user-select: none; }
   .album-header:hover { border-color: var(--border); }
   .album-header:hover .album-name { color: var(--accent); }
@@ -819,14 +825,24 @@
   <!-- FILES -->
   <div class="panel" id="panel-files">
     <div class="files-toolbar">
-      <h2>Music files</h2>
+      <input id="fileSearch" placeholder="Filter by artist, album, or file…" oninput="onFileSearch()"
+        style="flex:1;min-width:180px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;outline:none">
+      <select id="fileFormat" onchange="renderFiles()">
+        <option value="">All formats</option>
+        <option value=".flac">FLAC</option>
+        <option value=".mp3">MP3</option>
+        <option value=".m4a">M4A / AAC</option>
+        <option value=".wav">WAV</option>
+        <option value=".opus">Opus</option>
+      </select>
       <button class="btn-ghost btn-sm" onclick="loadFiles(true)">↻ Refresh</button>
     </div>
-    <p style="color:var(--muted);font-size:12px;margin:-8px 0 12px">Browses your music library. Deleting a track also removes its iPod-mirror copy.</p>
+    <div id="fileAlpha" class="file-alpha"></div>
+    <div id="fileCount" style="color:var(--muted);font-size:12px;margin:0 0 12px"></div>
     <div id="filesList"></div>
     <div class="empty" id="filesEmpty" style="display:none">
       <div class="empty-icon"><svg viewBox="0 0 24 24" width="46" height="46" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:.5"><path d="M3 7a1.6 1.6 0 0 1 1.6-1.6h3.7l2 2.2h8.1A1.6 1.6 0 0 1 21 9.2v8.2a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 17.4z"/></svg></div>
-      <p>No files yet</p>
+      <p>No files match</p>
     </div>
   </div>
     </main>
@@ -1234,6 +1250,17 @@ async function loadFiles(refresh = false) {
 }
 
 let albumsGrouped = [];   // [ [dirPath, tracks[]], … ] — source for lazy track render
+let fileSearch = '';
+let fileFormat = '';
+let _fileSearchTimer = null;
+
+function onFileSearch() {
+  clearTimeout(_fileSearchTimer);
+  _fileSearchTimer = setTimeout(() => {
+    fileSearch = document.getElementById('fileSearch').value.trim().toLowerCase();
+    renderFiles();
+  }, 160);
+}
 
 function _albumTracksHTML(tracks) {
   return tracks.map(t => {
@@ -1246,36 +1273,44 @@ function _albumTracksHTML(tracks) {
   }).join('');
 }
 
+// First letter of the artist (first path segment) — non-alpha buckets under '#'.
+function _fileLetter(dirPath) {
+  const c = (dirPath[0] || '#').toUpperCase();
+  return (c >= 'A' && c <= 'Z') ? c : '#';
+}
+
 function renderFiles() {
   const el = document.getElementById('filesList');
   const empty = document.getElementById('filesEmpty');
+  const fmtSel = document.getElementById('fileFormat');
+  fileFormat = fmtSel ? fmtSel.value : '';
 
-  if (filesData.length === 0) {
-    el.innerHTML = '';
-    empty.style.display = '';
-    return;
-  }
-  empty.style.display = 'none';
-
-  // Group by directory
+  // Apply format + text filters, then group by directory (Artist/Album).
   const albums = {};
   for (const f of filesData) {
+    if (fileFormat && !f.path.toLowerCase().endsWith(fileFormat)) continue;
+    if (fileSearch && !f.path.toLowerCase().includes(fileSearch)) continue;
     const parts = f.path.split('/');
     const album = parts.length > 1 ? parts.slice(0, -1).join('/') : '(root)';
     (albums[album] || (albums[album] = [])).push(f);
   }
-
   albumsGrouped = Object.entries(albums);
   albumsList = albumsGrouped.map(([name]) => name);
 
-  // Render album headers only; a collapsed album's tracks (there can be tens of
-  // thousands across the library) are rendered lazily on expand — keeps entering
-  // the Files tab fast even on a large library.
+  renderFileAlpha();
+  const countEl = document.getElementById('fileCount');
+  const totalMatched = albumsGrouped.reduce((s, [, t]) => s + t.length, 0);
+  if (countEl) countEl.textContent = `${totalMatched.toLocaleString()} file${totalMatched !== 1 ? 's' : ''} · ${albumsGrouped.length.toLocaleString()} folder${albumsGrouped.length !== 1 ? 's' : ''}`;
+
+  if (!albumsGrouped.length) { el.innerHTML = ''; empty.style.display = ''; return; }
+  empty.style.display = 'none';
+
+  // Headers only; a collapsed folder's track rows render lazily on expand.
   el.innerHTML = albumsGrouped.map(([album, tracks], idx) => {
-    const open = albumOpen[album] === true; // default collapsed
+    const open = albumOpen[album] === true;
     const totalSize = tracks.reduce((s, t) => s + t.size, 0);
     return `
-      <div class="album-group">
+      <div class="album-group" id="albgrp-${idx}">
         <div class="album-header" onclick="toggleAlbum(${idx})">
           <span class="album-chevron ${open ? 'open' : ''}" id="chev-${idx}">▶</span>
           <span class="album-name">${escHtml(album)}</span>
@@ -1285,6 +1320,24 @@ function renderFiles() {
         <div class="track-list" id="album-${idx}" data-rendered="${open ? '1' : ''}" style="${open ? '' : 'display:none'}">${open ? _albumTracksHTML(tracks) : ''}</div>
       </div>`;
   }).join('');
+}
+
+function renderFileAlpha() {
+  const bar = document.getElementById('fileAlpha');
+  if (!bar) return;
+  const present = new Set(albumsGrouped.map(([dir]) => _fileLetter(dir)));
+  const letters = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')];
+  bar.innerHTML = letters.map(L =>
+    `<button ${present.has(L) ? `onclick="jumpToLetter('${L}')"` : 'disabled'}>${L}</button>`).join('');
+}
+
+function jumpToLetter(letter) {
+  const idx = albumsGrouped.findIndex(([dir]) => _fileLetter(dir) === letter);
+  if (idx < 0) return;
+  const grp = document.getElementById('albgrp-' + idx);
+  if (!grp) return;
+  grp.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  grp.classList.remove('flash'); void grp.offsetWidth; grp.classList.add('flash');
 }
 
 function toggleAlbum(idx) {
