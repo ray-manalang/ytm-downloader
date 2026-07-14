@@ -138,9 +138,10 @@
   .empty p { font-size: 15px; }
 
   /* Files panel */
+  .files-sticky { position: sticky; top: 56px; background: var(--bg); z-index: 4; padding-top: 8px; }
   .files-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
   .files-toolbar h2 { font-size: 16px; font-weight: 600; }
-  .file-alpha { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 12px; position: sticky; top: 56px; background: var(--bg); padding: 6px 0; z-index: 3; }
+  .file-alpha { display: flex; flex-wrap: wrap; gap: 2px; padding: 6px 0 12px; }
   .file-alpha button { min-width: 22px; height: 22px; padding: 0 4px; background: transparent; border: none; border-radius: 4px; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; }
   .file-alpha button:hover:not(:disabled) { background: var(--surface2); color: var(--text); }
   .file-alpha button:disabled { opacity: .28; cursor: default; }
@@ -824,6 +825,7 @@
 
   <!-- FILES -->
   <div class="panel" id="panel-files">
+    <div class="files-sticky">
     <div class="files-toolbar">
       <input id="fileSearch" placeholder="Filter by artist, album, or file…" oninput="onFileSearch()"
         style="flex:1;min-width:180px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;outline:none">
@@ -838,6 +840,7 @@
       <button class="btn-ghost btn-sm" onclick="loadFiles(true)">↻ Refresh</button>
     </div>
     <div id="fileAlpha" class="file-alpha"></div>
+    </div>
     <div id="fileCount" style="color:var(--muted);font-size:12px;margin:0 0 12px"></div>
     <div id="filesList"></div>
     <div class="empty" id="filesEmpty" style="display:none">
@@ -1259,7 +1262,7 @@ function onFileSearch() {
   _fileSearchTimer = setTimeout(() => {
     fileSearch = document.getElementById('fileSearch').value.trim().toLowerCase();
     renderFiles();
-  }, 160);
+  }, 220);
 }
 
 function _albumTracksHTML(tracks) {
@@ -1288,8 +1291,9 @@ function renderFiles() {
   // Apply format + text filters, then group by directory (Artist/Album).
   const albums = {};
   for (const f of filesData) {
-    if (fileFormat && !f.path.toLowerCase().endsWith(fileFormat)) continue;
-    if (fileSearch && !f.path.toLowerCase().includes(fileSearch)) continue;
+    const lc = f._lc || (f._lc = f.path.toLowerCase());
+    if (fileFormat && !lc.endsWith(fileFormat)) continue;
+    if (fileSearch && !lc.includes(fileSearch)) continue;
     const parts = f.path.split('/');
     const album = parts.length > 1 ? parts.slice(0, -1).join('/') : '(root)';
     (albums[album] || (albums[album] = [])).push(f);
