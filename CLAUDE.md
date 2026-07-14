@@ -336,7 +336,7 @@ Single-file, no build step. **Left-sidebar app shell** (`.app` grid: `.sidebar` 
 Key JS state:
 - `downloads` — map of id → download object (source of truth for queue/history cards)
 - `tracksDone` — map of id → completed track title array
-- `albumOpen` / `albumsList` — collapsed state for Files tab folders (default collapsed)
+- `albumOpen` / `albumsList` / `albumsGrouped` — collapsed state + grouped data for Files tab folders (default collapsed). **`renderFiles` renders album *headers only*; a folder's track rows are built lazily on expand (`toggleAlbum` → `_albumTracksHTML`, guarded by `data-rendered`)** — entering the Files tab stays fast (~16 ms) on a large library instead of injecting tens of thousands of hidden rows
 - `ytmPlaylistTracks` / `ytmPlaylistOpen` — lazy-loaded playlist track cache and expand state
 - `likedOpen` / `likedTracksCache` — expand state and cache for Liked Songs section
 

@@ -1233,6 +1233,19 @@ async function loadFiles(refresh = false) {
   renderFiles();
 }
 
+let albumsGrouped = [];   // [ [dirPath, tracks[]], … ] — source for lazy track render
+
+function _albumTracksHTML(tracks) {
+  return tracks.map(t => {
+    const name = t.path.split('/').pop();
+    return `<div class="track-row">
+      <div class="track-name">${escHtml(name)}</div>
+      <div class="track-size">${fmtSize(t.size)}</div>
+      <button class="btn-danger btn-sm" onclick="deleteFile(${escHtml(JSON.stringify(t.path))})">✕</button>
+    </div>`;
+  }).join('');
+}
+
 function renderFiles() {
   const el = document.getElementById('filesList');
   const empty = document.getElementById('filesEmpty');
@@ -1249,26 +1262,18 @@ function renderFiles() {
   for (const f of filesData) {
     const parts = f.path.split('/');
     const album = parts.length > 1 ? parts.slice(0, -1).join('/') : '(root)';
-    if (!albums[album]) albums[album] = [];
-    albums[album].push(f);
+    (albums[album] || (albums[album] = [])).push(f);
   }
 
-  const albumEntries = Object.entries(albums);
-  albumsList = albumEntries.map(([name]) => name);
+  albumsGrouped = Object.entries(albums);
+  albumsList = albumsGrouped.map(([name]) => name);
 
-  el.innerHTML = albumEntries.map(([album, tracks], idx) => {
+  // Render album headers only; a collapsed album's tracks (there can be tens of
+  // thousands across the library) are rendered lazily on expand — keeps entering
+  // the Files tab fast even on a large library.
+  el.innerHTML = albumsGrouped.map(([album, tracks], idx) => {
     const open = albumOpen[album] === true; // default collapsed
     const totalSize = tracks.reduce((s, t) => s + t.size, 0);
-    const tracksHtml = tracks.map(t => {
-      const name = t.path.split('/').pop();
-      return `
-        <div class="track-row">
-          <div class="track-name">${escHtml(name)}</div>
-          <div class="track-size">${fmtSize(t.size)}</div>
-          <button class="btn-danger btn-sm" onclick="deleteFile(${escHtml(JSON.stringify(t.path))})">✕</button>
-        </div>`;
-    }).join('');
-
     return `
       <div class="album-group">
         <div class="album-header" onclick="toggleAlbum(${idx})">
@@ -1277,9 +1282,7 @@ function renderFiles() {
           <span class="album-count">${tracks.length} track${tracks.length !== 1 ? 's' : ''} · ${fmtSize(totalSize)}</span>
           <button class="btn-danger btn-sm" style="margin-left:8px" onclick="event.stopPropagation(); deleteFolder(${idx})">🗑 Delete folder</button>
         </div>
-        <div class="track-list" id="album-${idx}" style="${open ? '' : 'display:none'}">
-          ${tracksHtml}
-        </div>
+        <div class="track-list" id="album-${idx}" data-rendered="${open ? '1' : ''}" style="${open ? '' : 'display:none'}">${open ? _albumTracksHTML(tracks) : ''}</div>
       </div>`;
   }).join('');
 }
@@ -1289,7 +1292,13 @@ function toggleAlbum(idx) {
   albumOpen[album] = !albumOpen[album];
   const list = document.getElementById('album-' + idx);
   const chev = document.getElementById('chev-' + idx);
-  if (list) list.style.display = albumOpen[album] ? '' : 'none';
+  if (list) {
+    if (albumOpen[album] && !list.dataset.rendered) {
+      list.innerHTML = _albumTracksHTML(albumsGrouped[idx][1]);
+      list.dataset.rendered = '1';
+    }
+    list.style.display = albumOpen[album] ? '' : 'none';
+  }
   if (chev) chev.classList.toggle('open', !!albumOpen[album]);
 }
 
