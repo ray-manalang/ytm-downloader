@@ -983,6 +983,11 @@ function genreAnalyticHTML(dist) {
     </div>`;
 }
 
+// Validated (dataviz skill, dark surface) 12-hue categorical palette, led by a
+// brand-family red. Color carries genre identity; bar length carries magnitude.
+const GENRE_COLORS = ['#ef3e57', '#3987e5', '#c98500', '#199e70', '#9085e9', '#d95926',
+  '#1aa39c', '#d55181', '#6fa83a', '#6d78e0', '#b5763f', '#008300'];
+
 function genreRadialSVG(entries, totalTagged) {
   const TOP = 12;
   const top = entries.slice(0, TOP);
@@ -999,8 +1004,8 @@ function genreRadialSVG(entries, totalTagged) {
     const x0 = (cx + r0 * co).toFixed(1), y0 = (cy + r0 * si).toFixed(1);
     const x1 = (cx + len * co).toFixed(1), y1 = (cy + len * si).toFixed(1);
     const share = totalTagged ? Math.round((n / totalTagged) * 100) : 0;
-    const op = (0.55 + 0.45 * (n / max)).toFixed(2);     // taller = more opaque
-    columns.push(`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="var(--accent)" stroke-width="15" stroke-linecap="round" opacity="${op}"><title>${escHtml(g)}: ${n.toLocaleString()} (${share}%)</title></line>`);
+    const color = GENRE_COLORS[i % GENRE_COLORS.length];
+    columns.push(`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="${color}" stroke-width="15" stroke-linecap="round"><title>${escHtml(g)}: ${n.toLocaleString()} (${share}%)</title></line>`);
     // Radial label, flipped on the left half so it stays upright.
     const lx = (cx + labelR * co).toFixed(1), ly = (cy + labelR * si).toFixed(1);
     const deg = ang * 180 / Math.PI;
@@ -1029,10 +1034,11 @@ function genreListHTML(entries, totalTagged) {
   const max = entries[0][1] || 1;
   const rows = entries.map(([g, n], i) => {
     const share = totalTagged ? Math.round((n / totalTagged) * 100) : 0;
+    const color = i < GENRE_COLORS.length ? GENRE_COLORS[i] : 'var(--border)';
     return `<div class="genre-row">
       <div class="genre-rank">${i + 1}</div>
       <div class="genre-label" title="${escHtml(g)}">${escHtml(g)}</div>
-      <div class="genre-track"><div class="genre-fill" style="width:${Math.max((n / max) * 100, 2)}%"></div></div>
+      <div class="genre-track"><div class="genre-fill" style="width:${Math.max((n / max) * 100, 2)}%;background:${color}"></div></div>
       <div class="genre-count">${n.toLocaleString()}<span class="genre-share">${share}%</span></div>
     </div>`;
   }).join('');
