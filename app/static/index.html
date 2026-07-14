@@ -233,6 +233,21 @@
   .aa-link { cursor: pointer; }
   .aa-link:hover { text-decoration: underline; }
 
+  /* Activity toolbar + compact rows */
+  .act-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; position: sticky; top: 56px; background: var(--bg); padding: 10px 0; z-index: 4; }
+  .act-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .act-seg button { background: transparent; color: var(--muted); border: none; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 0; }
+  .act-seg button.on { background: var(--accent-soft); color: var(--accent); }
+  .act-section { margin-bottom: 22px; }
+  .act-rows { display: flex; flex-direction: column; gap: 6px; }
+  .act-row { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px; }
+  .act-row .status-chip { flex-shrink: 0; }
+  .act-row-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; max-width: 40%; }
+  .act-row-sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+  .act-row-err { color: var(--danger); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+  .act-row-time { color: var(--muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
+  .act-row .btn-danger, .act-row .btn-ghost { flex-shrink: 0; }
+
   /* Playlist track list (expand) */
   .pl-tracks { margin-top: 10px; border-top: 1px solid var(--border); max-height: 340px; overflow-y: auto; }
   .pl-track { display: flex; align-items: baseline; gap: 10px; padding: 4px 2px; font-size: 12px; border-bottom: 1px solid var(--border); }
@@ -507,22 +522,42 @@
 
   <!-- ACTIVITY (unified: running · downloads · library jobs) -->
   <div class="panel" id="panel-activity">
-    <div class="section-title" style="margin-top:0">Running <span class="jobs-count" id="runningCount"></span></div>
-    <div class="card-list" id="actRunning"></div>
-    <div class="empty" id="actRunningEmpty" style="display:none;padding:28px 20px">
-      <p style="color:var(--muted)">Nothing running right now.</p>
+    <div class="act-toolbar">
+      <span class="act-seg" id="actViewSeg">
+        <button data-view="all" class="on" onclick="setActView('all')">All</button>
+        <button data-view="downloads" onclick="setActView('downloads')">Downloads</button>
+        <button data-view="jobs" onclick="setActView('jobs')">Library jobs</button>
+      </span>
+      <span class="act-seg" id="actStatusSeg">
+        <button data-status="any" class="on" onclick="setActStatus('any')">Any</button>
+        <button data-status="done" onclick="setActStatus('done')">Done</button>
+        <button data-status="error" onclick="setActStatus('error')">Failed</button>
+      </span>
+      <button class="btn-danger btn-sm" id="actRemoveAll" style="margin-left:auto" onclick="removeAllActivity()">Remove all</button>
     </div>
 
-    <div class="section-title">Downloads</div>
-    <div class="card-list" id="actDownloads"></div>
-    <div class="empty" id="actDownloadsEmpty" style="display:none;padding:28px 20px">
-      <p style="color:var(--muted)">No completed downloads yet.</p>
+    <div class="act-section" id="actRunningSection">
+      <div class="section-title" style="margin-top:0">Running <span class="jobs-count" id="runningCount"></span></div>
+      <div class="card-list" id="actRunning"></div>
+      <div class="empty" id="actRunningEmpty" style="display:none;padding:24px 20px">
+        <p style="color:var(--muted)">Nothing running right now.</p>
+      </div>
     </div>
 
-    <div class="section-title">Library jobs</div>
-    <div class="card-list" id="actJobs"></div>
-    <div class="empty" id="actJobsEmpty" style="display:none;padding:28px 20px">
-      <p style="color:var(--muted)">No library jobs yet.</p>
+    <div class="act-section" id="actDownloadsSection">
+      <div class="section-title">Downloads</div>
+      <div id="actDownloads"></div>
+      <div class="empty" id="actDownloadsEmpty" style="display:none;padding:24px 20px">
+        <p style="color:var(--muted)">No completed downloads match.</p>
+      </div>
+    </div>
+
+    <div class="act-section" id="actJobsSection">
+      <div class="section-title">Library jobs</div>
+      <div id="actJobs"></div>
+      <div class="empty" id="actJobsEmpty" style="display:none;padding:24px 20px">
+        <p style="color:var(--muted)">No library jobs match.</p>
+      </div>
     </div>
   </div>
 
@@ -1034,28 +1069,107 @@ function _setActSection(listId, emptyId, html, count) {
   el.innerHTML = html;
 }
 
+let actView = localStorage.getItem('mm_act_view') || 'all';   // all | downloads | jobs
+let actStatus = 'any';                                        // any | done | error
+const _isActiveDl = d => d.status === 'pending' || d.status === 'downloading';
+const _isActiveJob = j => j.status === 'pending' || j.status === 'running';
+function _statusOk(s) { return actStatus === 'any' || s === actStatus; }
+
+function setActView(v) { actView = v; localStorage.setItem('mm_act_view', v); renderActivity(); }
+function setActStatus(s) { actStatus = s; renderActivity(); }
+
+// Finished items matching the current view+status filter (what "Remove all" hits).
+function _filteredFinished() {
+  const dls = (actView !== 'jobs') ? Object.values(downloads).filter(d => !_isActiveDl(d) && _statusOk(d.status)) : [];
+  const jobs = (actView !== 'downloads') ? Object.values(prepJobs).filter(j => !_isActiveJob(j) && _statusOk(j.status)) : [];
+  return { dls, jobs };
+}
+
 function renderActivity() {
   const dls = Object.values(downloads).sort((a, b) => b.created_at - a.created_at);
   const jobs = Object.values(prepJobs).sort((a, b) => b.created_at - a.created_at);
-  const isActiveDl = d => d.status === 'pending' || d.status === 'downloading';
-  const isActiveJob = j => j.status === 'pending' || j.status === 'running';
-  const activeDl = dls.filter(isActiveDl), doneDl = dls.filter(d => !isActiveDl(d));
-  const activeJob = jobs.filter(isActiveJob), doneJob = jobs.filter(j => !isActiveJob(j));
+  const activeDl = dls.filter(_isActiveDl), activeJob = jobs.filter(_isActiveJob);
+  const doneDl = dls.filter(d => !_isActiveDl(d) && _statusOk(d.status));
+  const doneJob = jobs.filter(j => !_isActiveJob(j) && _statusOk(j.status));
 
-  // Running — active downloads + active jobs, newest first.
-  const running = [
-    ...activeDl.map(d => ({ t: d.created_at, html: cardHTML(d, true) })),
-    ...activeJob.map(j => ({ t: j.created_at, html: prepCardHTML(j) })),
-  ].sort((a, b) => b.t - a.t);
-  _setActSection('actRunning', 'actRunningEmpty', running.map(x => x.html).join(''), running.length);
-  _setActSection('actDownloads', 'actDownloadsEmpty', doneDl.map(d => cardHTML(d, false)).join(''), doneDl.length);
-  _setActSection('actJobs', 'actJobsEmpty', doneJob.map(prepCardHTML).join(''), doneJob.length);
+  // Sync the toolbar's active chips.
+  document.querySelectorAll('#actViewSeg button').forEach(b => b.classList.toggle('on', b.dataset.view === actView));
+  document.querySelectorAll('#actStatusSeg button').forEach(b => b.classList.toggle('on', b.dataset.status === actStatus));
+
+  // Running — full cards with progress (view filters which kinds show).
+  const runItems = [];
+  if (actView !== 'jobs') activeDl.forEach(d => runItems.push({ t: d.created_at, html: cardHTML(d, true) }));
+  if (actView !== 'downloads') activeJob.forEach(j => runItems.push({ t: j.created_at, html: prepCardHTML(j) }));
+  runItems.sort((a, b) => b.t - a.t);
+  _setActSection('actRunning', 'actRunningEmpty', runItems.map(x => x.html).join(''), runItems.length);
+
+  // Finished — compact one-line rows (much less scroll).
+  _setActSection('actDownloads', 'actDownloadsEmpty',
+    `<div class="act-rows">${doneDl.map(dlRowHTML).join('')}</div>`, doneDl.length);
+  _setActSection('actJobs', 'actJobsEmpty',
+    `<div class="act-rows">${doneJob.map(jobRowHTML).join('')}</div>`, doneJob.length);
+
+  // Section visibility per view.
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  show('actRunningSection', true);
+  show('actDownloadsSection', actView !== 'jobs');
+  show('actJobsSection', actView !== 'downloads');
+
+  const f = _filteredFinished();
+  const nRemove = f.dls.length + f.jobs.length;
+  const rmBtn = document.getElementById('actRemoveAll');
+  if (rmBtn) { rmBtn.textContent = nRemove ? `Remove all (${nRemove})` : 'Remove all'; rmBtn.disabled = !nRemove; }
 
   const activeCount = activeDl.length + activeJob.length;
   const badge = document.getElementById('activityBadge');
   if (badge) { if (activeCount) { badge.textContent = activeCount; badge.style.display = ''; } else badge.style.display = 'none'; }
   const rc = document.getElementById('runningCount');
   if (rc) rc.textContent = activeCount ? `· ${activeCount}` : '';
+}
+
+function dlRowHTML(d) {
+  const err = (d.status === 'error' && d.error) ? `<span class="act-row-err" title="${escHtml(d.error)}">${escHtml(d.error)}</span>` : `<span class="act-row-sub"></span>`;
+  return `<div class="act-row">
+    <span class="status-chip status-${d.status}">${d.status}</span>
+    <span class="act-row-title" title="${escHtml(d.title || 'Download')}">${escHtml(d.title || 'Download')}</span>
+    ${err}
+    <span class="act-row-time">${fmtDate(d.created_at)}</span>
+    <button class="btn-danger btn-sm" onclick="removeDownload('${d.id}')">${d.status === 'cancelled' ? 'Dismiss' : 'Remove'}</button>
+  </div>`;
+}
+
+function jobRowHTML(j) {
+  const type = j.type || 'convert';
+  const title = PREP_TITLES[type] || type;
+  let summary = j.summary;
+  if (!summary && j.error && (j.status === 'done' || j.status === 'rolled_back')) { try { summary = JSON.parse(j.error); } catch {} }
+  const chips = (summary && typeof summary === 'object') ? prepSummaryChips(type, summary) : '';
+  const err = (j.status === 'error' && j.error) ? `<span class="act-row-err" title="${escHtml(j.error)}">${escHtml(j.error)}</span>` : (chips || '<span class="act-row-sub"></span>');
+  const stChip = j.status === 'rolled_back' ? 'cancelled' : j.status;
+  const stLabel = j.status === 'rolled_back' ? 'rolled back' : j.status;
+  const rollback = ((type === 'tags' || type === 'unify') && j.status === 'done')
+    ? `<button class="btn-ghost btn-sm" onclick="rollbackClean('${j.id}')" title="Undo all tag changes">↺</button>` : '';
+  return `<div class="act-row">
+    <span class="status-chip status-${stChip}">${stLabel}</span>
+    <span class="act-row-title">${title}</span>
+    ${err}
+    <span class="act-row-time">${fmtDate(j.created_at)}</span>
+    ${rollback}<button class="btn-danger btn-sm" onclick="removePrepJob('${j.id}','${j.status}')">Remove</button>
+  </div>`;
+}
+
+async function removeAllActivity() {
+  const { dls, jobs } = _filteredFinished();
+  const n = dls.length + jobs.length;
+  if (!n) return;
+  const scope = actView === 'downloads' ? 'downloads' : actView === 'jobs' ? 'library jobs' : 'items';
+  const statusWord = actStatus === 'any' ? 'finished' : actStatus === 'error' ? 'failed' : 'done';
+  if (!confirm(`Remove ${n} ${statusWord} ${scope}? This can't be undone.`)) return;
+  await Promise.all([
+    ...dls.map(d => fetch('/api/downloads/' + d.id, { method: 'DELETE' }).then(() => { delete downloads[d.id]; delete tracksDone[d.id]; })),
+    ...jobs.map(j => fetch('/api/prep/jobs/' + j.id, { method: 'DELETE' }).then(() => { delete prepJobs[j.id]; })),
+  ]);
+  renderActivity();
 }
 
 function cardHTML(d, isQueue) {
