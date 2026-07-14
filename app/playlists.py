@@ -639,6 +639,28 @@ async def update_playlist(pid: str, body: dict):
             "track_count": gen["track_count"], "written": gen["written"], "updated_at": now}
 
 
+@router.get("/{pid}/tracks")
+async def playlist_tracks(pid: str):
+    """The ordered tracks (with metadata) a saved playlist currently resolves to."""
+    row = await _get_row(pid)
+    if not row:
+        raise HTTPException(404, "Not found")
+    pub = _row_public(row)
+    tracks = await _all_tracks()
+    matched = _matched_for_spec(pub["spec"], tracks)
+    out = [{
+        "title": _display_title(t.get("path", "")),
+        "artist": t.get("artist"),
+        "album": t.get("album"),
+        "year": t.get("year"),
+        "genre": t.get("genre"),
+        "bpm": t.get("bpm"),
+        "energy": t.get("energy"),
+        "duration": t.get("duration"),
+    } for t in matched]
+    return {"count": len(out), "tracks": out}
+
+
 @router.post("/{pid}/generate")
 async def regenerate(pid: str):
     """Re-run the playlist against the current library index and rewrite its .m3u(s)."""

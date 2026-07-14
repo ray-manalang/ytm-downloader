@@ -806,6 +806,110 @@ def _group_by_artist_album(rows) -> dict:
     return {"total": total, "artists": out}
 
 
+def _scan_mirror_orphans(source_dir: str, output_dir: str, fresh: bool = False) -> list:
+    """Mirror files whose source no longer exists — the reconcile targets. Uses the
+    cached directory walks; skips the Playlists subfolder. A mirror `.m4a` is kept
+    if the source has the same-path `.m4a` (copied) OR a lossless source with the
+    same stem (transcoded); other exts match the same relative path."""
+    from .converter import _TRANSCODE_EXTS, _COPY_EXTS
+    src_root = Path(source_dir).resolve()
+    out_root = Path(output_dir).resolve()
+    playlists_dir = out_root / "Playlists"
+
+    src_rel, src_stem = set(), set()
+    for e in filecache.list_files(str(src_root), refresh=fresh):
+        try:
+            rel = Path(e["path"]).relative_to(src_root)
+        except ValueError:
+            continue
+        src_rel.add(str(rel).casefold())
+        if rel.suffix.lower() in _TRANSCODE_EXTS:
+            src_stem.add(str(rel.with_suffix("")).casefold())
+
+    mirror_exts = _COPY_EXTS | {".m4a"}
+    orphans = []
+    for e in filecache.list_files(str(out_root), refresh=fresh):
+        p = Path(e["path"])
+        if playlists_dir in p.parents:
+            continue
+        if p.suffix.lower() not in mirror_exts:
+            continue
+        try:
+            rel = p.relative_to(out_root)
+        except ValueError:
+            continue
+        low = str(rel).casefold()
+        keep = low in src_rel or (p.suffix.lower() == ".m4a" and str(rel.with_suffix("")).casefold() in src_stem)
+        if not keep:
+            orphans.append({"path": str(p), "rel": str(rel), "size": e["size"]})
+    return orphans
+
+
+def _prune_mirror(source_dir: str, output_dir: str) -> dict:
+    """Delete orphaned mirror files (fresh scan) and any now-empty dirs."""
+    out_root = Path(output_dir).resolve()
+    orphans = _scan_mirror_orphans(source_dir, output_dir, fresh=True)
+    removed = errors = bytes_removed = 0
+    for o in orphans:
+        p = Path(o["path"])
+        try:
+            p.unlink()
+            removed += 1
+            bytes_removed += o["size"]
+            parent = p.parent
+            while parent != out_root and parent.is_dir() and not any(parent.iterdir()):
+                parent.rmdir()
+                parent = parent.parent
+        except OSError:
+            errors += 1
+    filecache.invalidate(str(out_root))
+    return {"removed": removed, "bytes": bytes_removed, "errors": errors}
+
+
+def _mirror_dirs(body_or_query) -> tuple:
+    source = (body_or_query.get("source_dir") or MUSIC_DIR or "").strip()
+    output = (body_or_query.get("output_dir") or IPOD_DIR or "").strip()
+    if not source or not Path(source).is_dir():
+        raise HTTPException(400, "No source (MUSIC_DIR) directory")
+    if not output:
+        raise HTTPException(400, "No mirror (IPOD_DIR) directory")
+    return source, output
+
+
+@router.get("/mirror/orphans")
+async def mirror_orphans(source_dir: str = "", output_dir: str = ""):
+    """Dry-run: mirror files with no source, grouped by artist → album + total size."""
+    source, output = _mirror_dirs({"source_dir": source_dir, "output_dir": output_dir})
+    if not Path(output).is_dir():
+        return {"count": 0, "bytes": 0, "artists": []}
+    orphans = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _scan_mirror_orphans(source, output))
+    rows = []
+    for o in orphans:
+        parts = Path(o["rel"]).parts
+        artist = parts[0] if len(parts) > 1 else "(root)"
+        album = parts[1] if len(parts) > 2 else ""
+        rows.append((o["path"], artist, album))
+    grouped = _group_by_artist_album(rows)
+    grouped["bytes"] = sum(o["size"] for o in orphans)
+    return grouped
+
+
+@router.post("/mirror/prune")
+async def mirror_prune(body: dict):
+    """Delete the orphaned mirror files (and empty dirs), then refresh playlists."""
+    source, output = _mirror_dirs(body or {})
+    if not Path(output).is_dir():
+        raise HTTPException(400, f"Mirror directory not found: {output}")
+    res = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _prune_mirror(source, output))
+    try:
+        await playlists_module.regenerate_all_auto()
+    except Exception:
+        pass
+    return res
+
+
 @router.get("/missing-albumartist")
 async def missing_albumartist_report():
     """Indexed files with no album-artist, grouped by artist → album (needs an Audit)."""

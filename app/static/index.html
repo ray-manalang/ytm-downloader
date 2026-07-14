@@ -233,6 +233,14 @@
   .aa-link { cursor: pointer; }
   .aa-link:hover { text-decoration: underline; }
 
+  /* Playlist track list (expand) */
+  .pl-tracks { margin-top: 10px; border-top: 1px solid var(--border); max-height: 340px; overflow-y: auto; }
+  .pl-track { display: flex; align-items: baseline; gap: 10px; padding: 4px 2px; font-size: 12px; border-bottom: 1px solid var(--border); }
+  .pl-track:last-child { border-bottom: none; }
+  .pl-track-n { width: 24px; flex-shrink: 0; text-align: right; color: var(--muted); }
+  .pl-track-main { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pl-track-meta { color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+
   /* DRM report */
   .drm-artist { margin-bottom: 12px; }
   .drm-artist-name { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
@@ -647,6 +655,11 @@
           <button class="btn-ghost btn-sm" id="drmBtn" onclick="loadDrmReport()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>List DRM-protected files</button>
           <span style="color:var(--muted);font-size:12px;margin-left:6px">.m4p files can't be transcoded — they're skipped by Convert.</span>
           <div id="drmReport" style="margin-top:12px"></div>
+          <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+            <button class="btn-ghost btn-sm" id="orphanBtn" onclick="loadMirrorOrphans()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6"/></svg>Find orphaned mirror files</button>
+            <span style="color:var(--muted);font-size:12px;margin-left:6px">Mirror files whose source is gone (Convert only adds; it never removes).</span>
+            <div id="orphanReport" style="margin-top:12px"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -2104,6 +2117,43 @@ async function loadDrmReport() {
   } finally { btn.disabled = false; }
 }
 
+async function loadMirrorOrphans() {
+  const el = document.getElementById('orphanReport');
+  const btn = document.getElementById('orphanBtn');
+  const source_dir = document.getElementById('convSource').value.trim();
+  const output_dir = document.getElementById('convOutput').value.trim();
+  btn.disabled = true;
+  el.innerHTML = '<span style="color:var(--muted);font-size:13px">Comparing mirror against the library…</span>';
+  try {
+    const q = new URLSearchParams({ source_dir, output_dir }).toString();
+    const res = await fetch('/api/prep/mirror/orphans?' + q);
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Scan failed.')}</span>`; return; }
+    if (!d.total) { el.innerHTML = '<span style="color:var(--accent);font-size:13px">✓ Mirror is in sync — no orphaned files.</span>'; return; }
+    const n = (d.artists || []).length;
+    const heading = `<strong style="color:var(--warn)">${d.total}</strong> orphaned mirror file${d.total !== 1 ? 's' : ''} · ${fmtSize(d.bytes || 0)} across ${n} artist${n !== 1 ? 's' : ''}`;
+    el.innerHTML = artistAlbumTreeHTML(d, heading) +
+      `<button class="btn-danger btn-sm" style="margin-top:10px" onclick="pruneMirror(${d.total}, '${escHtml(fmtSize(d.bytes || 0))}')">Remove ${d.total} orphaned file${d.total !== 1 ? 's' : ''}</button>`;
+  } finally { btn.disabled = false; }
+}
+
+async function pruneMirror(count, sizeStr) {
+  if (!confirm(`Delete ${count} orphaned mirror file${count !== 1 ? 's' : ''} (${sizeStr}) from the iPod mirror? The source library is untouched.`)) return;
+  const el = document.getElementById('orphanReport');
+  const source_dir = document.getElementById('convSource').value.trim();
+  const output_dir = document.getElementById('convOutput').value.trim();
+  el.innerHTML = '<span style="color:var(--muted);font-size:13px">Removing…</span>';
+  try {
+    const res = await fetch('/api/prep/mirror/prune', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({source_dir, output_dir}),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Prune failed.')}</span>`; return; }
+    el.innerHTML = `<span style="color:var(--accent);font-size:13px">✓ Removed ${d.removed} file${d.removed !== 1 ? 's' : ''} · ${fmtSize(d.bytes || 0)}${d.errors ? ` · ${d.errors} errors` : ''}</span>`;
+  } catch { el.innerHTML = '<span style="color:var(--danger);font-size:13px">Prune failed.</span>'; }
+}
+
 async function loadMissingAlbumArtist() {
   const el = document.getElementById('missingAAReport');
   el.innerHTML = '<span style="color:var(--muted);font-size:13px">Loading…</span>';
@@ -2588,12 +2638,44 @@ async function loadPlaylistList() {
         </div>
       </div>
       <div class="card-meta">
-        <span class="status-chip status-done">${p.track_count} tracks</span>
+        <span class="status-chip status-done aa-link" onclick="togglePlaylistTracks('${p.id}')" title="Show tracks">${p.track_count} tracks ▸</span>
         ${typeBadge}${targetBadges}
         <span style="color:var(--muted);font-size:12px">updated ${fmtDate(p.updated_at)}</span>
       </div>
+      <div id="pltracks-${p.id}" class="pl-tracks" style="display:none"></div>
     </div>`;
   }).join('');
+}
+
+const plTrackCache = {};
+async function togglePlaylistTracks(id) {
+  const el = document.getElementById('pltracks-' + id);
+  if (!el) return;
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  el.style.display = '';
+  if (!plTrackCache[id]) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px 0">Loading tracks…</div>';
+    try {
+      const d = await (await fetch('/api/playlists/' + id + '/tracks')).json();
+      plTrackCache[id] = d.tracks || [];
+    } catch { el.innerHTML = '<div style="color:var(--danger);font-size:12px">Failed to load tracks.</div>'; return; }
+  }
+  const tracks = plTrackCache[id];
+  if (!tracks.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px 0">No matching tracks in the library.</div>'; return; }
+  el.innerHTML = tracks.map((t, i) => {
+    const meta = [t.year, t.genre, t.bpm ? `${Math.round(t.bpm)} bpm` : '', t.duration ? fmtDur(t.duration) : '']
+      .filter(Boolean).join(' · ');
+    return `<div class="pl-track">
+      <span class="pl-track-n">${i + 1}</span>
+      <span class="pl-track-main"><strong>${escHtml(t.artist || '')}</strong> — ${escHtml(t.title || '')}</span>
+      <span class="pl-track-meta">${escHtml(meta)}</span>
+    </div>`;
+  }).join('');
+}
+
+function fmtDur(s) {
+  s = Math.round(s || 0);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
 async function regeneratePlaylist(id) {

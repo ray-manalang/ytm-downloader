@@ -146,6 +146,8 @@ Auto-generated YTM playlists ("Liked Music", "Episodes for Later", "New Episodes
 | GET | `/api/prep/audit/latest` | Most recent completed audit summary |
 | GET | `/api/prep/drm` | List DRM-protected `.m4p` files grouped by artist → album (read-only scan; these aren't in `library_tracks` since `is_audio_file` excludes `.m4p`) |
 | GET | `/api/prep/missing-albumartist` | Indexed files with no album-artist, grouped by artist → album (from `library_tracks`; needs an Audit). The audit panel's "N missing album artist" count links to it |
+| GET | `/api/prep/mirror/orphans` | Dry-run reconcile: mirror files whose source is gone, grouped by artist → album + total size (`_scan_mirror_orphans`; skips the Playlists folder) |
+| POST | `/api/prep/mirror/prune` | Delete those orphaned mirror files (+ empty dirs), then `regenerate_all_auto`. Convert only adds/updates; this is the "remove" half of a true one-way sync |
 | POST | `/api/prep/jobs/{id}/rollback` | Restore a `tags` or `unify` job from its `prep_changes` pre-images |
 | GET | `/api/prep/jobs` | List all prep jobs |
 | DELETE | `/api/prep/jobs/{id}` | Cancel a running/pending job or remove a finished one |
@@ -168,6 +170,7 @@ Prep jobs run on a **separate** `_prep_queue` + worker pool (`MAX_CONCURRENT_CON
 | POST | `/api/playlists` | Create a smart playlist (`name`, `spec`) → writes the `.m3u` |
 | PUT | `/api/playlists/{id}` | Update name/spec → regenerate |
 | POST | `/api/playlists/{id}/generate` | Re-run against the current index and rewrite the `.m3u`(s) |
+| GET | `/api/playlists/{id}/tracks` | The ordered tracks (title/artist/album/year/genre/bpm/energy/duration) the saved playlist currently resolves to, via `_matched_for_spec` (the Playlists UI expands a card's track count to show them) |
 | POST | `/api/playlists/import/ytm` | Import a YTM playlist → M3U for owned tracks + enqueue the missing ones |
 | POST | `/api/playlists/ai` | Two-stage AI curation (`prompt`, `targets`) → `type='ai'` playlist. 400 if `ANTHROPIC_API_KEY` unset |
 | POST | `/api/playlists/{id}/recurate` | **Re-run the Claude curation** for an `ai` playlist (fresh selection), keeping its name + targets. 400 for non-ai or if key unset |
