@@ -233,20 +233,30 @@
   .aa-link { cursor: pointer; }
   .aa-link:hover { text-decoration: underline; }
 
-  /* Activity toolbar + compact rows */
-  .act-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; position: sticky; top: 56px; background: var(--bg); padding: 10px 0; z-index: 4; }
+  /* Activity — process-monitor table */
+  .act-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; position: sticky; top: 56px; background: var(--bg); padding: 10px 0; z-index: 4; }
   .act-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
   .act-seg button { background: transparent; color: var(--muted); border: none; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 0; }
   .act-seg button.on { background: var(--accent-soft); color: var(--accent); }
-  .act-section { margin-bottom: 22px; }
-  .act-rows { display: flex; flex-direction: column; gap: 6px; }
-  .act-row { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px; }
-  .act-row .status-chip { flex-shrink: 0; }
-  .act-row-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; max-width: 40%; }
-  .act-row-sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
-  .act-row-err { color: var(--danger); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
-  .act-row-time { color: var(--muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
-  .act-row .btn-danger, .act-row .btn-ghost { flex-shrink: 0; }
+  .proc-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
+  .proc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .proc-table thead th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 700; padding: 9px 14px; background: var(--surface2); border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .proc-table tbody tr { border-top: 1px solid var(--border); }
+  .proc-table tbody tr:first-child { border-top: none; }
+  .proc-table tbody tr.proc-active { background: var(--accent-soft); }
+  .proc-table td { padding: 9px 14px; vertical-align: middle; }
+  .proc-name-main { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
+  .proc-cf { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; margin-top: 2px; }
+  .proc-kind { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 4px; white-space: nowrap; }
+  .proc-kind.kind-dl { background: rgba(62,166,255,.14); color: var(--info); }
+  .proc-kind.kind-lib { background: var(--accent-soft); color: var(--accent); }
+  .proc-progress { color: var(--muted); font-size: 12px; }
+  .proc-bar { height: 5px; background: var(--surface2); border-radius: 3px; overflow: hidden; min-width: 80px; margin-bottom: 3px; }
+  .proc-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .4s ease; }
+  .proc-pos { color: var(--accent); font-weight: 600; font-size: 11px; }
+  .proc-time { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .proc-actions { text-align: right; white-space: nowrap; }
+  .proc-actions button { margin-left: 6px; }
 
   /* Playlist track list (expand) */
   .pl-tracks { margin-top: 10px; border-top: 1px solid var(--border); max-height: 340px; overflow-y: auto; }
@@ -350,6 +360,28 @@
       </p>
       <input id="libDir" type="text" placeholder="/music" oninput="onLibDirChange()"
         style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
+    </div>
+
+    <!-- Process new additions (chained Audit → Clean → Analyze → Convert) -->
+    <div class="add-box process-box" style="margin-bottom:24px">
+      <div class="process-head">
+        <span class="process-mark"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 11 14 11 22 21 10 13 10 13 2"/></svg></span>
+        <div>
+          <div class="process-title">Process new additions</div>
+          <div class="process-sub">Runs the selected steps in order over new/changed files. Every engine is resumable, so it only touches what's new. Complete-genres is left out — it needs your review.</div>
+        </div>
+      </div>
+      <div class="process-steps">
+        <label><input type="checkbox" id="procAudit" checked onchange="saveProcessConfig()"> Audit <span>(re-index)</span></label>
+        <label><input type="checkbox" id="procTags" checked onchange="saveProcessConfig()"> Clean tags</label>
+        <label><input type="checkbox" id="procEnrich" checked onchange="saveProcessConfig()"> Analyze BPM &amp; energy</label>
+        <label><input type="checkbox" id="procConvert" checked onchange="saveProcessConfig()"> Convert → iPod</label>
+      </div>
+      <label class="process-auto"><input type="checkbox" id="procAuto" onchange="saveProcessConfig()"> Auto-process after downloads finish</label>
+      <div class="process-actions">
+        <button class="btn-primary" id="procBtn" onclick="startProcess()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><polygon points="13 2 3 14 11 14 11 22 21 10 13 10 13 2"/></svg>Process now</button>
+        <span id="procStatus" style="color:var(--muted);font-size:12px"></span>
+      </div>
     </div>
 
     <!-- YouTube Music connection -->
@@ -516,7 +548,7 @@
     </div>
   </div>
 
-  <!-- ACTIVITY (unified: running · downloads · library jobs) -->
+  <!-- ACTIVITY — unified process monitor (downloads + library jobs) -->
   <div class="panel" id="panel-activity">
     <div class="act-toolbar">
       <span class="act-seg" id="actViewSeg">
@@ -526,34 +558,25 @@
       </span>
       <span class="act-seg" id="actStatusSeg">
         <button data-status="any" class="on" onclick="setActStatus('any')">Any</button>
+        <button data-status="active" onclick="setActStatus('active')">Running</button>
         <button data-status="done" onclick="setActStatus('done')">Done</button>
         <button data-status="error" onclick="setActStatus('error')">Failed</button>
       </span>
+      <span id="runningCount" style="color:var(--muted);font-size:12px"></span>
+      <button class="btn-ghost btn-sm" onclick="refreshActivity()" title="Reload"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>Refresh</button>
       <button class="btn-danger btn-sm" id="actRemoveAll" style="margin-left:auto" onclick="removeAllActivity()">Remove all</button>
     </div>
 
-    <div class="act-section" id="actRunningSection">
-      <div class="section-title" style="margin-top:0">Running <span class="jobs-count" id="runningCount"></span></div>
-      <div class="card-list" id="actRunning"></div>
-      <div class="empty" id="actRunningEmpty" style="display:none;padding:24px 20px">
-        <p style="color:var(--muted)">Nothing running right now.</p>
-      </div>
+    <div class="proc-wrap">
+      <table class="proc-table">
+        <thead><tr>
+          <th style="width:34%">Name</th><th>Kind</th><th>Status</th><th style="width:26%">Progress</th><th>Updated</th><th></th>
+        </tr></thead>
+        <tbody id="procBody"></tbody>
+      </table>
     </div>
-
-    <div class="act-section" id="actDownloadsSection">
-      <div class="section-title">Downloads</div>
-      <div id="actDownloads"></div>
-      <div class="empty" id="actDownloadsEmpty" style="display:none;padding:24px 20px">
-        <p style="color:var(--muted)">No completed downloads match.</p>
-      </div>
-    </div>
-
-    <div class="act-section" id="actJobsSection">
-      <div class="section-title">Library jobs</div>
-      <div id="actJobs"></div>
-      <div class="empty" id="actJobsEmpty" style="display:none;padding:24px 20px">
-        <p style="color:var(--muted)">No library jobs match.</p>
-      </div>
+    <div class="empty" id="actEmpty" style="display:none;padding:44px 20px">
+      <p style="color:var(--muted)">No activity matches this filter.</p>
     </div>
   </div>
 
@@ -567,28 +590,6 @@
       <button class="btn-ghost btn-sm" onclick="switchTab('setup')">Change in Setup →</button>
     </div>
     <div id="prepError" style="color:var(--danger);font-size:13px;margin:-8px 0 12px"></div>
-
-    <!-- Process new additions (chained Audit → Clean → Analyze → Convert) -->
-    <div class="add-box process-box" style="margin-bottom:20px">
-      <div class="process-head">
-        <span class="process-mark"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 11 14 11 22 21 10 13 10 13 2"/></svg></span>
-        <div>
-          <div class="process-title">Process new additions</div>
-          <div class="process-sub">Runs the selected steps in order over new/changed files. Every engine is resumable, so it only touches what's new. Complete-genres is left out — it needs your review.</div>
-        </div>
-      </div>
-      <div class="process-steps">
-        <label><input type="checkbox" id="procAudit" checked onchange="saveProcessConfig()"> Audit <span>(re-index)</span></label>
-        <label><input type="checkbox" id="procTags" checked onchange="saveProcessConfig()"> Clean tags</label>
-        <label><input type="checkbox" id="procEnrich" checked onchange="saveProcessConfig()"> Analyze BPM &amp; energy</label>
-        <label><input type="checkbox" id="procConvert" checked onchange="saveProcessConfig()"> Convert → iPod</label>
-      </div>
-      <label class="process-auto"><input type="checkbox" id="procAuto" onchange="saveProcessConfig()"> Auto-process after downloads finish</label>
-      <div class="process-actions">
-        <button class="btn-primary" id="procBtn" onclick="startProcess()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><polygon points="13 2 3 14 11 14 11 22 21 10 13 10 13 2"/></svg>Process now</button>
-        <span id="procStatus" style="color:var(--muted);font-size:12px"></span>
-      </div>
-    </div>
 
     <!-- Step 1: Audit -->
     <div class="step" id="step-audit">
@@ -1052,6 +1053,14 @@ function fmtDate(ts) {
   return new Date(ts * 1000).toLocaleString();
 }
 
+function fmtAgo(ts) {
+  const s = Math.max(0, Date.now() / 1000 - (ts || 0));
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+
 function shortUrl(url) {
   try { return new URL(url).hostname + '…'; } catch { return url.slice(0, 40) + '…'; }
 }
@@ -1061,102 +1070,132 @@ function shortUrl(url) {
 // items → Running; finished items → Downloads / Library jobs.
 function renderAll() { renderActivity(); }
 
-function _setActSection(listId, emptyId, html, count) {
-  const el = document.getElementById(listId);
-  const empty = document.getElementById(emptyId);
-  if (!el) return;
-  if (!count) { el.innerHTML = ''; if (empty) empty.style.display = ''; return; }
-  if (empty) empty.style.display = 'none';
-  el.innerHTML = html;
-}
-
 let actView = localStorage.getItem('mm_act_view') || 'all';   // all | downloads | jobs
-let actStatus = 'any';                                        // any | done | error
+let actStatus = 'any';                                        // any | active | done | error
 const _isActiveDl = d => d.status === 'pending' || d.status === 'downloading';
 const _isActiveJob = j => j.status === 'pending' || j.status === 'running';
-function _statusOk(s) { return actStatus === 'any' || s === actStatus; }
+function _statusMatch(active, status) {
+  if (actStatus === 'any') return true;
+  if (actStatus === 'active') return active;
+  return status === actStatus;   // 'done' | 'error'
+}
 
 function setActView(v) { actView = v; localStorage.setItem('mm_act_view', v); renderActivity(); }
 function setActStatus(s) { actStatus = s; renderActivity(); }
 
-// Finished items matching the current view+status filter (what "Remove all" hits).
+// Unified, filtered, sorted rows (active first) for the process monitor.
+function _activityItems() {
+  const items = [];
+  if (actView !== 'jobs') Object.values(downloads).forEach(d => {
+    const active = _isActiveDl(d);
+    if (_statusMatch(active, d.status)) items.push({ kind: 'dl', t: d.created_at, active, d });
+  });
+  if (actView !== 'downloads') Object.values(prepJobs).forEach(j => {
+    const active = _isActiveJob(j);
+    if (_statusMatch(active, j.status)) items.push({ kind: 'job', t: j.created_at, active, j });
+  });
+  items.sort((a, b) => (b.active - a.active) || (b.t - a.t));
+  return items;
+}
+
+// Finished items matching view (what "Remove all" hits — never active ones).
 function _filteredFinished() {
-  const dls = (actView !== 'jobs') ? Object.values(downloads).filter(d => !_isActiveDl(d) && _statusOk(d.status)) : [];
-  const jobs = (actView !== 'downloads') ? Object.values(prepJobs).filter(j => !_isActiveJob(j) && _statusOk(j.status)) : [];
+  const doneOk = s => actStatus === 'any' || actStatus === 'done' || actStatus === 'error' ? (actStatus === 'any' || s === actStatus) : false;
+  const dls = (actView !== 'jobs') ? Object.values(downloads).filter(d => !_isActiveDl(d) && doneOk(d.status)) : [];
+  const jobs = (actView !== 'downloads') ? Object.values(prepJobs).filter(j => !_isActiveJob(j) && doneOk(j.status)) : [];
   return { dls, jobs };
 }
 
 function renderActivity() {
-  const dls = Object.values(downloads).sort((a, b) => b.created_at - a.created_at);
-  const jobs = Object.values(prepJobs).sort((a, b) => b.created_at - a.created_at);
-  const activeDl = dls.filter(_isActiveDl), activeJob = jobs.filter(_isActiveJob);
-  const doneDl = dls.filter(d => !_isActiveDl(d) && _statusOk(d.status));
-  const doneJob = jobs.filter(j => !_isActiveJob(j) && _statusOk(j.status));
-
-  // Sync the toolbar's active chips.
   document.querySelectorAll('#actViewSeg button').forEach(b => b.classList.toggle('on', b.dataset.view === actView));
   document.querySelectorAll('#actStatusSeg button').forEach(b => b.classList.toggle('on', b.dataset.status === actStatus));
 
-  // Running — full cards with progress (view filters which kinds show).
-  const runItems = [];
-  if (actView !== 'jobs') activeDl.forEach(d => runItems.push({ t: d.created_at, html: cardHTML(d, true) }));
-  if (actView !== 'downloads') activeJob.forEach(j => runItems.push({ t: j.created_at, html: prepCardHTML(j) }));
-  runItems.sort((a, b) => b.t - a.t);
-  _setActSection('actRunning', 'actRunningEmpty', runItems.map(x => x.html).join(''), runItems.length);
-
-  // Finished — compact one-line rows (much less scroll).
-  _setActSection('actDownloads', 'actDownloadsEmpty',
-    `<div class="act-rows">${doneDl.map(dlRowHTML).join('')}</div>`, doneDl.length);
-  _setActSection('actJobs', 'actJobsEmpty',
-    `<div class="act-rows">${doneJob.map(jobRowHTML).join('')}</div>`, doneJob.length);
-
-  // Section visibility per view.
-  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
-  show('actRunningSection', true);
-  show('actDownloadsSection', actView !== 'jobs');
-  show('actJobsSection', actView !== 'downloads');
+  const items = _activityItems();
+  const body = document.getElementById('procBody');
+  const wrap = document.querySelector('#panel-activity .proc-wrap');
+  const empty = document.getElementById('actEmpty');
+  if (body) body.innerHTML = items.map(procRowHTML).join('');
+  if (wrap) wrap.style.display = items.length ? '' : 'none';
+  if (empty) empty.style.display = items.length ? 'none' : '';
 
   const f = _filteredFinished();
   const nRemove = f.dls.length + f.jobs.length;
   const rmBtn = document.getElementById('actRemoveAll');
   if (rmBtn) { rmBtn.textContent = nRemove ? `Remove all (${nRemove})` : 'Remove all'; rmBtn.disabled = !nRemove; }
-
-  const activeCount = activeDl.length + activeJob.length;
-  const badge = document.getElementById('activityBadge');
-  if (badge) { if (activeCount) { badge.textContent = activeCount; badge.style.display = ''; } else badge.style.display = 'none'; }
-  const rc = document.getElementById('runningCount');
-  if (rc) rc.textContent = activeCount ? `· ${activeCount}` : '';
+  updateActivityBadge();
 }
 
-function dlRowHTML(d) {
-  const err = (d.status === 'error' && d.error) ? `<span class="act-row-err" title="${escHtml(d.error)}">${escHtml(d.error)}</span>` : `<span class="act-row-sub"></span>`;
-  return `<div class="act-row">
-    <span class="status-chip status-${d.status}">${d.status}</span>
-    <span class="act-row-title" title="${escHtml(d.title || 'Download')}">${escHtml(d.title || 'Download')}</span>
-    ${err}
-    <span class="act-row-time">${fmtDate(d.created_at)}</span>
-    <button class="btn-danger btn-sm" onclick="removeDownload('${d.id}')">${d.status === 'cancelled' ? 'Dismiss' : 'Remove'}</button>
-  </div>`;
+function procRowHTML(it) { return it.kind === 'dl' ? _procDlRow(it.d, it.active) : _procJobRow(it.j, it.active); }
+
+function _procProgressCell(id, pct, pos) {
+  return `<div class="proc-bar"><i id="pf-${id}" style="width:${pct}%"></i></div><span class="proc-pos" id="pp-${id}">${pos}</span>`;
 }
 
-function jobRowHTML(j) {
+function _procDlRow(d, active) {
+  const name = escHtml(d.title || 'Download');
+  const cf = (d.status === 'downloading' && d.current_file) ? `<div class="proc-cf" id="pcf-${d.id}">${escHtml(d.current_file)}</div>`
+    : (d.status === 'error' && d.error) ? `<div class="proc-cf" style="color:var(--danger)" title="${escHtml(d.error)}">${escHtml(d.error)}</div>` : '';
+  let progress = d.status === 'done' ? '✓' : '—';
+  if (active) {
+    const pct = d.progress || 0;
+    const pos = (d.playlist_index && d.playlist_count) ? `${d.playlist_index}/${d.playlist_count}` : (d.status === 'pending' ? 'queued' : `${Math.round(pct)}%`);
+    progress = _procProgressCell(d.id, pct, pos);
+  }
+  const action = active
+    ? `<button class="btn-danger btn-sm" onclick="cancelDownload('${d.id}','${d.status}')">Cancel</button>`
+    : `<button class="btn-danger btn-sm" onclick="removeDownload('${d.id}')">${d.status === 'cancelled' ? 'Dismiss' : 'Remove'}</button>`;
+  return `<tr id="proc-${d.id}" class="${active ? 'proc-active' : ''}">
+    <td><div class="proc-name-main" title="${name}">${name}</div>${cf}</td>
+    <td><span class="proc-kind kind-dl">Download</span></td>
+    <td><span class="status-chip status-${d.status}">${d.status}</span></td>
+    <td class="proc-progress">${progress}</td>
+    <td class="proc-time" title="${fmtDate(d.created_at)}">${fmtAgo(d.created_at)}</td>
+    <td class="proc-actions">${action}</td>
+  </tr>`;
+}
+
+function _procJobRow(j, active) {
   const type = j.type || 'convert';
-  const title = PREP_TITLES[type] || type;
+  const name = PREP_TITLES[type] || type;
   let summary = j.summary;
   if (!summary && j.error && (j.status === 'done' || j.status === 'rolled_back')) { try { summary = JSON.parse(j.error); } catch {} }
-  const chips = (summary && typeof summary === 'object') ? prepSummaryChips(type, summary) : '';
-  const err = (j.status === 'error' && j.error) ? `<span class="act-row-err" title="${escHtml(j.error)}">${escHtml(j.error)}</span>` : (chips || '<span class="act-row-sub"></span>');
+  const cf = (active && j.current_file) ? `<div class="proc-cf" id="pcf-${j.id}">${escHtml(j.current_file)}</div>`
+    : (j.status === 'error' && j.error) ? `<div class="proc-cf" style="color:var(--danger)" title="${escHtml(j.error)}">${escHtml(j.error)}</div>` : '';
+  let progress = j.status === 'done' ? '✓' : '—';
+  if (active) {
+    const pct = j.progress || 0;
+    const pos = j.total ? `${j.done || 0}/${j.total}` : (j.status === 'pending' ? 'queued' : `${Math.round(pct)}%`);
+    progress = _procProgressCell(j.id, pct, pos);
+  } else if (summary && typeof summary === 'object') {
+    progress = prepSummaryChips(type, summary) || progress;
+  }
   const stChip = j.status === 'rolled_back' ? 'cancelled' : j.status;
   const stLabel = j.status === 'rolled_back' ? 'rolled back' : j.status;
   const rollback = ((type === 'tags' || type === 'unify') && j.status === 'done')
     ? `<button class="btn-ghost btn-sm" onclick="rollbackClean('${j.id}')" title="Undo all tag changes">↺</button>` : '';
-  return `<div class="act-row">
-    <span class="status-chip status-${stChip}">${stLabel}</span>
-    <span class="act-row-title">${title}</span>
-    ${err}
-    <span class="act-row-time">${fmtDate(j.created_at)}</span>
-    ${rollback}<button class="btn-danger btn-sm" onclick="removePrepJob('${j.id}','${j.status}')">Remove</button>
-  </div>`;
+  const action = active
+    ? `<button class="btn-danger btn-sm" onclick="removePrepJob('${j.id}','${j.status}')">Cancel</button>`
+    : `${rollback}<button class="btn-danger btn-sm" onclick="removePrepJob('${j.id}','${j.status}')">Remove</button>`;
+  return `<tr id="proc-${j.id}" class="${active ? 'proc-active' : ''}">
+    <td><div class="proc-name-main">${name}</div>${cf}</td>
+    <td><span class="proc-kind kind-lib">Library</span></td>
+    <td><span class="status-chip status-${stChip}">${stLabel}</span></td>
+    <td class="proc-progress">${progress}</td>
+    <td class="proc-time" title="${fmtDate(j.created_at)}">${fmtAgo(j.created_at)}</td>
+    <td class="proc-actions">${action}</td>
+  </tr>`;
+}
+
+async function refreshActivity() {
+  try {
+    const [d, j] = await Promise.all([
+      fetch('/api/downloads').then(r => r.json()).catch(() => ({ downloads: [] })),
+      fetch('/api/prep/jobs').then(r => r.json()).catch(() => ({ jobs: [] })),
+    ]);
+    for (const x of (d.downloads || [])) downloads[x.id] = x;
+    for (const x of (j.jobs || [])) prepJobs[x.id] = x;
+  } catch {}
+  renderActivity();
 }
 
 async function removeAllActivity() {
@@ -1164,80 +1203,13 @@ async function removeAllActivity() {
   const n = dls.length + jobs.length;
   if (!n) return;
   const scope = actView === 'downloads' ? 'downloads' : actView === 'jobs' ? 'library jobs' : 'items';
-  const statusWord = actStatus === 'any' ? 'finished' : actStatus === 'error' ? 'failed' : 'done';
+  const statusWord = actStatus === 'error' ? 'failed' : actStatus === 'done' ? 'done' : 'finished';
   if (!confirm(`Remove ${n} ${statusWord} ${scope}? This can't be undone.`)) return;
   await Promise.all([
     ...dls.map(d => fetch('/api/downloads/' + d.id, { method: 'DELETE' }).then(() => { delete downloads[d.id]; delete tracksDone[d.id]; })),
     ...jobs.map(j => fetch('/api/prep/jobs/' + j.id, { method: 'DELETE' }).then(() => { delete prepJobs[j.id]; })),
   ]);
   renderActivity();
-}
-
-function cardHTML(d, isQueue) {
-  const title = d.title || 'Starting…';
-  const statusClass = 'status-' + d.status;
-  const statusLabel = d.status;
-  const pct = d.progress || 0;
-
-  let currentFileHtml = '';
-  let progressBar = '';
-  if (d.status === 'downloading') {
-    const pos = (d.playlist_index && d.playlist_count) ? `${d.playlist_index}/${d.playlist_count}` : '';
-    const cfName = d.current_file ? `<span class="cf-name">${escHtml(d.current_file)}</span>` : '<span class="cf-name" style="color:var(--muted)">Starting…</span>';
-    const cfPos = pos ? `<span class="cf-pos">${pos}</span>` : '';
-    currentFileHtml = `<div class="current-file" id="cf-${d.id}">${cfName}${cfPos}</div>`;
-    progressBar = `
-      <div class="progress-wrap">
-        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-      </div>`;
-  }
-
-  let metaRight = '';
-  if (isQueue) {
-    const cancelLabel = d.status === 'downloading' ? 'Cancel' : 'Remove';
-    metaRight = `<button class="btn-danger" onclick="cancelDownload('${d.id}', '${d.status}')">${cancelLabel}</button>`;
-  } else {
-    metaRight = `<button class="btn-danger" onclick="removeDownload('${d.id}')">${d.status === 'cancelled' ? 'Dismiss' : 'Remove'}</button>`;
-  }
-
-  let speedInfo = '';
-  if (d.status === 'downloading' && (d.speed || d.eta)) {
-    speedInfo = `<div class="speed-info">`;
-    if (d.speed) speedInfo += `<span>${d.speed}</span>`;
-    if (d.eta) speedInfo += `<span>ETA ${d.eta}</span>`;
-    if (pct > 0) speedInfo += `<span>${pct.toFixed(1)}%</span>`;
-    speedInfo += `</div>`;
-  }
-
-  const errorMsg = d.error ? `<div class="error-msg">${escHtml(d.error)}</div>` : '';
-  const dateStr = d.status !== 'pending' && d.status !== 'downloading' ? `<span style="color:var(--muted);font-size:12px">${fmtDate(d.created_at)}</span>` : '';
-
-  let trackListHtml = '';
-  if (isQueue && d.status === 'downloading') {
-    const done = tracksDone[d.id] || [];
-    const items = done.map(t => `<div class="track-done-item">${escHtml(t)}</div>`).join('');
-    trackListHtml = `<div class="track-done-list" id="tdl-${d.id}">${items}</div>`;
-  }
-
-  return `
-    <div class="card" id="card-${d.id}">
-      <div class="card-header">
-        <div class="card-info">
-          <div class="card-title">${escHtml(title)}</div>
-          <div class="card-url">${escHtml(d.url)}</div>
-        </div>
-        ${metaRight}
-      </div>
-      <div class="card-meta">
-        <span class="status-chip ${statusClass}">${statusLabel}</span>
-        ${speedInfo}
-        ${dateStr}
-      </div>
-      ${currentFileHtml}
-      ${progressBar}
-      ${trackListHtml}
-      ${errorMsg}
-    </div>`;
 }
 
 function escHtml(s) {
@@ -1495,32 +1467,25 @@ function handleWS(msg) {
   renderAll();
 }
 
+// In-place update of a monitor row's progress bar / position / current file.
+// If the row isn't showing (e.g. filtered out), skip — a status change or the
+// Refresh button reconciles the table.
+function _updateProcRow(id, pct, pos, cf) {
+  const fill = document.getElementById('pf-' + id);
+  if (!fill) return false;
+  fill.style.width = (pct || 0) + '%';
+  const pp = document.getElementById('pp-' + id);
+  if (pp) pp.textContent = pos;
+  const pcf = document.getElementById('pcf-' + id);
+  if (pcf && cf != null) pcf.textContent = cf;
+  return true;
+}
+
 function updateCardInPlace(id) {
   const d = downloads[id];
   if (!d) return;
-  const card = document.getElementById('card-' + id);
-  if (!card) { renderAll(); return; }
-
-  const fill = card.querySelector('.progress-fill');
-  if (fill) fill.style.width = (d.progress || 0) + '%';
-
-  const speedEl = card.querySelector('.speed-info');
-  if (speedEl) {
-    let html = '';
-    if (d.speed) html += `<span>${d.speed}</span>`;
-    if (d.eta) html += `<span>ETA ${d.eta}</span>`;
-    if (d.progress > 0) html += `<span>${d.progress.toFixed(1)}%</span>`;
-    speedEl.innerHTML = html;
-  }
-
-  const cfEl = document.getElementById('cf-' + id);
-  if (cfEl) {
-    const pos = (d.playlist_index && d.playlist_count) ? `${d.playlist_index}/${d.playlist_count}` : '';
-    const cfName = d.current_file ? `<span class="cf-name">${escHtml(d.current_file)}</span>` : '<span class="cf-name" style="color:var(--muted)">Starting…</span>';
-    const cfPos = pos ? `<span class="cf-pos">${pos}</span>` : '';
-    cfEl.innerHTML = cfName + cfPos;
-  }
-
+  const pos = (d.playlist_index && d.playlist_count) ? `${d.playlist_index}/${d.playlist_count}` : `${Math.round(d.progress || 0)}%`;
+  _updateProcRow(id, d.progress, pos, d.current_file || 'Starting…');
   updateActivityBadge();
 }
 
@@ -1530,7 +1495,7 @@ function updateActivityBadge() {
   const badge = document.getElementById('activityBadge');
   if (badge) { if (active) { badge.textContent = active; badge.style.display = ''; } else badge.style.display = 'none'; }
   const rc = document.getElementById('runningCount');
-  if (rc) rc.textContent = active ? `· ${active}` : '';
+  if (rc) rc.textContent = active ? `${active} running` : '';
 }
 
 // ── Library ───────────────────────────────────────────────────────────────────
@@ -1581,8 +1546,10 @@ async function loadSetup() {
     const cfg = await (await fetch('/api/prep/config')).json();
     const el = document.getElementById('libDir');
     if (cfg.music_dir && el && !el.value) el.value = cfg.music_dir;
+    if (cfg.ipod_dir && !document.getElementById('convOutput').value) document.getElementById('convOutput').value = cfg.ipod_dir;
   } catch {}
   onLibDirChange();
+  loadProcessConfig();
 }
 
 // Keep the Prepare page's read-only library reference in sync with Setup's input.
@@ -1900,7 +1867,7 @@ async function loadConvert() {
     } catch {}
   }
   onLibDirChange();  // reflect the Setup-page library folder in the Prepare header
-  await Promise.all([loadPrepJobs(), loadLatestAudit(), loadLatestReview(), updatePrepSteps(), loadProcessConfig()]);
+  await Promise.all([loadPrepJobs(), loadLatestAudit(), loadLatestReview(), updatePrepSteps()]);
 }
 
 async function loadProcessConfig() {
@@ -2081,87 +2048,12 @@ function prepSummaryChips(type, s) {
   return parts.length ? `<div class="speed-info">${parts.map(p => `<span>${p}</span>`).join('')}</div>` : '';
 }
 
-function prepCardHTML(j) {
-  const pct = j.progress || 0;
-  const active = j.status === 'running';
-  const type = j.type || 'convert';
-  const title = PREP_TITLES[type] || type;
-  const dirLine = type === 'convert'
-    ? `${escHtml(j.source_dir || '')} → ${escHtml(j.output_dir || '')}`
-    : escHtml(j.source_dir || '');
-
-  let progressBar = '';
-  let currentFileHtml = '';
-  if (active) {
-    const pos = j.total ? `${j.done || 0}/${j.total}` : '';
-    const cf = j.current_file ? escHtml(j.current_file) : 'Scanning…';
-    currentFileHtml = `<div class="current-file" id="prepcf-${j.id}">
-      <span class="cf-name">${cf}</span>${pos ? `<span class="cf-pos">${pos}</span>` : ''}</div>`;
-    progressBar = `<div class="progress-wrap"><div class="progress-bar">
-      <div class="progress-fill" style="width:${pct}%"></div></div></div>`;
-  }
-
-  let summary = j.summary;
-  if (!summary && j.error && (j.status === 'done' || j.status === 'rolled_back')) {
-    try { summary = JSON.parse(j.error); } catch {}
-  }
-  const summaryHtml = (summary && typeof summary === 'object') ? prepSummaryChips(type, summary) : '';
-
-  // Per-track failures (currently enrich) — expandable list of file + reason.
-  const errFiles = (summary && Array.isArray(summary.error_files)) ? summary.error_files : [];
-  const errDetailsHtml = errFiles.length ? `
-    <details class="prep-errors">
-      <summary>${errFiles.length} track${errFiles.length > 1 ? 's' : ''} failed to analyze — show details</summary>
-      <div class="prep-errors-list">${errFiles.map(e =>
-        `<div class="prep-err-row"><span class="prep-err-file">${escHtml(e.file || '')}</span><span class="prep-err-reason">${escHtml(e.reason || '')}</span></div>`).join('')}</div>
-    </details>` : '';
-
-  const errorMsg = (j.status === 'error' && j.error) ? `<div class="error-msg">${escHtml(j.error)}</div>` : '';
-  const btnLabel = (j.status === 'running' || j.status === 'pending') ? 'Cancel' : 'Remove';
-  const dateStr = (j.status !== 'pending' && j.status !== 'running')
-    ? `<span style="color:var(--muted);font-size:12px">${fmtDate(j.created_at)}</span>` : '';
-  const rollbackBtn = ((type === 'tags' || type === 'unify') && j.status === 'done')
-    ? `<button class="btn-ghost btn-sm" onclick="rollbackClean('${j.id}')" title="Undo all tag changes">↺ Rollback</button>` : '';
-  const statusChip = j.status === 'rolled_back' ? 'cancelled' : (j.status === 'running' ? 'downloading' : j.status);
-
-  return `
-    <div class="card" id="prepcard-${j.id}">
-      <div class="card-header">
-        <div class="card-info">
-          <div class="card-title">${title}</div>
-          <div class="card-url">${dirLine}</div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:flex-start">
-          ${rollbackBtn}
-          <button class="btn-danger" onclick="removePrepJob('${j.id}','${j.status}')">${btnLabel}</button>
-        </div>
-      </div>
-      <div class="card-meta">
-        <span class="status-chip status-${statusChip}">${j.status === 'rolled_back' ? 'rolled back' : j.status}</span>
-        ${summaryHtml}
-        ${dateStr}
-      </div>
-      ${currentFileHtml}
-      ${progressBar}
-      ${errDetailsHtml}
-      ${errorMsg}
-    </div>`;
-}
-
 function updatePrepCardInPlace(id) {
   const j = prepJobs[id];
   if (!j) return;
-  const card = document.getElementById('prepcard-' + id);
-  if (!card) { renderPrepJobs(); return; }
-  const fill = card.querySelector('.progress-fill');
-  if (fill) fill.style.width = (j.progress || 0) + '%';
-  const cf = document.getElementById('prepcf-' + id);
-  if (cf) {
-    const pos = j.total ? `${j.done || 0}/${j.total}` : '';
-    const name = j.current_file ? escHtml(j.current_file) : 'Scanning…';
-    cf.innerHTML = `<span class="cf-name">${name}</span>${pos ? `<span class="cf-pos">${pos}</span>` : ''}`;
-  }
-  updateActivityBadge();  // keep the nav badge fresh without a full re-render
+  const pos = j.total ? `${j.done || 0}/${j.total}` : `${Math.round(j.progress || 0)}%`;
+  _updateProcRow(id, j.progress, pos, j.current_file || 'Scanning…');
+  updateActivityBadge();
 }
 
 // Render an {artists:[{artist,albums:[{album,tracks:[{title,path}]}]}]} tree.
