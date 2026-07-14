@@ -52,7 +52,9 @@ Single-process FastAPI app. No test suite.
 | `COOKIES_FILE` | *(empty)* | Netscape-format cookies.txt for age-restricted videos; mount **without `:ro`** — yt-dlp writes back to refresh token expiry |
 | `MUSIC_DIR` | *(empty)* | Source library root for the Convert tab; mount **read-only** (converter never writes here) |
 | `IPOD_DIR` | `./ipod` | AAC mirror output root (read-write) |
-| `MAX_CONCURRENT_CONVERSIONS` | `2` | Parallel transcode workers |
+| `MAX_CONCURRENT_CONVERSIONS` | `2` | Parallel **convert-job** workers (prep queue). A single convert *job* now parallelizes its files internally — see below |
+| `MAX_CONCURRENT_TRANSCODES` | *(CPU count)* | Parallel ffmpeg transcodes **within** one convert job (CPU-bound phase) |
+| `CONVERT_STAT_WORKERS` | *(min(32, 4×transcodes))* | Parallel workers for the resumable skip-decision stats within a convert job (network-latency-bound phase) |
 | `AAC_BITRATE` | `256k` | Conversion bitrate |
 | `PLAYLIST_DIR_LIBRARY` | `<MUSIC_DIR>/Playlists` | Smart-playlist `.m3u` output for Sonos / Music Assistant |
 | `PLAYLIST_DIR_IPOD` | `<IPOD_DIR>/Playlists` | iPod-target `.m3u` output (mirror paths) |
@@ -270,6 +272,8 @@ The **Convert** stage (M1) mirrors a FLAC library into an iPod-ready AAC copy. I
 - `.mp3`, existing AAC `.m4a`/`.aac`/`.m4b` → copied byte-for-byte
 - `.m4p` → skipped (DRM); non-audio → ignored
 - Resumable: skip a destination that exists and is not older than its source. **The source is never modified** (mount `MUSIC_DIR` read-only).
+
+**Internal parallelism (`run_conversion`):** the job is one `run_in_executor` call but fans its per-file work across two thread pools so a networked library isn't bottlenecked on serial round-trips. **Phase 1 — decide** (`CONVERT_STAT_WORKERS`, wide): the resumable skip check is a pair of `stat()`s per file over the mount, pure latency, so it runs wide — this is what makes a *no-op re-run* fast instead of taking an hour of serial stats. Files are collected via a single `os.walk` + extension filter (no per-file `stat`, unlike the old `rglob("*")`+`is_file()`). **Phase 2 — transcode/copy** (`MAX_CONCURRENT_TRANSCODES`, core-capped): only the files that actually need work, each ffmpeg being CPU-bound. A shared lock guards the `done` counter; `progress_cb`/`should_cancel` are already thread-safe (the prep worker throttles progress to ~4/s). `drm`/`skip` are terminal in phase 1; `transcode`/`copy`/`error` come from phase 2.
 
 **Converter ffmpeg command** (distinct from yt-dlp — do not confuse with the download postprocessors):
 ```
