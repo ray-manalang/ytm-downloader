@@ -254,10 +254,13 @@
   .genre-fill { height: 100%; background: var(--accent); border-radius: 4px; }
   .genre-count { width: 84px; flex-shrink: 0; text-align: right; font-size: 12px; color: var(--text); display: flex; justify-content: flex-end; gap: 6px; align-items: baseline; }
   .genre-share { color: var(--muted); font-size: 11px; min-width: 30px; text-align: right; }
-  /* Radial chart: drag-to-rotate + per-column hover emphasis */
-  #genreRadialSvg .genre-col { transition: stroke-width .12s ease; }
+  /* Radial chart: drag-to-rotate + clickable, hover-emphasized columns */
+  #genreRadialSvg .genre-col { transition: stroke-width .12s ease; cursor: pointer; }
   #genreRadialSvg .genre-col:hover { stroke-width: 21; }
   .genre-hint { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2px; opacity: .75; user-select: none; }
+  /* Active genre filter on the Files page */
+  .genre-filter-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-soft); color: var(--accent); font-weight: 600; padding: 2px 6px 2px 10px; border-radius: 999px; margin-right: 8px; }
+  .genre-filter-chip button { background: none; border: none; color: inherit; cursor: pointer; font-size: 13px; padding: 0 2px; line-height: 1; }
 
   /* Clickable audit stat (missing album artist → list) */
   .aa-link { cursor: pointer; }
@@ -1070,7 +1073,8 @@ const GENRE_COLORS = ['#ef3e57', '#3987e5', '#c98500', '#199e70', '#9085e9', '#d
 let genreRotorOffset = 0;
 let _genreRotor = null;   // geometry + data snapshot, so a drag can re-render cheaply
 let _rotorDrag = null;
-let _rotorSpin = null;    // inertial-spin rAF handle
+let _rotorSpin = null;    // inertial-spin / reset-tween rAF handle
+let _rotorMoved = false;  // did the last press actually rotate? (suppresses click-after-drag)
 
 // The rotating part (columns + labels) for a given angular offset. Recomputed on
 // every drag frame rather than CSS-rotated, so each label re-runs its upright
@@ -1087,7 +1091,7 @@ function _genreRotorContent(offset) {
     const x1 = (cx + len * co).toFixed(1), y1 = (cy + len * si).toFixed(1);
     const share = totalTagged ? Math.round((n / totalTagged) * 100) : 0;
     const color = GENRE_COLORS[i % GENRE_COLORS.length];
-    cols.push(`<line class="genre-col" x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="${color}" stroke-width="15" stroke-linecap="round"><title>${escHtml(g)}: ${n.toLocaleString()} (${share}%)</title></line>`);
+    cols.push(`<line class="genre-col" x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="${color}" stroke-width="15" stroke-linecap="round" onclick="onGenreColClick(${i})"><title>${escHtml(g)}: ${n.toLocaleString()} (${share}%) — click to filter Files</title></line>`);
     const lx = (cx + labelR * co).toFixed(1), ly = (cy + labelR * si).toFixed(1);
     const deg = ang * 180 / Math.PI;
     const left = co < -0.01;
@@ -1113,13 +1117,13 @@ function genreRadialSVG(entries, totalTagged) {
   const more = entries.length > TOP
     ? `<div style="color:var(--muted);font-size:12px;text-align:center;margin-top:4px">Top ${TOP} of ${entries.length} genres — switch to <strong>All</strong> for the rest</div>` : '';
 
-  return `<svg id="genreRadialSvg" viewBox="0 0 600 480" width="100%" style="max-width:600px;display:block;margin:0 auto;cursor:grab;touch-action:none" role="img" aria-label="Genre distribution radial chart — drag to rotate" onpointerdown="genreRotorStart(event)">
+  return `<svg id="genreRadialSvg" viewBox="0 0 600 480" width="100%" style="max-width:600px;display:block;margin:0 auto;cursor:grab;touch-action:none" role="img" aria-label="Genre distribution radial chart — drag to rotate, click a bar to filter Files" onpointerdown="genreRotorStart(event)" ondblclick="genreRotorReset()">
     ${rings}${hub}
     <g id="genreRotorInner">${_genreRotorContent(genreRotorOffset)}</g>
     <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="24" font-weight="800" fill="var(--text)">${totalTagged.toLocaleString()}</text>
     <text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="10" letter-spacing="0.5" fill="var(--muted)">TAGGED TRACKS</text>
   </svg>
-  <div class="genre-hint">↻ Drag the wheel to spin</div>${more}`;
+  <div class="genre-hint">↻ Drag to spin · double-click to reset · click a bar to filter Files</div>${more}`;
 }
 
 function _applyRotor() {
@@ -1138,7 +1142,8 @@ function genreRotorStart(e) {
   const svg = document.getElementById('genreRadialSvg');
   if (!svg) return;
   if (_rotorSpin) { cancelAnimationFrame(_rotorSpin); _rotorSpin = null; }
-  _rotorDrag = { lastAng: _rotorAngle(e, svg), lastT: e.timeStamp, vel: 0 };
+  _rotorMoved = false;
+  _rotorDrag = { lastAng: _rotorAngle(e, svg), lastT: e.timeStamp, vel: 0, accum: 0 };
   svg.style.cursor = 'grabbing';
   window.addEventListener('pointermove', genreRotorMove);
   window.addEventListener('pointerup', genreRotorEnd);
@@ -1154,6 +1159,8 @@ function genreRotorMove(e) {
   const dt = Math.max(1, e.timeStamp - _rotorDrag.lastT);
   _rotorDrag.vel = d / dt;                    // rad/ms, for release inertia
   _rotorDrag.lastAng = ang; _rotorDrag.lastT = e.timeStamp;
+  _rotorDrag.accum += Math.abs(d);
+  if (_rotorDrag.accum > 0.02) _rotorMoved = true;   // real rotation, not a click
   genreRotorOffset += d;
   _applyRotor();
 }
@@ -1176,6 +1183,31 @@ function genreRotorEnd() {
     _rotorSpin = Math.abs(vel) > 0.0002 ? requestAnimationFrame(step) : null;
   };
   _rotorSpin = requestAnimationFrame(step);
+}
+
+// Double-click: ease back to the original orientation (nearest full turn).
+function genreRotorReset() {
+  if (_rotorSpin) { cancelAnimationFrame(_rotorSpin); _rotorSpin = null; }
+  const target = Math.round(genreRotorOffset / (2 * Math.PI)) * 2 * Math.PI;
+  let last = null;
+  const step = (t) => {
+    if (last == null) last = t;
+    const dt = t - last; last = t;
+    const diff = target - genreRotorOffset;
+    if (Math.abs(diff) < 0.002) { genreRotorOffset = target; _applyRotor(); _rotorSpin = null; return; }
+    genreRotorOffset += diff * (1 - Math.pow(0.002, dt / 300));   // ease-out toward target
+    _applyRotor();
+    _rotorSpin = requestAnimationFrame(step);
+  };
+  _rotorSpin = requestAnimationFrame(step);
+}
+
+// Click a column → open the Files page filtered to that genre (unless the press
+// was actually a drag).
+function onGenreColClick(i) {
+  if (_rotorMoved) { _rotorMoved = false; return; }
+  const entry = _genreRotor && _genreRotor.top[i];
+  if (entry) filterFilesByGenre(entry[0]);
 }
 
 function genreListHTML(entries, totalTagged) {
@@ -1417,6 +1449,23 @@ async function loadFiles(refresh = false) {
 let albumsGrouped = [];   // [ [dirPath, tracks[]], … ] — source for lazy track render
 let fileSearch = '';
 let fileFormat = '';
+let fileGenre = '';           // active genre filter (from the Dashboard radial chart)
+let _fileGenrePaths = null;   // Set of relative paths for that genre, or null = off
+
+// Open the Files page filtered to a genre. Paths come from library_tracks (Audit).
+async function filterFilesByGenre(genre) {
+  fileGenre = genre || '';
+  _fileGenrePaths = null;
+  if (fileGenre) {
+    try {
+      const res = await fetch('/api/files/by-genre?genre=' + encodeURIComponent(fileGenre));
+      if (res.ok) _fileGenrePaths = new Set((await res.json()).paths || []);
+    } catch { /* leave null → no filter, still navigate */ }
+  }
+  switchTab('files');   // loads the listing (if needed) and renders with the filter
+}
+
+function clearFileGenre() { fileGenre = ''; _fileGenrePaths = null; renderFiles(); }
 let _fileSearchTimer = null;
 
 function onFileSearch() {
@@ -1466,6 +1515,7 @@ function renderFiles() {
     const lc = f._lc || (f._lc = f.path.toLowerCase());
     if (fileFormat && !lc.endsWith(fileFormat)) continue;
     if (fileSearch && !lc.includes(fileSearch)) continue;
+    if (_fileGenrePaths && !_fileGenrePaths.has(f.path)) continue;
     const parts = f.path.split('/');
     const album = parts.length > 1 ? parts.slice(0, -1).join('/') : '(root)';
     (albums[album] || (albums[album] = [])).push(f);
@@ -1476,7 +1526,12 @@ function renderFiles() {
   renderFileAlpha();
   const countEl = document.getElementById('fileCount');
   const totalMatched = albumsGrouped.reduce((s, [, t]) => s + t.length, 0);
-  if (countEl) countEl.textContent = `${totalMatched.toLocaleString()} file${totalMatched !== 1 ? 's' : ''} · ${albumsGrouped.length.toLocaleString()} folder${albumsGrouped.length !== 1 ? 's' : ''}`;
+  if (countEl) {
+    const chip = fileGenre
+      ? `<span class="genre-filter-chip">${escHtml(fileGenre)}<button onclick="clearFileGenre()" title="Clear genre filter">✕</button></span>`
+      : '';
+    countEl.innerHTML = `${chip}${totalMatched.toLocaleString()} file${totalMatched !== 1 ? 's' : ''} · ${albumsGrouped.length.toLocaleString()} folder${albumsGrouped.length !== 1 ? 's' : ''}`;
+  }
 
   if (!albumsGrouped.length) { el.innerHTML = ''; empty.style.display = ''; return; }
   empty.style.display = 'none';

@@ -648,6 +648,36 @@ async def file_cover(path: str, v: str | None = None):
     )
 
 
+@app.get("/api/files/by-genre")
+async def files_by_genre(genre: str):
+    """Relative paths of indexed tracks whose (comma-joined) genre includes
+    ``genre`` — powers the Files page's click-a-genre filter from the Dashboard
+    radial chart. Reads library_tracks (needs an Audit); paths are relativized to
+    the Files root exactly like /api/files so the frontend can intersect them."""
+    want = genre.strip().casefold()
+    if not want:
+        return {"paths": []}
+    base = Path(_files_root()).resolve()
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                "SELECT path, genre FROM library_tracks WHERE genre IS NOT NULL AND genre != ''"
+            ) as cur:
+                rows = await cur.fetchall()
+    except Exception:
+        return {"paths": []}
+    paths = []
+    for path, g in rows:
+        tokens = [t.strip().casefold() for t in (g or "").split(",")]
+        if want not in tokens:
+            continue
+        try:
+            paths.append(str(Path(path).resolve().relative_to(base)))
+        except ValueError:
+            continue
+    return {"paths": paths}
+
+
 @app.delete("/api/files")
 async def delete_file(body: dict):
     rel = body.get("path", "")
