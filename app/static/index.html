@@ -94,7 +94,13 @@
   textarea { width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 12px; font-size: 14px; resize: vertical; min-height: 120px; outline: none; font-family: monospace; }
   textarea:focus { border-color: var(--accent); }
   .add-actions { display: flex; gap: 10px; margin-top: 12px; }
-  button { padding: 9px 18px; border-radius: 6px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; transition: all .15s; }
+  button { padding: 9px 18px; border-radius: 6px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; transition: all .15s, transform .07s ease; }
+  /* Tactile press feedback on every button so a click reads as "doing something" */
+  button:active:not(:disabled) { transform: scale(.95); }
+  /* Async "working" state: prepend a spinner + lock the button while a request is in flight */
+  .btn-busy { pointer-events: none; opacity: .75; }
+  .btn-spinner { display: inline-block; width: 12px; height: 12px; margin-right: 7px; vertical-align: -1px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: btnspin .6s linear infinite; }
+  @keyframes btnspin { to { transform: rotate(360deg); } }
   .btn-primary { background: var(--accent); color: #fff; }
   .btn-primary:hover { background: var(--accent2); }
   .btn-primary:disabled { opacity: .5; cursor: default; }
@@ -152,6 +158,8 @@
   .file-alpha button { min-width: 22px; height: 22px; padding: 0 4px; background: transparent; border: none; border-radius: 4px; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; }
   .file-alpha button:hover:not(:disabled) { background: var(--surface2); color: var(--text); }
   .file-alpha button:disabled { opacity: .28; cursor: default; }
+  .files-loading { display: flex; align-items: center; justify-content: center; gap: 11px; color: var(--muted); font-size: 13px; padding: 56px 20px; }
+  .files-loading .btn-spinner { width: 17px; height: 17px; color: var(--accent); margin: 0; }
   .album-group.flash > .album-header { animation: albumflash 1.1s ease; }
   @keyframes albumflash { 0%,40% { background: var(--accent-soft); } 100% { background: transparent; } }
   .album-group { margin-bottom: 16px; scroll-margin-top: 96px; }
@@ -850,11 +858,14 @@
         <option value=".wav">WAV</option>
         <option value=".opus">Opus</option>
       </select>
-      <button class="btn-ghost btn-sm" onclick="loadFiles(true)">↻ Refresh</button>
+      <button class="btn-ghost btn-sm" onclick="runBusy(this, () => loadFiles(true))">↻ Refresh</button>
     </div>
     <div id="fileAlpha" class="file-alpha"></div>
     </div>
     <div id="fileCount" style="color:var(--muted);font-size:12px;margin:0 0 12px"></div>
+    <div id="filesLoading" class="files-loading" style="display:none">
+      <span class="btn-spinner"></span><span id="filesLoadingText">Retrieving your library…</span>
+    </div>
     <div id="filesList"></div>
     <div class="empty" id="filesEmpty" style="display:none">
       <div class="empty-icon"><svg viewBox="0 0 24 24" width="46" height="46" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:.5"><path d="M3 7a1.6 1.6 0 0 1 1.6-1.6h3.7l2 2.2h8.1A1.6 1.6 0 0 1 21 9.2v8.2a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 17.4z"/></svg></div>
@@ -901,6 +912,24 @@ function switchTab(name) {
 }
 async function loadActivity() { loadPrepJobs(); renderActivity(); }
 const navigate = switchTab;
+
+// Run an async action from a button click with a "working" spinner on the button.
+// Locks the button, prepends a spinner, and restores it when the promise settles —
+// so any click that kicks off a request visibly reads as in-progress.
+async function runBusy(btn, fn) {
+  if (!btn || btn.disabled || btn.classList.contains('btn-busy')) return;
+  const label = btn.innerHTML;
+  btn.classList.add('btn-busy');
+  btn.setAttribute('aria-busy', 'true');
+  btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>' + label;
+  try {
+    return await fn();
+  } finally {
+    btn.classList.remove('btn-busy');
+    btn.removeAttribute('aria-busy');
+    btn.innerHTML = label;
+  }
+}
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 async function loadDashboard() {
@@ -1259,10 +1288,41 @@ function escHtml(s) {
 
 // ── Files ─────────────────────────────────────────────────────────────────────
 async function loadFiles(refresh = false) {
-  const res = await fetch('/api/files' + (refresh ? '?refresh=1' : ''));
-  const data = await res.json();
-  filesData = data.files || [];
-  renderFiles();
+  const loadingEl = document.getElementById('filesLoading');
+  const textEl = document.getElementById('filesLoadingText');
+  const emptyEl = document.getElementById('filesEmpty');
+  const countEl = document.getElementById('fileCount');
+  const t0 = Date.now();
+  let ticker = null, showTimer = null;
+  const showLoading = () => {
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (countEl) countEl.textContent = '';
+    if (loadingEl) loadingEl.style.display = 'flex';
+    const verb = refresh ? 'Rescanning' : 'Retrieving';
+    const tick = () => {
+      const secs = Math.round((Date.now() - t0) / 1000);
+      if (textEl) textEl.textContent = `${verb} your library…${secs >= 1 ? ' ' + secs + 's' : ''}`;
+    };
+    tick();
+    ticker = setInterval(tick, 500);
+  };
+  // Explicit Refresh → show feedback at once; a passive tab-open → only reveal it
+  // if the fetch is slow, so a fast cached load doesn't flash a spinner.
+  if (refresh) showLoading(); else showTimer = setTimeout(showLoading, 180);
+
+  let ok = false;
+  try {
+    const res = await fetch('/api/files' + (refresh ? '?refresh=1' : ''));
+    const data = await res.json();
+    filesData = data.files || [];
+    ok = true;
+  } catch (e) { /* handled below */ }
+
+  if (showTimer) clearTimeout(showTimer);
+  if (ticker) clearInterval(ticker);
+  if (loadingEl) loadingEl.style.display = 'none';
+  if (ok) renderFiles();
+  else if (countEl) countEl.textContent = 'Could not load files — try Refresh.';
 }
 
 let albumsGrouped = [];   // [ [dirPath, tracks[]], … ] — source for lazy track render
