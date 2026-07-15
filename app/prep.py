@@ -289,6 +289,18 @@ async def _prep_worker():
                             rows, use_online, progress_cb, cancel_ev.is_set,
                             llm_resolver=llm_resolver)
                     )
+                elif jtype == "crosscheck":
+                    rows = await _fetch_library_tracks()
+                    use_online = bool(job_spec["settings"].get("use_online", True))
+                    llm_resolver = None
+                    if job_spec["settings"].get("use_llm") and ai_curator.is_enabled():
+                        llm_resolver = lambda names: ai_curator.genres_for_artists(
+                            names, tagtools.CONTROLLED_GENRES)
+                    summary = await _loop.run_in_executor(
+                        None, lambda: tagtools.run_genre_crosscheck(
+                            rows, use_online, progress_cb, cancel_ev.is_set,
+                            llm_resolver=llm_resolver)
+                    )
                 elif jtype == "unify":
                     rows = await _fetch_library_tracks()
                     approved = job_spec["settings"].get("approved", {})
@@ -695,6 +707,30 @@ async def latest_review():
     if not st:
         return {"review": None}
     return {"review": {"summary": st["summary"], "created_at": st["when"]}}
+
+
+@router.post("/genres/cross-check")
+async def start_genre_crosscheck(body: dict):
+    """Cross-check locally-consistent artist genres against MusicBrainz (+ optional
+    Claude) and flag disagreements — where every track agrees on a genre the external
+    source contradicts. Needs an Audit. A slow, bounded network job (like review)."""
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute("SELECT COUNT(*) FROM library_tracks") as cur:
+            (count,) = await cur.fetchone()
+    if not count:
+        raise HTTPException(400, "No indexed tracks — run Audit first.")
+    settings = {"use_online": bool(body.get("use_online", True)),
+                "use_llm": bool(body.get("use_llm"))}
+    return await _create_and_enqueue("crosscheck", MUSIC_DIR or "", "", settings)
+
+
+@router.get("/genres/cross-check/latest")
+async def latest_crosscheck():
+    """Most recent completed cross-check result (durable)."""
+    st = await _latest_summary("crosscheck")
+    if not st:
+        return {"crosscheck": None}
+    return {"crosscheck": {"summary": st["summary"], "created_at": st["when"]}}
 
 
 @router.post("/genres/apply")

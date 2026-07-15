@@ -856,3 +856,104 @@ def run_genre_align(tracks: List[dict], approved: dict, progress_cb, record_cb,
         "cancelled": bool(should_cancel()),
     }
 
+
+def run_genre_crosscheck(tracks: List[dict], use_online: bool, progress_cb, should_cancel,
+                         online_cap: int = 150, online_budget_s: float = 120.0,
+                         llm_resolver=None, llm_cap: int = 200) -> dict:
+    """Cross-check locally-consistent artist genres against external sources and flag
+    DISAGREEMENTS — the case majority-vote can never catch, where every track of an
+    artist agrees on a genre that MusicBrainz (or Claude) contradicts.
+
+    Read-only + network; writes nothing. An artist is *consistent* if one genre set
+    is held by >=2 tracks AND >=60% of their tracks (and is non-empty). For each, the
+    external genre is fetched (MusicBrainz per artist, bounded by ``online_cap`` +
+    ``online_budget_s`` like the review; then an optional batched Claude pass over
+    artists MusicBrainz didn't cover). A disagreement = the local genre set is
+    *disjoint* from the external set. Returns only disagreements as proposals
+    [{artist, key, local, external, source, track_count}]; genre is subjective, so
+    this is advisory — the user reviews and applies via unify."""
+    maybe_reload()
+    groups: dict = {}
+    for t in tracks:
+        key = artist_key(t.get("albumartist"), t.get("artist"))
+        if key:
+            groups.setdefault(key, []).append(t)
+
+    total = len(groups)
+    done = 0
+    consistent = []          # (key, local_set, local_list, track_count)
+    for key, group in sorted(groups.items()):
+        if should_cancel():
+            break
+        n = len(group)
+        counts = Counter()
+        for t in group:
+            g = ", ".join(_parse_stored_genre(t.get("genre")))
+            if g:
+                counts[g] += 1
+        done += 1
+        progress_cb({"done": done, "total": total, "current_file": key, "action": "crosscheck"})
+        if not counts:
+            continue
+        dom, dc = counts.most_common(1)[0]
+        if dc < 2 or dc < 0.6 * n:
+            continue                       # no clear artist-wide genre → nothing to check
+        local_list = _parse_stored_genre(dom)
+        consistent.append((key, {g.lower() for g in local_list}, local_list, n))
+
+    proposals = []
+    checked = 0
+    online_used = 0
+    online_started = time.monotonic()
+    online_budget_hit = False
+    unresolved_after_mb = []               # MB gave nothing → candidates for Claude
+
+    for key, local_set, local_list, n in consistent:
+        if should_cancel():
+            break
+        external = []
+        if use_online and online_used < online_cap and not online_budget_hit:
+            if time.monotonic() - online_started > online_budget_s:
+                online_budget_hit = True
+            else:
+                online_used += 1
+                external = musicbrainz_genres(key)
+        if external:
+            checked += 1
+            if local_set.isdisjoint({g.lower() for g in external}):
+                proposals.append({"artist": key, "key": key.lower(), "local": local_list,
+                                  "external": external, "source": "musicbrainz", "track_count": n})
+        else:
+            unresolved_after_mb.append((key, local_set, local_list, n))
+
+    llm_used = 0
+    if llm_resolver and unresolved_after_mb and not should_cancel():
+        names = [k for k, _, _, _ in unresolved_after_mb][:llm_cap]
+        try:
+            resolved = llm_resolver(names) or {}
+        except Exception:
+            resolved = {}
+        by_low = {(k or "").lower(): v for k, v in resolved.items()}
+        for key, local_set, local_list, n in unresolved_after_mb:
+            ext = normalize_genre(by_low.get(key.lower()) or [])
+            if ext:
+                checked += 1
+                if local_set.isdisjoint({g.lower() for g in ext}):
+                    proposals.append({"artist": key, "key": key.lower(), "local": local_list,
+                                      "external": ext, "source": "llm", "track_count": n})
+                    llm_used += 1
+
+    proposals.sort(key=lambda p: (-p["track_count"], p["artist"].lower()))
+    return {
+        "total_artists": total,
+        "consistent_artists": len(consistent),
+        "checked": checked,
+        "disagreements": len(proposals),
+        "online_lookups": online_used,
+        "online_capped": use_online and (online_used >= online_cap or online_budget_hit),
+        "llm_lookups": llm_used,
+        "used_online": use_online,
+        "artists": proposals,
+        "cancelled": bool(should_cancel()),
+    }
+
