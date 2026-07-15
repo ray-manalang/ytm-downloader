@@ -281,6 +281,16 @@
   .suspect-row.off { opacity: .45; }
   .suspect-row.off .suspect-input { color: var(--muted); }
 
+  /* Unmapped-genre mapper */
+  .unmapped-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); }
+  .unmapped-raw { flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .unmapped-raw .u-count { color: var(--muted); font-size: 11px; margin-left: 6px; }
+  .unmapped-arrow { color: var(--muted); flex-shrink: 0; }
+  .unmapped-sel { background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-size: 12px; padding: 4px 7px; outline: none; flex-shrink: 0; width: 160px; }
+  .unmapped-sel:focus { border-color: var(--accent); }
+  .unmapped-sel.set { color: var(--success); font-weight: 600; }
+  .unmapped-sel.junk { color: var(--muted); }
+
   /* Activity — process-monitor table */
   .act-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; position: sticky; top: 56px; background: var(--bg); padding: 10px 0; z-index: 4; }
   .act-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
@@ -677,6 +687,13 @@
       <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Albums whose album-artist matches no track artist — usually a record label or wrong name in the tag (e.g. Dido albums filed under the label “Disky”). This is why <strong>Complete genres</strong> fragments those artists. Review, uncheck any false positives (producer/DJ &amp; classical albums), then apply — every change is reversible.</div>
       <button class="btn-ghost btn-sm" id="suspectAABtn" onclick="loadSuspectAlbumArtist()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V4.8A2 2 0 0 1 4.8 2.8H12a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Scan for mislabeled album artists</button>
       <div id="suspectAAReport" style="margin-top:12px"></div>
+    </div>
+
+    <div class="add-box" style="margin-top:20px">
+      <div style="font-weight:600;font-size:15px">Unmapped genres</div>
+      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Raw genre strings in your files that map to nothing in the controlled vocabulary — so they get dropped. Assign each to a controlled genre (or mark as junk) to <strong>teach the vocabulary</strong>; future Audit/Clean runs will normalize them automatically.</div>
+      <button class="btn-ghost btn-sm" id="unmappedBtn" onclick="loadUnmappedGenres()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m15 15 2.5 2.5L22 13"/></svg>Map unmapped genres</button>
+      <div id="unmappedReport" style="margin-top:12px"></div>
     </div>
   </div>
 
@@ -2217,6 +2234,8 @@ async function clearSyncHistory() {
 // ── Convert / iPod-Prep ─────────────────────────────────────────────────────
 const prepJobs = {};        // id -> job object
 let prepConfigLoaded = false;
+let controlledGenres = [];   // controlled vocabulary for the unmapped-genre mapper
+let genresFileSet = false;   // is GENRES_FILE mounted (so vocab edits persist)?
 
 async function loadConvert() {
   if (!prepConfigLoaded) {
@@ -2233,6 +2252,8 @@ async function loadConvert() {
       // Claude genre-resolution option only appears when ANTHROPIC_API_KEY is set.
       const llmLabel = document.getElementById('reviewLLMLabel');
       if (llmLabel) llmLabel.style.display = cfg.ai_enabled ? 'flex' : 'none';
+      controlledGenres = cfg.controlled_genres || [];
+      genresFileSet = !!cfg.genres_file_set;
       prepConfigLoaded = true;
     } catch {}
   }
@@ -2605,6 +2626,90 @@ async function loadSuspectAlbumArtist() {
       if (!d.total) { el.innerHTML = '<span style="color:var(--accent);font-size:13px">✓ No mislabeled album artists found — every album artist matches a track artist.</span>'; return; }
       el.innerHTML = suspectAAHTML(d);
     } catch { el.innerHTML = '<span style="color:var(--danger);font-size:13px">Scan failed.</span>'; }
+  });
+}
+
+// Pre-select a controlled genre when it appears verbatim in the raw string
+// (e.g. "Dance-Pop" → Pop, "Alternative & Punk" → Alternative). Longest match wins.
+function _guessGenre(raw) {
+  const low = String(raw).toLowerCase();
+  let best = '';
+  for (const g of controlledGenres) {
+    const gl = g.toLowerCase();
+    if (low.includes(gl) && gl.length > best.length) best = g;
+  }
+  return best;
+}
+
+function unmappedMapperHTML(unmapped) {
+  const opts = (sel) => ['<option value="">Skip</option>']
+    .concat(controlledGenres.map(g => `<option value="${escHtml(g)}"${g === sel ? ' selected' : ''}>${escHtml(g)}</option>`))
+    .concat(`<option value="__junk__"${sel === '__junk__' ? ' selected' : ''}>— Junk (drop)</option>`)
+    .join('');
+  const rows = unmapped.map(u => {
+    const guess = _guessGenre(u.value);
+    return `<div class="unmapped-row">
+      <div class="unmapped-raw" title="${escHtml(u.value)}">${escHtml(u.value)}<span class="u-count">${u.count}</span></div>
+      <span class="unmapped-arrow">→</span>
+      <select class="unmapped-sel${guess ? ' set' : ''}" data-raw="${escHtml(u.value)}" onchange="onUnmappedSelChange(this)">${opts(guess)}</select>
+    </div>`;
+  }).join('');
+  const heading = `<strong>${unmapped.length}</strong> raw genre string${unmapped.length !== 1 ? 's' : ''} map to nothing. Assign each to a controlled genre or mark as junk — leave <em>Skip</em> to decide later. Common matches are pre-filled; review them.`;
+  return `<div style="font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.5">${heading}</div>
+    <div class="suspect-list">${rows}</div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap">
+      <button class="btn-primary btn-sm" id="unmappedSaveBtn" onclick="saveUnmappedGenres()">Save mappings</button>
+      <span id="unmappedNote" style="color:var(--muted);font-size:12px">Writes to the genre vocabulary; run Clean tags afterward to apply to your library.</span>
+    </div>`;
+}
+
+function onUnmappedSelChange(sel) {
+  sel.classList.toggle('set', !!sel.value && sel.value !== '__junk__');
+  sel.classList.toggle('junk', sel.value === '__junk__');
+}
+
+async function loadUnmappedGenres() {
+  const el = document.getElementById('unmappedReport');
+  const btn = document.getElementById('unmappedBtn');
+  return runBusy(btn, async () => {
+    el.innerHTML = '<span style="color:var(--muted);font-size:13px">Loading unmapped genres…</span>';
+    try {
+      if (!controlledGenres.length) {
+        try { const c = await (await fetch('/api/prep/config')).json(); controlledGenres = c.controlled_genres || []; genresFileSet = !!c.genres_file_set; } catch {}
+      }
+      const res = await fetch('/api/prep/audit/latest');
+      const d = await res.json().catch(() => ({}));
+      const unmapped = (d.audit && d.audit.summary && d.audit.summary.unmapped_genres) || [];
+      if (!unmapped.length) { el.innerHTML = '<span style="color:var(--accent);font-size:13px">✓ No unmapped genres — every genre string maps to the vocabulary. (Run an Audit first if you just changed files.)</span>'; return; }
+      el.innerHTML = unmappedMapperHTML(unmapped);
+    } catch { el.innerHTML = '<span style="color:var(--danger);font-size:13px">Failed to load.</span>'; }
+  });
+}
+
+async function saveUnmappedGenres() {
+  const assignments = {};
+  document.querySelectorAll('.unmapped-sel').forEach(sel => {
+    if (sel.value) assignments[sel.dataset.raw] = sel.value;   // '' (Skip) omitted
+  });
+  if (!Object.keys(assignments).length) return;
+  const btn = document.getElementById('unmappedSaveBtn');
+  const note = document.getElementById('unmappedNote');
+  return runBusy(btn, async () => {
+    try {
+      const res = await fetch('/api/prep/genres/vocab', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ assignments }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { if (note) note.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'Save failed.')}</span>`; return; }
+      const saved = d.saved || {};
+      const persistWarn = d.genres_file_set ? ''
+        : '<div style="color:var(--warn);font-size:12px;margin-top:6px">GENRES_FILE isn\'t mounted, so this vocabulary edit is lost on the next image update. Mount a writable file at GENRES_FILE to keep it.</div>';
+      const cleanBtn = d.can_clean
+        ? `<button class="btn-primary btn-sm" style="margin-top:10px" onclick="startClean()">Clean tags now →</button>` : '';
+      document.getElementById('unmappedReport').innerHTML =
+        `<span style="color:var(--accent);font-size:13px">✓ Vocabulary updated — ${saved.added_exact || 0} mapped, ${saved.added_junk || 0} marked junk. Run <strong>Clean tags</strong> to apply to your library, then re-run Audit to refresh this list.</span>${persistWarn}<div>${cleanBtn}</div>`;
+    } catch { if (note) note.innerHTML = '<span style="color:var(--danger)">Save failed.</span>'; }
   });
 }
 

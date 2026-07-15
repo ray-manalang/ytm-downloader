@@ -118,6 +118,50 @@ def maybe_reload():
         _MTIMES = now
 
 
+JUNK_SENTINEL = "__junk__"
+
+
+def save_vocab_additions(assignments: dict) -> dict:
+    """Merge raw→controlled genre aliases (and junk terms) into the genres file on
+    disk, then reload so subsequent normalize/Clean uses them.
+
+    ``assignments`` maps a raw genre string → a controlled genre name, or the
+    sentinel ``__junk__`` to drop it. Only targets in the controlled vocabulary are
+    written to ``exact``; unknown targets are skipped. Raises ``OSError`` if the
+    file isn't writable (the bundled image copy is read-only → the caller tells the
+    user to mount ``GENRES_FILE``). Returns counts of what was added."""
+    path = Path(_DATA_PATH)
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    exact = data.setdefault("exact", {})
+    junk = data.setdefault("junk", [])
+    junk_lower = {str(j).lower() for j in junk}
+    controlled_lower = {g.lower(): g for g in data.get("controlled", [])}
+
+    added_exact = added_junk = 0
+    for raw, target in assignments.items():
+        raw = str(raw).strip()
+        if not raw:
+            continue
+        if target == JUNK_SENTINEL:
+            if raw.lower() not in junk_lower:
+                junk.append(raw)
+                junk_lower.add(raw.lower())
+                added_junk += 1
+        elif target and str(target).lower() in controlled_lower:
+            exact[raw] = controlled_lower[str(target).lower()]  # canonical casing
+            added_exact += 1
+
+    tmp = str(path) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
+    reload_data()
+    global _MTIMES
+    _MTIMES = _current_mtimes()  # we just reloaded — don't let maybe_reload redo it
+    return {"added_exact": added_exact, "added_junk": added_junk}
+
+
 def _map_token(token: str) -> Optional[str]:
     """Map one already-split token to a controlled genre, or None to drop it."""
     t = token.strip()

@@ -529,6 +529,8 @@ async def prep_config():
         "aac_bitrate": AAC_BITRATE,
         "max_concurrent": MAX_CONCURRENT_CONVERSIONS,
         "ai_enabled": ai_curator.is_enabled(),
+        "controlled_genres": list(tagtools.CONTROLLED_GENRES),
+        "genres_file_set": bool(os.environ.get("GENRES_FILE")),
     }
 
 
@@ -701,6 +703,34 @@ async def apply_genres(body: dict):
     if not os.access(source_dir, os.W_OK):
         raise HTTPException(400, f"Library is not writable (mount without :ro): {source_dir}")
     return await _create_and_enqueue("unify", source_dir, "", {"approved": clean})
+
+
+@router.post("/genres/vocab")
+async def save_genre_vocab(body: dict):
+    """Teach the genre vocabulary: map raw unmapped genre strings (from Audit) to
+    controlled genres, or mark them junk. Writes genres.json so future Audit/Clean
+    normalize them. Body: {assignments: {raw: <controlled genre>|"__junk__"}} —
+    "__skip__" (or falsy) entries are ignored. The library isn't retagged here;
+    the response says whether a Clean can apply it now."""
+    raw = body.get("assignments") or {}
+    assignments = {str(k): str(v) for k, v in raw.items()
+                   if v and str(v) not in ("__skip__", "")}
+    if not assignments:
+        raise HTTPException(400, "No genre mappings to save")
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: tagtools.save_vocab_additions(assignments))
+    except OSError:
+        raise HTTPException(400, "The genre vocabulary file isn't writable. Bind-mount a "
+                                 "writable file at GENRES_FILE to edit the vocab on a live deployment.")
+    except Exception as e:
+        raise HTTPException(400, f"Could not save vocabulary: {e}")
+    src = MUSIC_DIR or ""
+    return {
+        "saved": result,
+        "can_clean": bool(src and os.access(src, os.W_OK)),
+        "genres_file_set": bool(os.environ.get("GENRES_FILE")),
+    }
 
 
 async def _save_pipeline_state(jtype: str, summary):
