@@ -3068,10 +3068,11 @@ function renderCrosscheckTable(oc, last) {
   if (!el) return;
   _lastCrosscheck = oc;
   if (!oc) { el.innerHTML = ''; return; }
-  const total = oc.consistent_artists || 0, checked = oc.checked || 0, remaining = oc.remaining || 0;
+  const total = oc.consistent_artists || 0, checked = oc.checked || 0, remaining = oc.remaining || 0, dismissed = oc.dismissed || 0;
   const lastNote = last && last.checked != null ? ` · last run checked ${last.checked}${last.online_capped ? ' (hit the per-run cap)' : ''}` : '';
+  const dismissedNote = dismissed ? ` · ${dismissed} dismissed` : '';
   const coverage = total
-    ? `<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Coverage: <strong style="color:var(--text)">${checked}</strong> of ${total} consistent artists checked${remaining ? ` · <strong style="color:var(--warn)">${remaining}</strong> not yet checked — run again to continue` : ' · <span style="color:var(--success)">complete</span>'}${lastNote}${checked ? ` · <a href="#" onclick="resetCrosscheck();return false" style="color:var(--muted)">reset coverage</a>` : ''}</div>`
+    ? `<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Coverage: <strong style="color:var(--text)">${checked}</strong> of ${total} consistent artists checked${remaining ? ` · <strong style="color:var(--warn)">${remaining}</strong> not yet checked — run again to continue` : ' · <span style="color:var(--success)">complete</span>'}${dismissedNote}${lastNote}${checked ? ` · <a href="#" onclick="resetCrosscheck();return false" style="color:var(--muted)">reset coverage</a>` : ''}</div>`
     : '';
   const artists = oc.artists || [];
   if (!artists.length) {
@@ -3090,10 +3091,11 @@ function renderCrosscheckTable(oc, last) {
       <div class="suspect-edit">
         <span style="color:var(--muted)">set →</span>
         <input class="cc-input" data-i="${i}" value="${escHtml(external)}" spellcheck="false" aria-label="Corrected genre">
+        <button class="btn-ghost btn-sm" style="padding:3px 7px" title="Dismiss — wrong match, or keep my genre (won't change tags)" onclick="dismissCrosscheckRow(${i})">✕</button>
       </div>
     </div>`;
   }).join('');
-  const heading = `<strong style="color:var(--warn)">${artists.length}</strong> artist${artists.length !== 1 ? 's' : ''} whose consistent library genre disagrees with the external source (accumulated across runs). Genre is subjective — <strong>review carefully</strong>, uncheck any you disagree with, then apply (reversible from Activity).`;
+  const heading = `<strong style="color:var(--warn)">${artists.length}</strong> artist${artists.length !== 1 ? 's' : ''} whose consistent library genre disagrees with the external source (accumulated across runs). Genre is subjective and external sources can match the <em>wrong</em> same-named artist — <strong>review carefully</strong>. <strong>Apply</strong> to write the genre on the right (and hide it); <strong>✕</strong> to dismiss a wrong match without changing tags. <a href="#" onclick="resetCrosscheck();return false" style="color:var(--muted)">reset</a> brings dismissed ones back.`;
   el.innerHTML = coverage + `<div style="font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.5">${heading}</div>
     <div class="suspect-list">${rows}</div>
     <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap">
@@ -3137,11 +3139,32 @@ async function applyCrosscheck() {
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { if (note) note.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'Apply failed.')}</span>`; return; }
+      // Mark the applied artists dismissed so they don't reappear even if the genre
+      // you chose differs from the cached external answer.
+      try { await fetch('/api/prep/genres/cross-check/dismiss', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ keys: Object.keys(approved) }) }); } catch {}
       document.getElementById('crosscheckReport').innerHTML =
         `<span style="color:var(--accent);font-size:13px">✓ Applying corrected genres to ${n} artist${n !== 1 ? 's' : ''} — track it on the Activity page.</span>`;
       switchTab('activity');
     } catch { if (note) note.innerHTML = '<span style="color:var(--danger)">Apply failed.</span>'; }
   });
+}
+
+// Dismiss a wrong external match (or a genre you've decided to keep) so it stops
+// reappearing — without touching tags. Reset coverage brings it back.
+function dismissCrosscheckRow(i) {
+  const a = (_lastCrosscheck && _lastCrosscheck.artists || [])[i];
+  if (a) dismissCrosscheck([a.key], a.artist);
+}
+
+async function dismissCrosscheck(keys, label) {
+  if (!keys || !keys.length) return;
+  try {
+    await fetch('/api/prep/genres/cross-check/dismiss', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ keys }),
+    });
+  } catch {}
+  loadCrosscheck();
 }
 
 async function resetCrosscheck() {

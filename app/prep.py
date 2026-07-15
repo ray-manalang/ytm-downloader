@@ -764,8 +764,8 @@ async def crosscheck_outstanding():
     artist's disagreement is re-derived against the CURRENT library genre, so applied
     fixes drop out automatically. This is what the review table reads."""
     async with aiosqlite.connect(_db_path) as db:
-        async with db.execute("SELECT artist_key, source, external FROM crosscheck_state") as cur:
-            state = {r[0]: (r[1], r[2]) for r in await cur.fetchall()}
+        async with db.execute("SELECT artist_key, source, external, dismissed FROM crosscheck_state") as cur:
+            state = {r[0]: (r[1], r[2], r[3]) for r in await cur.fetchall()}
         async with db.execute("SELECT artist, albumartist, genre FROM library_tracks") as cur:
             rows = await cur.fetchall()
 
@@ -788,10 +788,14 @@ async def crosscheck_outstanding():
         consistent[key.lower()] = (key, local_list, {g.lower() for g in local_list}, n)
 
     artists = []
-    for k, (source, ext_json) in state.items():
+    dismissed_count = 0
+    for k, (source, ext_json, dismissed) in state.items():
         c = consistent.get(k)
         if not c:
             continue                        # no longer consistent — stays "checked", just not shown
+        if dismissed:
+            dismissed_count += 1
+            continue                        # user reviewed & hid it (e.g. a wrong external match)
         disp, local_list, local_set, n = c
         try:
             external = json.loads(ext_json or "[]")
@@ -807,8 +811,25 @@ async def crosscheck_outstanding():
         "consistent_artists": len(consistent),
         "checked": checked,
         "remaining": len(consistent) - checked,
+        "dismissed": dismissed_count,
         "artists": artists,
     }
+
+
+@router.post("/genres/cross-check/dismiss")
+async def dismiss_crosscheck(body: dict):
+    """Hide cross-check disagreements for the given artist keys — for false matches
+    (MusicBrainz found a different same-named artist) or genres you've decided to keep.
+    Doesn't touch tags; the artists stay 'checked' so re-runs skip them. Reset coverage
+    to bring them back."""
+    keys = [str(k).strip().lower() for k in (body.get("keys") or []) if str(k).strip()]
+    if not keys:
+        raise HTTPException(400, "No artists to dismiss")
+    async with aiosqlite.connect(_db_path) as db:
+        await db.executemany(
+            "UPDATE crosscheck_state SET dismissed=1 WHERE artist_key=?", [(k,) for k in keys])
+        await db.commit()
+    return {"dismissed": len(keys)}
 
 
 @router.delete("/genres/cross-check")

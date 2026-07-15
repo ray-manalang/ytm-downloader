@@ -151,9 +151,15 @@ async def db_init():
                 artist_key TEXT PRIMARY KEY,           -- lowercased artist key already cross-checked
                 checked_at REAL,
                 source     TEXT,                       -- musicbrainz|llm|none
-                external   TEXT                        -- JSON list of external genres ([] = none/not found)
+                external   TEXT,                       -- JSON list of external genres ([] = none/not found)
+                dismissed  INTEGER DEFAULT 0           -- user reviewed & hid it (e.g. external was a wrong match)
             )
         """)
+        # Migrate crosscheck_state tables created before the `dismissed` column.
+        async with db.execute("PRAGMA table_info(crosscheck_state)") as cur:
+            cc_cols = [r[1] for r in await cur.fetchall()]
+        if "dismissed" not in cc_cols:
+            await db.execute("ALTER TABLE crosscheck_state ADD COLUMN dismissed INTEGER DEFAULT 0")
         await db.commit()
 
 
