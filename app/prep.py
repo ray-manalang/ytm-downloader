@@ -12,8 +12,10 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Optional, Set
 
@@ -920,6 +922,90 @@ async def missing_albumartist_report():
         ) as cur:
             rows = await cur.fetchall()
     return _group_by_artist_album(rows)
+
+
+_FEAT_RE = re.compile(r"\s+(feat\.?|ft\.?|featuring|with)\s+.*$", re.IGNORECASE)
+
+
+def _artist_primary(name) -> str:
+    """The primary artist as displayed: first of a comma/semicolon list, minus a
+    trailing 'feat.'/'featuring' clause (so 'Dido feat. Faithless' → 'Dido')."""
+    if not name:
+        return ""
+    s = str(name).split(",")[0].split(";")[0].strip()
+    return _FEAT_RE.sub("", s).strip()
+
+
+def _artist_primary_key(name) -> str:
+    """Loose match key for a primary artist — casefold, leading 'The' dropped
+    (mirrors main._normalize_artist), so 'The Beatles' == 'beatles'."""
+    s = _artist_primary(name).casefold()
+    if s.startswith("the "):
+        s = s[4:]
+    return s.strip()
+
+
+@router.get("/suspect-albumartist")
+async def suspect_albumartist_report():
+    """Albums whose album-artist matches NONE of the album's own track artists — a
+    record label or wrong name sitting in the album-artist tag (e.g. Dido albums
+    filed under the label 'Disky'). Read-only; needs an Audit.
+
+    Groups indexed tracks by album folder, compares on the normalized *primary*
+    artist. A single-artist album proposes that track artist; a multi-artist album
+    proposes 'Various Artists'. Advisory only — album-artist is an identity tag and
+    producer/DJ + classical albums are genuine false positives, so this is for review,
+    not an auto-fix. 'Various Artists' album-artists and missing ones are left to their
+    own handling."""
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute(
+            "SELECT path, artist, albumartist, album FROM library_tracks"
+        ) as cur:
+            rows = await cur.fetchall()
+
+    base = Path(MUSIC_DIR).resolve() if MUSIC_DIR else None
+    albums: dict = {}
+    for path, artist, albumartist, album in rows:
+        albums.setdefault(str(Path(path).parent), []).append((artist, albumartist, album))
+
+    suspects = []
+    for folder, tracks in albums.items():
+        aa_counts = Counter((aa or "").strip() for _, aa, _ in tracks if (aa or "").strip())
+        if not aa_counts:
+            continue                        # missing album-artist → other report
+        album_artist = aa_counts.most_common(1)[0][0]
+        aa_key = _artist_primary_key(album_artist)
+        if not aa_key or aa_key == "various artists":
+            continue                        # intentional compilation marker
+
+        primaries = {}                      # key → display, distinct track artists
+        for ar, _, _ in tracks:
+            k = _artist_primary_key(ar)
+            if k and k != "unknown artist":
+                primaries.setdefault(k, _artist_primary(ar))
+        if not primaries or aa_key in primaries:
+            continue                        # no usable artists, or album-artist matches one
+
+        album_name = next((alb for _, _, alb in tracks if (alb or "").strip()), "") or Path(folder).name
+        single = len(primaries) == 1
+        disp_folder = folder
+        if base:
+            try:
+                disp_folder = str(Path(folder).resolve().relative_to(base))
+            except ValueError:
+                pass
+        suspects.append({
+            "folder": disp_folder,
+            "album": album_name,
+            "current": album_artist,
+            "proposed": next(iter(primaries.values())) if single else "Various Artists",
+            "kind": "single" if single else "compilation",
+            "track_count": len(tracks),
+            "track_artists": sorted(set(primaries.values()))[:6],
+        })
+
+    suspects.sort(key=lambda s: (s["kind"] != "single", s["current"].lower(), s["album"].lower()))
+    return {"total": len(suspects), "suspects": suspects}
 
 
 @router.get("/drm")

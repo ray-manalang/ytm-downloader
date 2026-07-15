@@ -267,6 +267,16 @@
   .aa-link { cursor: pointer; }
   .aa-link:hover { text-decoration: underline; }
 
+  /* Suspect album-artist report */
+  .suspect-list { display: flex; flex-direction: column; gap: 3px; }
+  .suspect-row { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+  .suspect-main { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .suspect-album { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .suspect-change { font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+  .suspect-old { color: var(--danger); }
+  .suspect-new { color: var(--success); font-weight: 600; }
+  .suspect-why { color: var(--muted); font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
   /* Activity — process-monitor table */
   .act-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; position: sticky; top: 56px; background: var(--bg); padding: 10px 0; z-index: 4; }
   .act-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
@@ -663,7 +673,9 @@
         <div class="step-title">Clean tags</div>
         <div class="step-status" id="stepCleanStatus">Normalize genres &amp; fill album artists.</div>
         <div class="step-desc">Maps genres to a controlled vocabulary and fills missing album artists, in place. One-click reversible from the Jobs list.</div>
-        <div class="step-actions"><button class="btn-ghost" id="cleanBtn" onclick="startClean()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Clean tags</button></div>
+        <div class="step-actions"><button class="btn-ghost" id="cleanBtn" onclick="startClean()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Clean tags</button>
+        <button class="btn-ghost btn-sm" id="suspectAABtn" onclick="loadSuspectAlbumArtist()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V4.8A2 2 0 0 1 4.8 2.8H12a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Check for mislabeled album artists</button></div>
+        <div id="suspectAAReport" style="margin-top:12px"></div>
       </div>
     </div>
 
@@ -2460,6 +2472,38 @@ async function loadMissingAlbumArtist() {
     el.innerHTML = artistAlbumTreeHTML(d,
       `<strong style="color:var(--warn)">${d.total}</strong> file${d.total !== 1 ? 's' : ''} missing an album artist across ${n} artist${n !== 1 ? 's' : ''} — <strong>Clean tags</strong> fills these from the track artist`);
   } catch { el.innerHTML = '<span style="color:var(--danger);font-size:13px">Failed to load.</span>'; }
+}
+
+function suspectAAHTML(d) {
+  const rows = d.suspects.map(s => {
+    const why = s.kind === 'single'
+      ? `every track is ${escHtml(s.track_artists.join(', '))}`
+      : `${s.track_count} tracks by ${s.track_artists.length}${s.track_artists.length >= 6 ? '+' : ''} artists — looks like a compilation`;
+    return `<div class="suspect-row" title="${escHtml(s.folder)}">
+      <div class="suspect-main">
+        <span class="suspect-album">${escHtml(s.album)}</span>
+        <span class="suspect-change"><span class="suspect-old">${escHtml(s.current)}</span> → <span class="suspect-new">${escHtml(s.proposed)}</span></span>
+      </div>
+      <div class="suspect-why">${why} · <span style="opacity:.7">${escHtml(s.folder)}</span></div>
+    </div>`;
+  }).join('');
+  const heading = `<strong style="color:var(--warn)">${d.total}</strong> album${d.total !== 1 ? 's' : ''} where the album artist matches no track artist — likely a record label or wrong name in the tag. <strong>Review before fixing</strong> (producer/DJ &amp; classical albums can be false positives). Album-artist isn't auto-corrected yet — fix these in your tagger and re-run Audit.`;
+  return `<div style="font-size:13px;color:var(--muted);margin-bottom:8px;line-height:1.5">${heading}</div><div class="suspect-list">${rows}</div>`;
+}
+
+async function loadSuspectAlbumArtist() {
+  const el = document.getElementById('suspectAAReport');
+  const btn = document.getElementById('suspectAABtn');
+  return runBusy(btn, async () => {
+    el.innerHTML = '<span style="color:var(--muted);font-size:13px">Scanning the index for mislabeled album artists…</span>';
+    try {
+      const res = await fetch('/api/prep/suspect-albumartist');
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Scan failed — run an Audit first.')}</span>`; return; }
+      if (!d.total) { el.innerHTML = '<span style="color:var(--accent);font-size:13px">✓ No mislabeled album artists found — every album artist matches a track artist.</span>'; return; }
+      el.innerHTML = suspectAAHTML(d);
+    } catch { el.innerHTML = '<span style="color:var(--danger);font-size:13px">Scan failed.</span>'; }
+  });
 }
 
 async function startConvert() {

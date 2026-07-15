@@ -155,6 +155,7 @@ Auto-generated YTM playlists ("Liked Music", "Episodes for Later", "New Episodes
 | GET | `/api/prep/audit/latest` | Most recent completed audit summary |
 | GET | `/api/prep/drm` | List DRM-protected `.m4p` files grouped by artist → album (read-only scan; these aren't in `library_tracks` since `is_audio_file` excludes `.m4p`) |
 | GET | `/api/prep/missing-albumartist` | Indexed files with no album-artist, grouped by artist → album (from `library_tracks`; needs an Audit). The audit panel's "N missing album artist" count links to it |
+| GET | `/api/prep/suspect-albumartist` | **Read-only** report of albums whose album-artist matches none of the album's own track artists — a record label or wrong name in the tag (e.g. Dido albums filed under the label "Disky"). Groups `library_tracks` by album folder, compares on the normalized *primary* artist; single-artist albums propose the track artist, multi-artist ones propose "Various Artists". Advisory only (producer/DJ + classical are false positives) — **not** an auto-fix; surfaced in the Clean step for manual correction |
 | GET | `/api/prep/mirror/orphans` | Dry-run reconcile: mirror files whose source is gone, grouped by artist → album + total size (`_scan_mirror_orphans`; skips the Playlists folder) |
 | POST | `/api/prep/mirror/prune` | Delete those orphaned mirror files (+ empty dirs), then `regenerate_all_auto`. Convert only adds/updates; this is the "remove" half of a true one-way sync |
 | POST | `/api/prep/jobs/{id}/rollback` | Restore a `tags` or `unify` job from its `prep_changes` pre-images |
