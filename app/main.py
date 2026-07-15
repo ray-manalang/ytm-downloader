@@ -24,6 +24,7 @@ from . import playlists as playlists_module
 from . import converter
 from . import tagtools
 from . import filecache
+from . import covers
 
 DB_PATH = os.environ.get("DB_PATH", "./data/downloads.db")
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "2"))
@@ -613,6 +614,38 @@ async def list_files(refresh: bool = False):
             files.append({"path": rel, "size": e["size"], "modified": e["mtime"]})
     files.sort(key=lambda f: f["path"].lower())
     return {"files": files}
+
+
+# Cap concurrent cover extractions so a fast scroll can't spawn a burst of
+# mount reads. Cheap cache hits still pass through quickly.
+_cover_sema = asyncio.Semaphore(4)
+
+
+@app.get("/api/files/cover")
+async def file_cover(path: str, v: str | None = None):
+    """Return a small cached thumbnail of a track's embedded cover, or 404 if it
+    has none. Lazily requested by the Files page per album scrolled into view; the
+    ``v`` (mtime) query param only busts the browser/HTTP cache — the on-disk cache
+    keys on the file's real mtime. See covers.get_thumbnail."""
+    root = _files_root()
+    base = Path(root).resolve()
+    target = (base / path).resolve()
+    try:
+        target.relative_to(base)          # contain within the library root
+    except ValueError:
+        raise HTTPException(404, "Not found")
+    if not target.is_file():
+        raise HTTPException(404, "Not found")
+
+    async with _cover_sema:
+        thumb = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: covers.get_thumbnail(str(target)))
+    if not thumb:
+        raise HTTPException(404, "No cover")
+    return FileResponse(
+        str(thumb), media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @app.delete("/api/files")

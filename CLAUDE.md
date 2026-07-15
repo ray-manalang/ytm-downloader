@@ -39,6 +39,8 @@ Single-process FastAPI app. No test suite.
 | `app/playlists.py` | Smart-playlist rule engine over `library_tracks` + M3U writer (relative paths) + `/api/playlists/*` router |
 | `app/ai_curator.py` | AI playlist curation via Claude (Anthropic SDK) — two-stage prompt→intent→re-rank; isolates the key + degrades cleanly |
 | `app/enrich.py` | BPM + energy analysis via librosa — populates `library_tracks.bpm/energy`; lazy import, isolated + degrades cleanly |
+| `app/covers.py` | Album-cover thumbnails for the Files browser — mutagen extract + ffmpeg resize, local-disk cached per `(file, mtime)`; served lazily by `/api/files/cover` |
+| `app/filecache.py` | In-memory cache of a root's recursive file listing (`path,size,mtime`) with a TTL; backs `GET /api/files` + the DRM scan |
 | `app/static/index.html` | Single-file dark-mode SPA — all JS inline, no build step, no external deps |
 | `app/static/logo.svg` | App icon (also used as browser favicon) |
 
@@ -54,6 +56,7 @@ Single-process FastAPI app. No test suite.
 | `COOKIES_FILE` | *(empty)* | Netscape-format cookies.txt for age-restricted videos; mount **without `:ro`** — yt-dlp writes back to refresh token expiry |
 | `MUSIC_DIR` | *(empty)* | Source library root for the Convert tab; mount **read-only** (converter never writes here) |
 | `IPOD_DIR` | `./ipod` | AAC mirror output root (read-write) |
+| `COVER_CACHE_DIR` | `<dirname(DB_PATH)>/cover_cache` | Local-disk cache for Files-browser cover thumbnails (`covers.py`). Keep on fast local storage, **not** the network mount |
 | `MAX_CONCURRENT_CONVERSIONS` | `2` | Parallel **convert-job** workers (prep queue). A single convert *job* now parallelizes its files internally — see below |
 | `MAX_CONCURRENT_TRANSCODES` | *(CPU count)* | Parallel ffmpeg transcodes **within** one convert job (CPU-bound phase) |
 | `CONVERT_STAT_WORKERS` | *(min(32, 4×transcodes))* | Parallel workers for the resumable skip-decision stats within a convert job (network-latency-bound phase) |
@@ -110,6 +113,7 @@ Single-process FastAPI app. No test suite.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/files` | List downloaded files grouped by folder (served from the `filecache` directory-walk cache; `?refresh=1` forces a rescan) |
+| GET | `/api/files/cover` | Small (~160px) cached thumbnail of a track's embedded cover (`?path=<rel>&v=<mtime>`), or 404 if none. Lazily requested per album by the Files page (see **Cover thumbnails** below) |
 | DELETE | `/api/files` | Delete a file or entire folder by path |
 
 ### YouTube Music auth (`ytm.py`)
@@ -216,6 +220,8 @@ Playlists read the index that Audit populates — re-run Audit to refresh before
 **Files browser repoint:** when promotion is active, `GET/DELETE /api/files` operate on `MUSIC_DIR` (the library), not `DOWNLOADS_DIR`. `delete_file` cascades — removes the iPod mirror copy (`converter.mirror_path`), deletes the `library_tracks` row(s), and regenerates auto playlists.
 
 **Directory-walk cache (`filecache.py`):** walking a network-mounted library (`rglob` + a `stat` per file) is slow and the Files tab / DRM scan hit it repeatedly. `filecache.list_files(root)` caches `(path,size,mtime)` per root with a 300 s TTL; `GET /api/files` and `prep._scan_drm` read through it. Writers call `filecache.invalidate()` — `_promote_download` (files added) and `delete_file` (files removed) — so the next read re-walks; `?refresh=1` (the Files tab's Refresh button) forces it. The mutating pipeline (Audit/Clean/Convert/Enrich) still walks fresh — it's the source of truth — and only tags/mtimes change, not the listing.
+
+**Cover thumbnails (`covers.py`):** album covers live *inside* the audio files (mp4 `covr` atom, flac picture block, id3 `APIC`) on the slow mount, so extracting one per album on every render would be brutal. `covers.get_thumbnail(path)` extracts the raw cover with mutagen, resizes to a ~160px square JPEG with ffmpeg (stdin→file, image-only op), and **caches it on local disk** keyed by `sha1(path:int(mtime))` under `COVER_CACHE_DIR` (default `<dirname(DB_PATH)>/cover_cache`) — extracted once per (file, mtime), so a re-tag (new mtime) transparently re-extracts. `GET /api/files/cover` contains the path within the library root, runs extraction in an executor under a **`Semaphore(4)`** (a fast scroll can't burst mount reads), and serves the file with `Cache-Control: immutable`. The Files page renders `<img loading="lazy">` per album header (`_albumCoverHTML`, first track as the representative), so **only albums scrolled into view fetch**, and the `&v=<mtime>` query busts the browser cache on re-tag. Coverless tracks 404 → the `<img onerror>` removes itself, revealing a CSS disc placeholder. The `/api/files` listing is untouched, so the page opens exactly as fast as before.
 
 ## WebSocket message types
 

@@ -164,6 +164,10 @@
   @keyframes albumflash { 0%,40% { background: var(--accent-soft); } 100% { background: transparent; } }
   .album-group { margin-bottom: 16px; scroll-margin-top: 96px; }
   .album-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; user-select: none; }
+  /* Lazy album-cover thumbnail; a disc placeholder shows through when a track has
+     no embedded cover (the <img> removes itself on error). */
+  .album-cover { width: 38px; height: 38px; flex-shrink: 0; border-radius: 5px; overflow: hidden; background: var(--surface2) url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='20'%20height='20'%20viewBox='0%200%2020%2020'%20fill='none'%20stroke='%23777'%20stroke-width='1.5'%3E%3Ccircle%20cx='10'%20cy='10'%20r='7'/%3E%3Ccircle%20cx='10'%20cy='10'%20r='1.7'/%3E%3C/svg%3E") center/20px no-repeat; }
+  .album-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .album-header:hover { border-color: var(--border); }
   .album-header:hover .album-name { color: var(--accent); }
   .album-name { font-weight: 600; flex: 1; }
@@ -1348,6 +1352,16 @@ function onFileSearch() {
   }, 220);
 }
 
+// Lazy cover for an album header: request the first track's embedded cover.
+// loading="lazy" means only albums scrolled into view actually fetch; onerror
+// drops the <img> so the disc placeholder shows for coverless tracks.
+function _albumCoverHTML(tracks) {
+  const t = tracks[0];
+  if (!t) return '<span class="album-cover"></span>';
+  const src = `/api/files/cover?path=${encodeURIComponent(t.path)}&v=${Math.floor(t.modified || 0)}`;
+  return `<span class="album-cover"><img loading="lazy" src="${src}" alt="" onerror="this.remove()"></span>`;
+}
+
 function _albumTracksHTML(tracks) {
   return tracks.map(t => {
     const name = t.path.split('/').pop();
@@ -1400,6 +1414,7 @@ function renderFiles() {
       <div class="album-group" id="albgrp-${idx}">
         <div class="album-header" onclick="toggleAlbum(${idx})">
           <span class="album-chevron ${open ? 'open' : ''}" id="chev-${idx}">▶</span>
+          ${_albumCoverHTML(tracks)}
           <span class="album-name">${escHtml(album)}</span>
           <span class="album-count">${tracks.length} track${tracks.length !== 1 ? 's' : ''} · ${fmtSize(totalSize)}</span>
           <button class="btn-danger btn-sm" style="margin-left:8px" onclick="event.stopPropagation(); deleteFolder(${idx})">🗑 Delete folder</button>
