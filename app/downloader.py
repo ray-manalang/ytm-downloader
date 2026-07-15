@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import yt_dlp
+from mutagen.mp4 import MP4, MP4Cover
 
 from . import tagtools
 
@@ -144,34 +145,53 @@ def _apply_album_cover(m4a_path: Path) -> Optional[Path]:
     return None
 
 
+def _embed_jpg(m4a_path: Path, img_path: str) -> bool:
+    """Write ``img_path`` (JPEG/PNG) into the m4a's ``covr`` atom via mutagen.
+
+    This is the reliable, player-standard way to set an m4a cover — the same
+    atom MusicBrainz Picard writes — and it deliberately avoids ffmpeg's
+    ``-disposition attached_pic`` mux, which regresses on ffmpeg 8.x ("Nothing
+    was written") and was silently leaving the small thumbnail in place.
+    Assigning ``covr`` replaces any existing cover atom. Returns True on success.
+    """
+    ext = os.path.splitext(img_path)[1].lower()
+    fmt = (MP4Cover.FORMAT_PNG if ext == ".png"
+           else MP4Cover.FORMAT_JPEG if ext in (".jpg", ".jpeg") else None)
+    if fmt is None:
+        return False
+    try:
+        with open(img_path, "rb") as f:
+            data = f.read()
+        audio = MP4(str(m4a_path))
+        audio["covr"] = [MP4Cover(data, imageformat=fmt)]
+        audio.save()
+        return True
+    except Exception:
+        return False
+
+
 def _embed_cover_from(path: Path, cover_src: Path) -> bool:
-    """Embed ``cover_src`` into the m4a at ``path`` as a 600×600 square cover."""
-    tmp_resized = str(path) + ".albumcover.jpg"
-    tmp_out = str(path) + ".tmp.m4a"
+    """Embed the sibling album art into the m4a at its full resolution.
+
+    Normalizes the source with ffmpeg (any format → jpg, center-cropped to a
+    square, keeping native resolution — an image→image op that's reliable on any
+    ffmpeg version), then writes it to the ``covr`` atom with mutagen. We keep the
+    cover's native size on purpose: the "Album - …" art is the good full-size
+    cover, so shrinking it to 600×600 (the old behavior) is what made covers look
+    small. Returns True on success."""
+    normalized = str(path) + ".albumcover.jpg"
     try:
         r = subprocess.run(
             ["ffmpeg", "-y", "-i", str(cover_src),
-             "-vf", "crop=ih:ih,scale=600:600", "-pix_fmt", "yuvj420p", tmp_resized],
+             "-vf", "crop='min(iw,ih)':'min(iw,ih)'", "-pix_fmt", "yuvj420p", normalized],
             capture_output=True,
         )
-        if r.returncode != 0 or not os.path.exists(tmp_resized):
-            return False
-        r = subprocess.run(
-            ["ffmpeg", "-y", "-i", str(path), "-i", tmp_resized,
-             "-map", "0:a", "-map", "1:v", "-map_metadata", "0",
-             "-c:a", "copy", "-disposition:v:0", "attached_pic", tmp_out],
-            capture_output=True,
-        )
-        if r.returncode == 0 and os.path.exists(tmp_out):
-            os.replace(tmp_out, path)
-            tmp_out = None
-            return True
-        return False
+        src = normalized if (r.returncode == 0 and os.path.exists(normalized)) else str(cover_src)
+        return _embed_jpg(path, src)
     finally:
-        for f in [tmp_resized, tmp_out]:
-            with contextlib.suppress(Exception):
-                if f and os.path.exists(f):
-                    os.unlink(f)
+        with contextlib.suppress(Exception):
+            if os.path.exists(normalized):
+                os.unlink(normalized)
 
 
 def _normalize_tags(path: Path):
@@ -191,50 +211,35 @@ def _normalize_tags(path: Path):
 
 
 def _resize_cover(path: Path):
-    """Replace the embedded cover art with a 600x600 square crop."""
-    tmp_cover = tmp_resized = tmp_out = None
-    try:
-        tmp_cover = str(path) + ".cover.jpg"
-        tmp_resized = str(path) + ".resized.jpg"
-        tmp_out = str(path) + ".tmp.m4a"
+    """Fallback when there's no sibling album art: normalize the embedded thumbnail
+    (extract → center-crop to a square) and re-embed it via mutagen's covr atom.
 
+    Uses the same reliable path as _embed_cover_from (ffmpeg for the image ops
+    only, mutagen for the write) so it doesn't hit the ffmpeg 8.x attached_pic
+    regression. This is best-effort — the embedded thumbnail is the small one, so
+    it's the last resort when the good "Album - …" cover isn't present."""
+    tmp_cover = str(path) + ".cover.jpg"
+    tmp_square = str(path) + ".resized.jpg"
+    try:
         r = subprocess.run(
             ["ffmpeg", "-y", "-i", str(path), "-map", "0:v", "-frames:v", "1", tmp_cover],
             capture_output=True,
         )
         if r.returncode != 0 or not os.path.exists(tmp_cover):
             return
-
         r = subprocess.run(
-            ["ffmpeg", "-y", "-i", tmp_cover, "-vf", "crop=ih:ih,scale=600:600", tmp_resized],
+            ["ffmpeg", "-y", "-i", tmp_cover, "-vf", "crop='min(iw,ih)':'min(iw,ih)'",
+             "-pix_fmt", "yuvj420p", tmp_square],
             capture_output=True,
         )
-        if r.returncode != 0 or not os.path.exists(tmp_resized):
-            return
-
-        r = subprocess.run(
-            [
-                "ffmpeg", "-y",
-                "-i", str(path),
-                "-i", tmp_resized,
-                "-map", "0:a",
-                "-map", "1:v",
-                "-map_metadata", "0",
-                "-c:a", "copy",
-                "-disposition:v:0", "attached_pic",
-                tmp_out,
-            ],
-            capture_output=True,
-        )
-        if r.returncode == 0 and os.path.exists(tmp_out):
-            os.replace(tmp_out, path)
-            tmp_out = None
+        src = tmp_square if (r.returncode == 0 and os.path.exists(tmp_square)) else tmp_cover
+        _embed_jpg(path, src)
     except Exception:
         pass
     finally:
-        for f in [tmp_cover, tmp_resized, tmp_out]:
+        for f in [tmp_cover, tmp_square]:
             with contextlib.suppress(Exception):
-                if f and os.path.exists(f):
+                if os.path.exists(f):
                     os.unlink(f)
 
 
