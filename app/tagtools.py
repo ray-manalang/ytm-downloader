@@ -908,16 +908,22 @@ def run_genre_crosscheck(tracks: List[dict], use_online: bool, progress_cb, shou
     online_budget_hit = False
     unresolved_after_mb = []               # MB gave nothing → candidates for Claude
 
-    for key, local_set, local_list, n in consistent:
+    # Phase 2 — the slow online lookups. This drives its own progress (over the
+    # consistent artists) so the bar reflects the network phase instead of sitting
+    # frozen at the phase-1 total while MusicBrainz is queried.
+    n_consistent = len(consistent)
+    for idx, (key, local_set, local_list, n) in enumerate(consistent, 1):
         if should_cancel():
             break
-        external = []
-        if use_online and online_used < online_cap and not online_budget_hit:
-            if time.monotonic() - online_started > online_budget_s:
-                online_budget_hit = True
-            else:
-                online_used += 1
-                external = musicbrainz_genres(key)
+        can_lookup = use_online and online_used < online_cap and not online_budget_hit
+        if can_lookup and time.monotonic() - online_started > online_budget_s:
+            online_budget_hit = True       # budget spent — skip remaining lookups
+            can_lookup = False
+        progress_cb({"done": idx, "total": n_consistent, "action": "crosscheck",
+                     "current_file": (f"MusicBrainz · {key}" if can_lookup else "finalizing…")})
+        external = musicbrainz_genres(key) if can_lookup else []
+        if can_lookup:
+            online_used += 1
         if external:
             checked += 1
             if local_set.isdisjoint({g.lower() for g in external}):
@@ -928,6 +934,8 @@ def run_genre_crosscheck(tracks: List[dict], use_online: bool, progress_cb, shou
 
     llm_used = 0
     if llm_resolver and unresolved_after_mb and not should_cancel():
+        progress_cb({"done": n_consistent, "total": n_consistent, "action": "crosscheck",
+                     "current_file": f"asking Claude about {len(unresolved_after_mb)} artists…"})
         names = [k for k, _, _, _ in unresolved_after_mb][:llm_cap]
         try:
             resolved = llm_resolver(names) or {}
