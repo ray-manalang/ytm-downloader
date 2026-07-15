@@ -247,7 +247,8 @@
   .genre-toggle button { background: transparent; color: var(--muted); border: none; padding: 4px 11px; font-size: 11px; font-weight: 600; cursor: pointer; border-radius: 0; }
   .genre-toggle button.on { background: var(--accent-soft); color: var(--accent); }
   .genre-list { display: flex; flex-direction: column; }
-  .genre-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+  .genre-row { display: flex; align-items: center; gap: 10px; padding: 4px 8px; border-radius: 6px; cursor: pointer; transition: background .12s; }
+  .genre-row:hover { background: var(--surface2); }
   .genre-rank { width: 20px; flex-shrink: 0; text-align: right; color: var(--muted); font-size: 11px; }
   .genre-label { width: 120px; flex-shrink: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .genre-track { flex: 1; height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
@@ -1048,6 +1049,7 @@ function genreAnalyticHTML(dist) {
     .sort((a, b) => b[1] - a[1]);
   if (!entries.length) return '';
   const totalTagged = entries.reduce((s, [, n]) => s + n, 0);
+  _genreEntries = entries;   // index → genre lookup for click-to-filter (both views)
   const isAll = genreView === 'all';
 
   const header = `<div class="section-title genre-head">
@@ -1071,6 +1073,7 @@ const GENRE_COLORS = ['#ef3e57', '#3987e5', '#c98500', '#199e70', '#9085e9', '#d
 // Drag-to-rotate state. The offset (radians) persists across dashboard
 // re-renders so a spin isn't lost when the data refreshes.
 let genreRotorOffset = 0;
+let _genreEntries = [];   // sorted [genre, count][] — index → genre for click-to-filter
 let _genreRotor = null;   // geometry + data snapshot, so a drag can re-render cheaply
 let _rotorDrag = null;
 let _rotorSpin = null;    // inertial-spin / reset-tween rAF handle
@@ -1210,14 +1213,20 @@ function onGenreColClick(i) {
   if (entry) filterFilesByGenre(entry[0]);
 }
 
+// Click a row in the "All" bar list → same Files filter as a radial column.
+function onGenreBarClick(i) {
+  const entry = _genreEntries[i];
+  if (entry) filterFilesByGenre(entry[0]);
+}
+
 function genreListHTML(entries, totalTagged) {
   const max = entries[0][1] || 1;
   const rows = entries.map(([g, n], i) => {
     const share = totalTagged ? Math.round((n / totalTagged) * 100) : 0;
     const color = i < GENRE_COLORS.length ? GENRE_COLORS[i] : 'var(--border)';
-    return `<div class="genre-row">
+    return `<div class="genre-row" onclick="onGenreBarClick(${i})" title="${escHtml(g)} — click to filter Files">
       <div class="genre-rank">${i + 1}</div>
-      <div class="genre-label" title="${escHtml(g)}">${escHtml(g)}</div>
+      <div class="genre-label">${escHtml(g)}</div>
       <div class="genre-track"><div class="genre-fill" style="width:${Math.max((n / max) * 100, 2)}%;background:${color}"></div></div>
       <div class="genre-count">${n.toLocaleString()}<span class="genre-share">${share}%</span></div>
     </div>`;
