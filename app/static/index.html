@@ -1202,7 +1202,9 @@ function _procProgressCell(id, pct, pos) {
 
 function _procDlRow(d, active) {
   const name = escHtml(d.title || 'Download');
-  const cf = (d.status === 'downloading' && d.current_file) ? `<div class="proc-cf" id="pcf-${d.id}">${escHtml(d.current_file)}</div>`
+  // Always render the container for active rows so live progress updates have a
+  // node to patch (see _procJobRow — same rationale).
+  const cf = active ? `<div class="proc-cf" id="pcf-${d.id}">${escHtml(d.current_file || '')}</div>`
     : (d.status === 'error' && d.error) ? `<div class="proc-cf" style="color:var(--danger)" title="${escHtml(d.error)}">${escHtml(d.error)}</div>` : '';
   let progress = d.status === 'done' ? '✓' : '—';
   if (active) {
@@ -1228,7 +1230,11 @@ function _procJobRow(j, active) {
   const name = PREP_TITLES[type] || type;
   let summary = j.summary;
   if (!summary && j.error && (j.status === 'done' || j.status === 'rolled_back')) { try { summary = JSON.parse(j.error); } catch {} }
-  const cf = (active && j.current_file) ? `<div class="proc-cf" id="pcf-${j.id}">${escHtml(j.current_file)}</div>`
+  // Always render the current-file container for active jobs (even before the
+  // first filename arrives) so live prep_progress updates have a node to patch —
+  // otherwise _updateProcRow's getElementById('pcf-…') is null and the filename
+  // never shows until an unrelated full re-render happens to coincide with it.
+  const cf = active ? `<div class="proc-cf" id="pcf-${j.id}">${escHtml(j.current_file || '')}</div>`
     : (j.status === 'error' && j.error) ? `<div class="proc-cf" style="color:var(--danger)" title="${escHtml(j.error)}">${escHtml(j.error)}</div>` : '';
   let progress = j.status === 'done' ? '✓' : '—';
   if (active) {
