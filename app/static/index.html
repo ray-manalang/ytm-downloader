@@ -271,6 +271,12 @@
   .proc-time { color: var(--muted); font-size: 11px; white-space: nowrap; }
   .proc-actions { text-align: right; white-space: nowrap; }
   .proc-actions button { margin-left: 6px; }
+  .err-toggle { color: var(--danger); cursor: pointer; text-decoration: underline dotted; }
+  .proc-errors { margin-top: 6px; max-width: 360px; max-height: 168px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); }
+  .proc-err-row { padding: 5px 9px; border-top: 1px solid var(--border); font-size: 11px; }
+  .proc-err-row:first-child { border-top: none; }
+  .proc-err-file { display: block; color: var(--text); word-break: break-all; }
+  .proc-err-reason { display: block; color: var(--danger); margin-top: 2px; word-break: break-word; }
 
   /* Playlist track list (expand) */
   .pl-tracks { margin-top: 10px; border-top: 1px solid var(--border); max-height: 340px; overflow-y: auto; }
@@ -1201,7 +1207,7 @@ function _procJobRow(j, active) {
     const pos = j.total ? `${j.done || 0}/${j.total}` : (j.status === 'pending' ? 'queued' : `${Math.round(pct)}%`);
     progress = _procProgressCell(j.id, pct, pos);
   } else if (summary && typeof summary === 'object') {
-    progress = prepSummaryChips(type, summary) || progress;
+    progress = prepSummaryChips(type, summary, j.id) || progress;
   }
   const stChip = j.status === 'rolled_back' ? 'cancelled' : j.status;
   const stLabel = j.status === 'rolled_back' ? 'rolled back' : j.status;
@@ -2098,7 +2104,7 @@ const PREP_TITLES = {
   review: 'Genre Review', unify: 'Unify Genres', enrich: 'Analyze BPM & Energy',
 };
 
-function prepSummaryChips(type, s) {
+function prepSummaryChips(type, s, jobId) {
   const parts = [];
   if (type === 'convert') {
     if (s.transcoded) parts.push(`${s.transcoded} transcoded`);
@@ -2125,8 +2131,23 @@ function prepSummaryChips(type, s) {
     if (s.analyzed != null) parts.push(`${s.analyzed} analyzed`);
     if (s.skipped) parts.push(`${s.skipped} skipped`);
   }
-  if (s.errors) parts.push(`${s.errors} errors`);
-  return parts.length ? `<div class="speed-info">${parts.map(p => `<span>${p}</span>`).join('')}</div>` : '';
+  const errFiles = Array.isArray(s.error_files) ? s.error_files : [];
+  let errPanel = '';
+  if (s.errors) {
+    if (errFiles.length && jobId) {
+      parts.push(`<span class="err-toggle" onclick="toggleJobErrors('${jobId}')">${s.errors} errors ▾</span>`);
+      errPanel = `<div class="proc-errors" id="perr-${jobId}" style="display:none">${errFiles.map(e =>
+        `<div class="proc-err-row"><span class="proc-err-file">${escHtml(e.file || '')}</span><span class="proc-err-reason">${escHtml(e.reason || '')}</span></div>`).join('')}</div>`;
+    } else {
+      parts.push(`${s.errors} errors`);
+    }
+  }
+  return parts.length ? `<div class="speed-info">${parts.map(p => `<span>${p}</span>`).join('')}</div>${errPanel}` : '';
+}
+
+function toggleJobErrors(id) {
+  const el = document.getElementById('perr-' + id);
+  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
 }
 
 function updatePrepCardInPlace(id) {

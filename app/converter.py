@@ -34,6 +34,8 @@ AAC_BITRATE = os.environ.get("AAC_BITRATE", "256k")
 # per-file round-trips on a mounted library (the reason a no-op re-run was slow).
 _TRANSCODE_WORKERS = max(1, int(os.environ.get("MAX_CONCURRENT_TRANSCODES", str(os.cpu_count() or 4))))
 _STAT_WORKERS = max(1, int(os.environ.get("CONVERT_STAT_WORKERS", str(min(32, max(8, _TRANSCODE_WORKERS * 4))))))
+# Cap the per-file error detail we keep in the summary (bounded payload, mirrors enrich).
+_MAX_ERRORS_LOGGED = 100
 
 # Source extensions we transcode to AAC.
 _TRANSCODE_EXTS = {".flac", ".wav", ".aiff", ".aif", ".ape", ".alac", ".opus", ".ogg"}
@@ -78,8 +80,12 @@ def _probe_audio(path: Path) -> dict:
         return {"sample_rate": 0, "bits": 0}
 
 
-def _transcode(src: Path, dst: Path, bitrate: str, downsample_hires: bool) -> bool:
-    """FLAC/lossless → AAC .m4a, preserving cover art and metadata. Returns success."""
+def _transcode(src: Path, dst: Path, bitrate: str, downsample_hires: bool):
+    """FLAC/lossless → AAC .m4a, preserving cover art and metadata.
+
+    Returns None on success, or an error-reason string (the last ffmpeg stderr
+    line) on failure — so the job summary can report *which* files failed and why.
+    """
     tmp_out = str(dst) + ".tmp.m4a"
     cmd = [
         "ffmpeg", "-y",
@@ -105,8 +111,11 @@ def _transcode(src: Path, dst: Path, bitrate: str, downsample_hires: bool) -> bo
         r = subprocess.run(cmd, capture_output=True)
         if r.returncode == 0 and os.path.exists(tmp_out):
             os.replace(tmp_out, dst)
-            return True
-        return False
+            return None
+        tail = ""
+        with contextlib.suppress(Exception):
+            tail = (r.stderr.decode("utf-8", "replace").strip().splitlines() or [""])[-1]
+        return tail[:300] or f"ffmpeg exited {r.returncode}"
     finally:
         with contextlib.suppress(Exception):
             if os.path.exists(tmp_out):
@@ -197,22 +206,23 @@ def run_conversion(job: dict, progress_cb: Callable, should_cancel: Callable) ->
     def _process(item):
         action, src, rel, dst = item
         if should_cancel():
-            return ("cancelled", rel)
+            return ("cancelled", rel, None)
+        reason = None
         try:
             dst.parent.mkdir(parents=True, exist_ok=True)
             if action == "transcode":
-                ok = _transcode(src, dst, bitrate, downsample_hires)
+                reason = _transcode(src, dst, bitrate, downsample_hires)
             else:
                 shutil.copy2(src, dst)
-                ok = True
-        except Exception:
-            ok = False
-        return (action if ok else "error", rel)
+        except Exception as e:
+            reason = str(e) or e.__class__.__name__
+        return (action if reason is None else "error", rel, reason)
 
+    error_files = []
     if work and not should_cancel():
         with cf.ThreadPoolExecutor(max_workers=_TRANSCODE_WORKERS) as pool:
             for fut in cf.as_completed([pool.submit(_process, it) for it in work]):
-                outcome, rel = fut.result()
+                outcome, rel, reason = fut.result()
                 if outcome == "cancelled":
                     continue
                 if outcome == "transcode":
@@ -221,8 +231,11 @@ def run_conversion(job: dict, progress_cb: Callable, should_cancel: Callable) ->
                     counts["copied"] += 1
                 else:
                     counts["errors"] += 1
+                    if len(error_files) < _MAX_ERRORS_LOGGED:
+                        error_files.append({"file": str(rel), "reason": reason or "unknown"})
                 _bump(outcome, rel)
 
+    counts["error_files"] = error_files
     counts["total"] = total
     counts["cancelled"] = bool(should_cancel())
     return counts
