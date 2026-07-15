@@ -167,6 +167,18 @@ async def _update_track_genres(updated: list):
         await db.commit()
 
 
+async def _update_track_albumartist(updated: list):
+    """updated = [(path, albumartist), ...] — refresh library_tracks after a relabel."""
+    if not updated:
+        return
+    async with aiosqlite.connect(_db_path) as db:
+        await db.executemany(
+            "UPDATE library_tracks SET albumartist=? WHERE path=?",
+            [(aa, p) for p, aa in updated],
+        )
+        await db.commit()
+
+
 async def _fetch_enriched_paths() -> set:
     async with aiosqlite.connect(_db_path) as db:
         async with db.execute("SELECT path FROM library_tracks WHERE bpm IS NOT NULL") as cur:
@@ -290,6 +302,21 @@ async def _prep_worker():
                             rows, approved, progress_cb, record_cb, cancel_ev.is_set)
                     )
                     await _update_track_genres(summary.pop("updated", []))
+                elif jtype == "relabel":
+                    rows = await _fetch_library_tracks()
+                    approved = job_spec["settings"].get("approved", {})
+
+                    def record_cb(path, field, old_json, new_json, _jid=job_id):
+                        asyncio.run_coroutine_threadsafe(
+                            _insert_change(_jid, path, field, old_json, new_json), _loop
+                        ).result()
+                    rel_base = MUSIC_DIR or None
+                    summary = await _loop.run_in_executor(
+                        None, lambda: tagtools.run_relabel(
+                            rows, approved, progress_cb, record_cb,
+                            cancel_ev.is_set, rel_base)
+                    )
+                    await _update_track_albumartist(summary.pop("updated", []))
                 elif jtype == "enrich":
                     enriched = await _fetch_enriched_paths()
 
@@ -321,7 +348,7 @@ async def _prep_worker():
                     if isinstance(summary, dict):
                         await _save_pipeline_state(jtype, summary)
                     # A library/mirror change → refresh auto-refresh playlists.
-                    if jtype in ("convert", "tags", "unify", "enrich"):
+                    if jtype in ("convert", "tags", "unify", "enrich", "relabel"):
                         try:
                             await playlists_module.regenerate_all_auto()
                         except Exception:
@@ -1008,6 +1035,29 @@ async def suspect_albumartist_report():
     return {"total": len(suspects), "suspects": suspects}
 
 
+@router.post("/albumartist/apply")
+async def apply_albumartist(body: dict):
+    """Apply approved per-album album-artists (relabel job) — writes albumartist in
+    place, reversible via the job's Rollback. Body: {albums: [{folder, albumartist}]}
+    where ``folder`` is exactly what /suspect-albumartist returned."""
+    albums = body.get("albums") or []
+    approved = {}
+    for a in albums:
+        folder = str((a or {}).get("folder") or "").strip()
+        aa = str((a or {}).get("albumartist") or "").strip()
+        if folder and aa:
+            approved[folder] = aa
+    if not approved:
+        raise HTTPException(400, "No album-artist changes to apply")
+
+    source_dir = MUSIC_DIR or ""
+    if not source_dir:
+        raise HTTPException(400, "MUSIC_DIR is not configured")
+    if not os.access(source_dir, os.W_OK):
+        raise HTTPException(400, f"Library is not writable (mount without :ro): {source_dir}")
+    return await _create_and_enqueue("relabel", source_dir, "", {"approved": approved})
+
+
 @router.get("/drm")
 async def drm_report():
     """List DRM-protected (`.m4p`) files grouped by artist → album."""
@@ -1051,8 +1101,8 @@ async def rollback_job(job_id: str):
     job = await _job_row(job_id)
     if not job:
         raise HTTPException(404, "Not found")
-    if job["type"] not in ("tags", "unify"):
-        raise HTTPException(400, "Only tag-clean and unify jobs can be rolled back")
+    if job["type"] not in ("tags", "unify", "relabel"):
+        raise HTTPException(400, "Only tag-clean, unify, and relabel jobs can be rolled back")
 
     async with aiosqlite.connect(_db_path) as db:
         db.row_factory = aiosqlite.Row

@@ -698,3 +698,60 @@ def run_unify(tracks: List[dict], approved: dict, progress_cb, record_cb, should
         "cancelled": bool(should_cancel()),
     }
 
+
+def run_relabel(tracks: List[dict], approved: dict, progress_cb, record_cb,
+                should_cancel, rel_base: Optional[Union[str, Path]] = None) -> dict:
+    """Apply approved per-album album-artists, writing files in place.
+
+    ``approved`` maps an album-folder key → the new album-artist string. A track's
+    folder key is its parent directory relativized to ``rel_base`` (matching the
+    read-only suspect report exactly). ``record_cb`` persists each pre-image to
+    prep_changes before the write, so the job is reversible via the same rollback
+    path as Clean/Unify. Returns a summary plus ``updated`` [(path, albumartist)]
+    so the caller can refresh library_tracks."""
+    base = Path(rel_base).resolve() if rel_base else None
+
+    def folder_key(path: str) -> str:
+        parent = Path(path).parent
+        if base:
+            try:
+                return str(parent.resolve().relative_to(base))
+            except ValueError:
+                return str(parent)
+        return str(parent)
+
+    targets = [t for t in tracks if folder_key(t["path"]) in approved]
+    total = len(targets)
+    changed = errors = 0
+    updated = []
+    done = 0
+
+    for t in targets:
+        if should_cancel():
+            break
+        path = t["path"]
+        new_aa = str(approved.get(folder_key(path)) or "").strip()
+        try:
+            cur = read_tags(path)
+            old_aa = str(cur.get("albumartist") or "").strip()
+            if new_aa and new_aa != old_aa:
+                record_cb(path, "albumartist", json.dumps(old_aa), json.dumps(new_aa))
+                if write_tags(path, albumartist=new_aa):
+                    changed += 1
+                    updated.append((path, new_aa))
+                else:
+                    errors += 1
+        except Exception:
+            errors += 1
+        done += 1
+        progress_cb({"done": done, "total": total,
+                     "current_file": Path(path).name, "action": "relabel"})
+
+    return {
+        "total_tracks": total,
+        "changed": changed,
+        "errors": errors,
+        "updated": updated,
+        "cancelled": bool(should_cancel()),
+    }
+

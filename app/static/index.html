@@ -267,15 +267,19 @@
   .aa-link { cursor: pointer; }
   .aa-link:hover { text-decoration: underline; }
 
-  /* Suspect album-artist report */
+  /* Suspect album-artist report — editable review table */
   .suspect-list { display: flex; flex-direction: column; gap: 3px; }
-  .suspect-row { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
-  .suspect-main { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .suspect-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); }
+  .suspect-cb { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+  .suspect-body { flex: 1; min-width: 0; }
   .suspect-album { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .suspect-change { font-size: 12px; white-space: nowrap; flex-shrink: 0; }
-  .suspect-old { color: var(--danger); }
-  .suspect-new { color: var(--success); font-weight: 600; }
   .suspect-why { color: var(--muted); font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .suspect-edit { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12px; }
+  .suspect-old { color: var(--danger); max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .suspect-input { background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--success); font-weight: 600; padding: 4px 7px; font-size: 12px; width: 140px; outline: none; }
+  .suspect-input:focus { border-color: var(--accent); }
+  .suspect-row.off { opacity: .45; }
+  .suspect-row.off .suspect-input { color: var(--muted); }
 
   /* Activity — process-monitor table */
   .act-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; position: sticky; top: 56px; background: var(--bg); padding: 10px 0; z-index: 4; }
@@ -374,6 +378,9 @@
     </div>
 
     <div class="nav-group-label">Prepare</div>
+    <div class="nav-item" data-nav="audit" onclick="switchTab('audit')">
+      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6a1 1 0 0 1 1 1v1h1.5A1.5 1.5 0 0 1 19 6.5v13A1.5 1.5 0 0 1 17.5 21h-11A1.5 1.5 0 0 1 5 19.5v-13A1.5 1.5 0 0 1 6.5 5H8V4a1 1 0 0 1 1-1z"/><path d="M9 12l1.5 1.5L14 10"/></svg></span> Library audit
+    </div>
     <div class="nav-item" data-nav="convert" onclick="switchTab('convert')">
       <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><line x1="15" y1="5" x2="15" y2="9"/><line x1="9" y1="10" x2="9" y2="14"/><line x1="16" y1="15" x2="16" y2="19"/></svg></span> Prepare library
     </div>
@@ -642,6 +649,37 @@
     </div>
   </div>
 
+  <!-- LIBRARY AUDIT (details split out of the Prepare stepper) -->
+  <div class="panel" id="panel-audit">
+    <div class="add-box" style="margin-bottom:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:3px">Music library</div>
+        <div id="auditLibDisplay" style="font-family:monospace;font-size:13px">—</div>
+      </div>
+      <button class="btn-ghost btn-sm" onclick="switchTab('setup')">Change in Setup →</button>
+    </div>
+
+    <div class="add-box" style="margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px">
+          <div style="font-weight:600;font-size:15px">Audit library</div>
+          <div style="color:var(--muted);font-size:13px;margin-top:2px">A read-only scan that indexes tags, genres, and file sizes. Everything in Prepare builds on this — run it first, and after adding music.</div>
+        </div>
+        <button class="btn-primary" id="auditBtn" onclick="startAudit()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Run audit</button>
+      </div>
+      <div id="auditError" style="color:var(--danger);font-size:13px;margin-top:10px"></div>
+      <div id="auditResults"></div>
+      <div id="missingAAReport"></div>
+    </div>
+
+    <div class="add-box">
+      <div style="font-weight:600;font-size:15px">Mislabeled album artists</div>
+      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Albums whose album-artist matches no track artist — usually a record label or wrong name in the tag (e.g. Dido albums filed under the label “Disky”). This is why <strong>Complete genres</strong> fragments those artists. Review, uncheck any false positives (producer/DJ &amp; classical albums), then apply — every change is reversible.</div>
+      <button class="btn-ghost btn-sm" id="suspectAABtn" onclick="loadSuspectAlbumArtist()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V4.8A2 2 0 0 1 4.8 2.8H12a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Scan for mislabeled album artists</button>
+      <div id="suspectAAReport" style="margin-top:12px"></div>
+    </div>
+  </div>
+
   <!-- PREPARE (guided pipeline: Audit → Clean → Genres → Enrich → Convert) -->
   <div class="panel" id="panel-convert">
     <div class="add-box" style="margin-bottom:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
@@ -659,10 +697,8 @@
       <div class="step-body">
         <div class="step-title">Audit library</div>
         <div class="step-status" id="stepAuditStatus">Not run yet.</div>
-        <div class="step-desc">A read-only scan that indexes tags, genres, and file sizes. Everything below builds on this — run it first, and after adding music.</div>
-        <div class="step-actions"><button class="btn-primary" id="auditBtn" onclick="startAudit()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Audit</button></div>
-        <div class="step-extra" id="auditResults"></div>
-        <div id="missingAAReport"></div>
+        <div class="step-desc">A read-only scan that indexes tags, genres, and file sizes. Everything below builds on this — run it first, and after adding music. Run it and see the details on the <strong>Library audit</strong> page.</div>
+        <div class="step-actions"><button class="btn-primary" onclick="switchTab('audit')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Open Library audit →</button></div>
       </div>
     </div>
 
@@ -673,9 +709,8 @@
         <div class="step-title">Clean tags</div>
         <div class="step-status" id="stepCleanStatus">Normalize genres &amp; fill album artists.</div>
         <div class="step-desc">Maps genres to a controlled vocabulary and fills missing album artists, in place. One-click reversible from the Jobs list.</div>
-        <div class="step-actions"><button class="btn-ghost" id="cleanBtn" onclick="startClean()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Clean tags</button>
-        <button class="btn-ghost btn-sm" id="suspectAABtn" onclick="loadSuspectAlbumArtist()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V4.8A2 2 0 0 1 4.8 2.8H12a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Check for mislabeled album artists</button></div>
-        <div id="suspectAAReport" style="margin-top:12px"></div>
+        <div class="step-actions"><button class="btn-ghost" id="cleanBtn" onclick="startClean()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Clean tags</button></div>
+        <div class="step-desc" style="margin-top:8px">Album-artist looks wrong on some albums? Fix mislabeled album artists on the <a href="#" onclick="switchTab('audit'); return false" style="color:var(--accent)">Library audit</a> page.</div>
       </div>
     </div>
 
@@ -921,7 +956,8 @@ function eqMark(size = 15) {
 // ── Navigation ────────────────────────────────────────────────────────────────
 const PAGE_TITLES = {
   dashboard: 'Dashboard', activity: 'Activity', library: 'Add music',
-  convert: 'Prepare library', playlists: 'Playlists', files: 'Files', setup: 'Setup',
+  audit: 'Library audit', convert: 'Prepare library', playlists: 'Playlists',
+  files: 'Files', setup: 'Setup',
 };
 function switchTab(name) {
   document.querySelectorAll('.nav-item').forEach(t => t.classList.toggle('active', t.dataset.nav === name));
@@ -934,6 +970,7 @@ function switchTab(name) {
   if (name === 'activity') loadActivity();
   if (name === 'files') loadFiles();
   if (name === 'library') loadLibrary();
+  if (name === 'audit') loadAuditPage();
   if (name === 'convert') loadConvert();
   if (name === 'playlists') loadPlaylists();
   if (name === 'setup') loadSetup();
@@ -1382,7 +1419,7 @@ function _procJobRow(j, active) {
   }
   const stChip = j.status === 'rolled_back' ? 'cancelled' : j.status;
   const stLabel = j.status === 'rolled_back' ? 'rolled back' : j.status;
-  const rollback = ((type === 'tags' || type === 'unify') && j.status === 'done')
+  const rollback = ((type === 'tags' || type === 'unify' || type === 'relabel') && j.status === 'done')
     ? `<button class="btn-ghost btn-sm" onclick="rollbackClean('${j.id}')" title="Undo all tag changes">↺</button>` : '';
   const action = active
     ? `<button class="btn-danger btn-sm" onclick="removePrepJob('${j.id}','${j.status}')">Cancel</button>`
@@ -1878,8 +1915,18 @@ async function loadSetup() {
 // Keep the Prepare page's read-only library reference in sync with Setup's input.
 function onLibDirChange() {
   const el = document.getElementById('libDir');
-  const disp = document.getElementById('prepLibDisplay');
-  if (disp) disp.textContent = (el && el.value.trim()) || '—';
+  const val = (el && el.value.trim()) || '—';
+  for (const id of ['prepLibDisplay', 'auditLibDisplay']) {
+    const disp = document.getElementById(id);
+    if (disp) disp.textContent = val;
+  }
+}
+
+async function loadAuditPage() {
+  // Ensure the library folder is populated (Prepare loads it lazily too).
+  if (!prepConfigLoaded) await loadConvert();
+  onLibDirChange();
+  await Promise.all([loadLatestAudit(), updatePrepSteps()]);
 }
 
 async function fetchLibraryData() {
@@ -2338,6 +2385,7 @@ function renderPrepJobs() { renderActivity(); }
 const PREP_TITLES = {
   convert: 'Convert → AAC 256k', audit: 'Library Audit', tags: 'Clean Tags',
   review: 'Genre Review', unify: 'Unify Genres', enrich: 'Analyze BPM & Energy',
+  relabel: 'Fix Album Artists',
 };
 
 function prepSummaryChips(type, s, jobId) {
@@ -2366,6 +2414,8 @@ function prepSummaryChips(type, s, jobId) {
   } else if (type === 'enrich') {
     if (s.analyzed != null) parts.push(`${s.analyzed} analyzed`);
     if (s.skipped) parts.push(`${s.skipped} skipped`);
+  } else if (type === 'relabel') {
+    if (s.changed != null) parts.push(`${s.changed} relabeled`);
   }
   const errFiles = Array.isArray(s.error_files) ? s.error_files : [];
   let errPanel = '';
@@ -2474,21 +2524,73 @@ async function loadMissingAlbumArtist() {
   } catch { el.innerHTML = '<span style="color:var(--danger);font-size:13px">Failed to load.</span>'; }
 }
 
+let _suspectAA = [];   // last scan's suspects, index-aligned with the rendered rows
+
 function suspectAAHTML(d) {
-  const rows = d.suspects.map(s => {
+  _suspectAA = d.suspects;
+  const rows = d.suspects.map((s, i) => {
     const why = s.kind === 'single'
       ? `every track is ${escHtml(s.track_artists.join(', '))}`
       : `${s.track_count} tracks by ${s.track_artists.length}${s.track_artists.length >= 6 ? '+' : ''} artists — looks like a compilation`;
-    return `<div class="suspect-row" title="${escHtml(s.folder)}">
-      <div class="suspect-main">
-        <span class="suspect-album">${escHtml(s.album)}</span>
-        <span class="suspect-change"><span class="suspect-old">${escHtml(s.current)}</span> → <span class="suspect-new">${escHtml(s.proposed)}</span></span>
+    return `<div class="suspect-row" id="suspect-${i}" title="${escHtml(s.folder)}">
+      <input type="checkbox" class="suspect-cb" data-i="${i}" checked onchange="onSuspectToggle(${i})">
+      <div class="suspect-body">
+        <div class="suspect-album">${escHtml(s.album)}</div>
+        <div class="suspect-why">${why} · <span style="opacity:.7">${escHtml(s.folder)}</span></div>
       </div>
-      <div class="suspect-why">${why} · <span style="opacity:.7">${escHtml(s.folder)}</span></div>
+      <div class="suspect-edit">
+        <span class="suspect-old" title="current: ${escHtml(s.current)}">${escHtml(s.current)}</span>
+        <span style="color:var(--muted)">→</span>
+        <input class="suspect-input" data-i="${i}" value="${escHtml(s.proposed)}" spellcheck="false" aria-label="New album artist">
+      </div>
     </div>`;
   }).join('');
-  const heading = `<strong style="color:var(--warn)">${d.total}</strong> album${d.total !== 1 ? 's' : ''} where the album artist matches no track artist — likely a record label or wrong name in the tag. <strong>Review before fixing</strong> (producer/DJ &amp; classical albums can be false positives). Album-artist isn't auto-corrected yet — fix these in your tagger and re-run Audit.`;
-  return `<div style="font-size:13px;color:var(--muted);margin-bottom:8px;line-height:1.5">${heading}</div><div class="suspect-list">${rows}</div>`;
+  const heading = `<strong style="color:var(--warn)">${d.total}</strong> album${d.total !== 1 ? 's' : ''} where the album artist matches no track artist — likely a record label or wrong name in the tag. <strong>Uncheck any false positives</strong> (producer/DJ &amp; classical albums), edit a proposed name if needed, then apply. Every change is reversible from Activity.`;
+  return `<div style="font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.5">${heading}</div>
+    <div class="suspect-list">${rows}</div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap">
+      <button class="btn-primary btn-sm" id="suspectApplyBtn" onclick="applySuspectAlbumArtist()">Apply <span id="suspectApplyN">${d.total}</span> selected</button>
+      <span id="suspectApplyNote" style="color:var(--muted);font-size:12px">Writes album-artist in place; the source library must be writable.</span>
+    </div>`;
+}
+
+function onSuspectToggle(i) {
+  const cb = document.querySelector(`.suspect-cb[data-i="${i}"]`);
+  const row = document.getElementById('suspect-' + i);
+  if (row && cb) row.classList.toggle('off', !cb.checked);
+  const n = document.querySelectorAll('.suspect-cb:checked').length;
+  const nEl = document.getElementById('suspectApplyN');
+  if (nEl) nEl.textContent = n;
+  const btn = document.getElementById('suspectApplyBtn');
+  if (btn) btn.disabled = n === 0;
+}
+
+async function applySuspectAlbumArtist() {
+  const albums = [];
+  document.querySelectorAll('.suspect-cb:checked').forEach(cb => {
+    const i = +cb.dataset.i;
+    const s = _suspectAA[i];
+    const input = document.querySelector(`.suspect-input[data-i="${i}"]`);
+    const aa = ((input ? input.value : s && s.proposed) || '').trim();
+    if (s && aa) albums.push({ folder: s.folder, albumartist: aa });
+  });
+  if (!albums.length) return;
+  if (!confirm(`Apply ${albums.length} album-artist change${albums.length !== 1 ? 's' : ''}? This writes tags in place and is reversible from the Activity page.`)) return;
+  const btn = document.getElementById('suspectApplyBtn');
+  const note = document.getElementById('suspectApplyNote');
+  return runBusy(btn, async () => {
+    try {
+      const res = await fetch('/api/prep/albumartist/apply', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ albums }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { if (note) note.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'Apply failed.')}</span>`; return; }
+      document.getElementById('suspectAAReport').innerHTML =
+        `<span style="color:var(--accent);font-size:13px">✓ Relabeling ${albums.length} album${albums.length !== 1 ? 's' : ''} — track it on the Activity page. Re-scan here once it finishes.</span>`;
+      switchTab('activity');
+    } catch { if (note) note.innerHTML = '<span style="color:var(--danger)">Apply failed.</span>'; }
+  });
 }
 
 async function loadSuspectAlbumArtist() {
@@ -2538,11 +2640,11 @@ async function removePrepJob(id, status) {
   if (status !== 'running') { delete prepJobs[id]; renderPrepJobs(); }
 }
 
-async function startPrep(endpoint, btnId, errEl) {
+async function startPrep(endpoint, btnId, errId = 'prepError') {
   const source_dir = document.getElementById('libDir').value.trim();
-  const el = document.getElementById('prepError');
-  el.textContent = '';
-  if (!source_dir) { el.textContent = 'Library directory is required.'; return; }
+  const el = document.getElementById(errId) || document.getElementById('prepError');
+  if (el) el.textContent = '';
+  if (!source_dir) { if (el) el.textContent = 'Set your music library folder in Setup first.'; return; }
   const btn = document.getElementById(btnId);
   const label = btn.innerHTML;  // innerHTML (not textContent) preserves the icon SVG
   btn.disabled = true; btn.textContent = 'Starting…';
@@ -2561,7 +2663,7 @@ async function startPrep(endpoint, btnId, errEl) {
   }
 }
 
-function startAudit() { startPrep('/api/prep/audit', 'auditBtn'); }
+function startAudit() { startPrep('/api/prep/audit', 'auditBtn', 'auditError'); }
 
 function startClean() {
   if (!confirm('Clean tags writes to your library in place. Every change is reversible via Rollback. Continue?')) return;
