@@ -799,3 +799,60 @@ def run_relabel(tracks: List[dict], approved: dict, progress_cb, record_cb,
         "cancelled": bool(should_cancel()),
     }
 
+
+def run_genre_align(tracks: List[dict], approved: dict, progress_cb, record_cb,
+                    should_cancel, rel_base: Optional[Union[str, Path]] = None) -> dict:
+    """Align each album's tracks to an approved genre, writing files in place.
+
+    ``approved`` maps an album-folder key → the target genre list. A track's folder
+    key is its parent dir relativized to ``rel_base`` (matching the outlier report).
+    Only tracks whose current genre differs are written, so the album's already-
+    correct (dominant) tracks are untouched; each pre-image goes to prep_changes for
+    rollback. Returns a summary plus ``updated`` [(path, genre_str)] to refresh
+    library_tracks.genre."""
+    base = Path(rel_base).resolve() if rel_base else None
+
+    def folder_key(path: str) -> str:
+        parent = Path(path).parent
+        if base:
+            try:
+                return str(parent.resolve().relative_to(base))
+            except ValueError:
+                return str(parent)
+        return str(parent)
+
+    targets = [t for t in tracks if folder_key(t["path"]) in approved]
+    total = len(targets)
+    changed = errors = 0
+    updated = []
+    done = 0
+
+    for t in targets:
+        if should_cancel():
+            break
+        path = t["path"]
+        new_genre = approved.get(folder_key(path)) or []
+        try:
+            cur = read_tags(path)
+            old_genre = _genre_list(cur.get("genre"))
+            if new_genre and new_genre != old_genre:
+                record_cb(path, "genre", json.dumps(old_genre), json.dumps(new_genre))
+                if write_tags(path, genre=new_genre):
+                    changed += 1
+                    updated.append((path, ", ".join(new_genre)))
+                else:
+                    errors += 1
+        except Exception:
+            errors += 1
+        done += 1
+        progress_cb({"done": done, "total": total,
+                     "current_file": Path(path).name, "action": "genrealign"})
+
+    return {
+        "total_tracks": total,
+        "changed": changed,
+        "errors": errors,
+        "updated": updated,
+        "cancelled": bool(should_cancel()),
+    }
+

@@ -291,6 +291,12 @@
   .unmapped-sel.set { color: var(--success); font-weight: 600; }
   .unmapped-sel.junk { color: var(--muted); }
 
+  /* Album genre outliers — reuses .suspect-row visuals; own interactive classes */
+  .outlier-cb { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+  .outlier-input { background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--success); font-weight: 600; padding: 4px 7px; font-size: 12px; width: 140px; outline: none; }
+  .outlier-input:focus { border-color: var(--accent); }
+  .suspect-row.off .outlier-input { color: var(--muted); }
+
   /* Activity — process-monitor table */
   .act-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; position: sticky; top: 56px; background: var(--bg); padding: 10px 0; z-index: 4; }
   .act-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
@@ -694,6 +700,13 @@
       <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Raw genre strings in your files that map to nothing in the controlled vocabulary — so they get dropped. Assign each to a controlled genre (or mark as junk) to <strong>teach the vocabulary</strong>; future Audit/Clean runs will normalize them automatically.</div>
       <button class="btn-ghost btn-sm" id="unmappedBtn" onclick="loadUnmappedGenres()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m15 15 2.5 2.5L22 13"/></svg>Map unmapped genres</button>
       <div id="unmappedReport" style="margin-top:12px"></div>
+    </div>
+
+    <div class="add-box" style="margin-top:20px">
+      <div style="font-weight:600;font-size:15px">Album genre outliers</div>
+      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Single-artist albums where most tracks share a genre but a few differ or are untagged — usually per-track tagging slips. Set the odd tracks to the album's genre (the rest stay as-is). Compilations are skipped since they're legitimately multi-genre.</div>
+      <button class="btn-ghost btn-sm" id="outlierBtn" onclick="loadAlbumOutliers()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>Scan for album genre outliers</button>
+      <div id="outlierReport" style="margin-top:12px"></div>
     </div>
   </div>
 
@@ -1436,7 +1449,7 @@ function _procJobRow(j, active) {
   }
   const stChip = j.status === 'rolled_back' ? 'cancelled' : j.status;
   const stLabel = j.status === 'rolled_back' ? 'rolled back' : j.status;
-  const rollback = ((type === 'tags' || type === 'unify' || type === 'relabel') && j.status === 'done')
+  const rollback = ((type === 'tags' || type === 'unify' || type === 'relabel' || type === 'genrealign') && j.status === 'done')
     ? `<button class="btn-ghost btn-sm" onclick="rollbackClean('${j.id}')" title="Undo all tag changes">↺</button>` : '';
   const action = active
     ? `<button class="btn-danger btn-sm" onclick="removePrepJob('${j.id}','${j.status}')">Cancel</button>`
@@ -2406,7 +2419,7 @@ function renderPrepJobs() { renderActivity(); }
 const PREP_TITLES = {
   convert: 'Convert → AAC 256k', audit: 'Library Audit', tags: 'Clean Tags',
   review: 'Genre Review', unify: 'Unify Genres', enrich: 'Analyze BPM & Energy',
-  relabel: 'Fix Album Artists',
+  relabel: 'Fix Album Artists', genrealign: 'Align Album Genres',
 };
 
 function prepSummaryChips(type, s, jobId) {
@@ -2437,6 +2450,8 @@ function prepSummaryChips(type, s, jobId) {
     if (s.skipped) parts.push(`${s.skipped} skipped`);
   } else if (type === 'relabel') {
     if (s.changed != null) parts.push(`${s.changed} relabeled`);
+  } else if (type === 'genrealign') {
+    if (s.changed != null) parts.push(`${s.changed} aligned`);
   }
   const errFiles = Array.isArray(s.error_files) ? s.error_files : [];
   let errPanel = '';
@@ -2710,6 +2725,88 @@ async function saveUnmappedGenres() {
       document.getElementById('unmappedReport').innerHTML =
         `<span style="color:var(--accent);font-size:13px">✓ Vocabulary updated — ${saved.added_exact || 0} mapped, ${saved.added_junk || 0} marked junk. Run <strong>Clean tags</strong> to apply to your library, then re-run Audit to refresh this list.</span>${persistWarn}<div>${cleanBtn}</div>`;
     } catch { if (note) note.innerHTML = '<span style="color:var(--danger)">Save failed.</span>'; }
+  });
+}
+
+let _albumOutliers = [];   // last scan, index-aligned with the rendered rows
+
+function albumOutliersHTML(d) {
+  _albumOutliers = d.albums;
+  const rows = d.albums.map((a, i) => {
+    const sample = a.outliers.map(o => `${escHtml(o.title)} (${escHtml(o.current)})`).slice(0, 3).join(', ');
+    const more = a.outlier_count > a.outliers.length || a.outlier_count > 3 ? ` +${a.outlier_count - Math.min(3, a.outliers.length)} more` : '';
+    return `<div class="suspect-row" id="outlier-${i}" title="${escHtml(a.folder)}">
+      <input type="checkbox" class="outlier-cb" data-i="${i}" checked onchange="onOutlierToggle(${i})">
+      <div class="suspect-body">
+        <div class="suspect-album">${escHtml(a.album)} <span style="color:var(--muted);font-weight:400">· ${escHtml(a.artist)}</span></div>
+        <div class="suspect-why">${a.outlier_count} of ${a.track_count} off-genre → ${escHtml(a.dominant)} · ${sample}${more}</div>
+      </div>
+      <div class="suspect-edit">
+        <span style="color:var(--muted)">set →</span>
+        <input class="outlier-input" data-i="${i}" value="${escHtml(a.dominant)}" spellcheck="false" aria-label="Album genre">
+      </div>
+    </div>`;
+  }).join('');
+  const heading = `<strong style="color:var(--warn)">${d.total}</strong> album${d.total !== 1 ? 's' : ''} with off-genre or untagged tracks vs a clear album majority. Applying sets each album's odd tracks to its genre — the rest are untouched. Uncheck any to leave; every change is reversible from Activity.`;
+  return `<div style="font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.5">${heading}</div>
+    <div class="suspect-list">${rows}</div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap">
+      <button class="btn-primary btn-sm" id="outlierApplyBtn" onclick="applyAlbumOutliers()">Apply <span id="outlierApplyN">${d.total}</span> selected</button>
+      <span id="outlierNote" style="color:var(--muted);font-size:12px">Writes genre in place; the source library must be writable.</span>
+    </div>`;
+}
+
+function onOutlierToggle(i) {
+  const cb = document.querySelector(`.outlier-cb[data-i="${i}"]`);
+  const row = document.getElementById('outlier-' + i);
+  if (row && cb) row.classList.toggle('off', !cb.checked);
+  const n = document.querySelectorAll('.outlier-cb:checked').length;
+  const nEl = document.getElementById('outlierApplyN');
+  if (nEl) nEl.textContent = n;
+  const btn = document.getElementById('outlierApplyBtn');
+  if (btn) btn.disabled = n === 0;
+}
+
+async function loadAlbumOutliers() {
+  const el = document.getElementById('outlierReport');
+  const btn = document.getElementById('outlierBtn');
+  return runBusy(btn, async () => {
+    el.innerHTML = '<span style="color:var(--muted);font-size:13px">Scanning albums for genre outliers…</span>';
+    try {
+      const res = await fetch('/api/prep/genres/album-outliers');
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Scan failed — run an Audit first.')}</span>`; return; }
+      if (!d.total) { el.innerHTML = '<span style="color:var(--accent);font-size:13px">✓ No album genre outliers — every album is internally consistent.</span>'; return; }
+      el.innerHTML = albumOutliersHTML(d);
+    } catch { el.innerHTML = '<span style="color:var(--danger);font-size:13px">Scan failed.</span>'; }
+  });
+}
+
+async function applyAlbumOutliers() {
+  const albums = [];
+  document.querySelectorAll('.outlier-cb:checked').forEach(cb => {
+    const i = +cb.dataset.i;
+    const a = _albumOutliers[i];
+    const input = document.querySelector(`.outlier-input[data-i="${i}"]`);
+    const genre = ((input ? input.value : a && a.dominant) || '').trim();
+    if (a && genre) albums.push({ folder: a.folder, genre });
+  });
+  if (!albums.length) return;
+  if (!confirm(`Align ${albums.length} album${albums.length !== 1 ? 's' : ''} to their genre? This writes tags in place and is reversible from the Activity page.`)) return;
+  const btn = document.getElementById('outlierApplyBtn');
+  const note = document.getElementById('outlierNote');
+  return runBusy(btn, async () => {
+    try {
+      const res = await fetch('/api/prep/genres/align', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ albums }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { if (note) note.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'Apply failed.')}</span>`; return; }
+      document.getElementById('outlierReport').innerHTML =
+        `<span style="color:var(--accent);font-size:13px">✓ Aligning ${albums.length} album${albums.length !== 1 ? 's' : ''} — track it on the Activity page. Re-scan here once it finishes.</span>`;
+      switchTab('activity');
+    } catch { if (note) note.innerHTML = '<span style="color:var(--danger)">Apply failed.</span>'; }
   });
 }
 

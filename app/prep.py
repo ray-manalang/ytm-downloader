@@ -317,6 +317,21 @@ async def _prep_worker():
                             cancel_ev.is_set, rel_base)
                     )
                     await _update_track_albumartist(summary.pop("updated", []))
+                elif jtype == "genrealign":
+                    rows = await _fetch_library_tracks()
+                    approved = job_spec["settings"].get("approved", {})
+
+                    def record_cb(path, field, old_json, new_json, _jid=job_id):
+                        asyncio.run_coroutine_threadsafe(
+                            _insert_change(_jid, path, field, old_json, new_json), _loop
+                        ).result()
+                    rel_base = MUSIC_DIR or None
+                    summary = await _loop.run_in_executor(
+                        None, lambda: tagtools.run_genre_align(
+                            rows, approved, progress_cb, record_cb,
+                            cancel_ev.is_set, rel_base)
+                    )
+                    await _update_track_genres(summary.pop("updated", []))
                 elif jtype == "enrich":
                     enriched = await _fetch_enriched_paths()
 
@@ -348,7 +363,7 @@ async def _prep_worker():
                     if isinstance(summary, dict):
                         await _save_pipeline_state(jtype, summary)
                     # A library/mirror change → refresh auto-refresh playlists.
-                    if jtype in ("convert", "tags", "unify", "enrich", "relabel"):
+                    if jtype in ("convert", "tags", "unify", "enrich", "relabel", "genrealign"):
                         try:
                             await playlists_module.regenerate_all_auto()
                         except Exception:
@@ -731,6 +746,91 @@ async def save_genre_vocab(body: dict):
         "can_clean": bool(src and os.access(src, os.W_OK)),
         "genres_file_set": bool(os.environ.get("GENRES_FILE")),
     }
+
+
+@router.get("/genres/album-outliers")
+async def album_genre_outliers():
+    """Single-artist albums whose tracks mostly agree on a genre but a few differ
+    (or are missing) — likely per-track tagging slips. Read-only; needs an Audit.
+    Proposes the album's dominant genre for the outliers. Compilations (multiple
+    track artists, or a "Various Artists" album-artist) are skipped, since they're
+    legitimately multi-genre. Reversible when applied via /genres/align."""
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute(
+            "SELECT path, artist, albumartist, album, genre FROM library_tracks"
+        ) as cur:
+            rows = await cur.fetchall()
+
+    base = Path(MUSIC_DIR).resolve() if MUSIC_DIR else None
+    albums: dict = {}
+    for path, artist, albumartist, album, genre in rows:
+        albums.setdefault(str(Path(path).parent), []).append(
+            (path, artist, albumartist, album, (genre or "").strip()))
+
+    out = []
+    for folder, tracks in albums.items():
+        prim = {_artist_primary_key(ar) for _, ar, _, _, _ in tracks}
+        prim.discard(""); prim.discard("unknown artist")
+        aa_counts = Counter((aa or "").strip() for _, _, aa, _, _ in tracks if (aa or "").strip())
+        aa_key = _artist_primary_key(aa_counts.most_common(1)[0][0]) if aa_counts else ""
+        if len(prim) > 1 or aa_key == "various artists":
+            continue                        # compilation — legitimately multi-genre
+
+        n = len(tracks)
+        genre_counts = Counter(g for _, _, _, _, g in tracks if g)
+        if not genre_counts:
+            continue
+        dominant, dcount = genre_counts.most_common(1)[0]
+        if dcount < 2 or dcount < 0.6 * n:
+            continue                        # no clear album-wide genre
+        outliers = [(p, g) for p, _, _, _, g in tracks if g != dominant]
+        if not outliers:
+            continue
+
+        album_name = next((al for _, _, _, al, _ in tracks if (al or "").strip()), "") or Path(folder).name
+        artist_name = next((ar for _, ar, _, _, _ in tracks if (ar or "").strip()), "") or ""
+        disp_folder = folder
+        if base:
+            try:
+                disp_folder = str(Path(folder).resolve().relative_to(base))
+            except ValueError:
+                pass
+        out.append({
+            "folder": disp_folder,
+            "album": album_name,
+            "artist": artist_name,
+            "dominant": dominant,
+            "dominant_count": dcount,
+            "track_count": n,
+            "outlier_count": len(outliers),
+            "outliers": [{"title": Path(p).stem, "current": g or "(none)"} for p, g in outliers][:12],
+        })
+
+    out.sort(key=lambda a: (-a["outlier_count"], a["artist"].lower(), a["album"].lower()))
+    return {"total": len(out), "albums": out}
+
+
+@router.post("/genres/align")
+async def apply_genre_align(body: dict):
+    """Apply approved album genres from the outlier review — a `genrealign` job that
+    writes the target genre to each album's outlier tracks in place (dominant tracks
+    untouched), reversible via job Rollback. Body: {albums: [{folder, genre}]} where
+    ``genre`` is a controlled genre string/list (normalized here)."""
+    albums = body.get("albums") or []
+    approved = {}
+    for a in albums:
+        folder = str((a or {}).get("folder") or "").strip()
+        genres = tagtools.normalize_genre((a or {}).get("genre") or [])
+        if folder and genres:
+            approved[folder] = genres
+    if not approved:
+        raise HTTPException(400, "No album genres to apply")
+    source_dir = MUSIC_DIR or ""
+    if not source_dir:
+        raise HTTPException(400, "MUSIC_DIR is not configured")
+    if not os.access(source_dir, os.W_OK):
+        raise HTTPException(400, f"Library is not writable (mount without :ro): {source_dir}")
+    return await _create_and_enqueue("genrealign", source_dir, "", {"approved": approved})
 
 
 async def _save_pipeline_state(jtype: str, summary):
@@ -1131,8 +1231,8 @@ async def rollback_job(job_id: str):
     job = await _job_row(job_id)
     if not job:
         raise HTTPException(404, "Not found")
-    if job["type"] not in ("tags", "unify", "relabel"):
-        raise HTTPException(400, "Only tag-clean, unify, and relabel jobs can be rolled back")
+    if job["type"] not in ("tags", "unify", "relabel", "genrealign"):
+        raise HTTPException(400, "Only tag-clean, unify, relabel, and genre-align jobs can be rolled back")
 
     async with aiosqlite.connect(_db_path) as db:
         db.row_factory = aiosqlite.Row
