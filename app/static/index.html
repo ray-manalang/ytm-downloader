@@ -717,7 +717,7 @@
 
     <div class="add-box" style="margin-top:20px">
       <div style="font-weight:600;font-size:15px">Genre cross-check <span style="color:var(--muted);font-weight:400;font-size:12px">· MusicBrainz / Claude</span></div>
-      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Catches <strong>consistently-wrong</strong> genres — an artist whose every track agrees on a genre that an external source contradicts (which majority-vote can never fix). Looks up each locally-consistent artist online and flags disagreements. Genre is subjective, so review before applying. Slow &amp; bounded — runs as a job in Activity.</div>
+      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Catches <strong>consistently-wrong</strong> genres — an artist whose every track agrees on a genre that an external source contradicts (which majority-vote can never fix). Looks up each locally-consistent artist online and flags disagreements. Genre is subjective, so review before applying. Bounded per run (~150 artists) but <strong>remembers what it checked</strong> — run it repeatedly to cover your whole library; disagreements accumulate below.</div>
       <div class="step-actions" style="margin-bottom:8px">
         <button class="btn-ghost btn-sm" id="crosscheckBtn" onclick="startCrosscheck()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>Run genre cross-check</button>
         <label id="crosscheckLLMLabel" style="display:none;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
@@ -1861,7 +1861,7 @@ function handleWS(msg) {
       if (msg.status === 'done') prepJobs[id].progress = 100;
       if (msg.status === 'done' && prepJobs[id].type === 'audit') loadLatestAudit();
       if (msg.status === 'done' && prepJobs[id].type === 'review') loadLatestReview();
-      if (msg.status === 'done' && prepJobs[id].type === 'crosscheck') loadLatestCrosscheck();
+      if (msg.status === 'done' && (prepJobs[id].type === 'crosscheck' || prepJobs[id].type === 'unify')) loadCrosscheck();
       if (msg.status === 'done') {
         updatePrepSteps();
         if (document.getElementById('panel-dashboard').classList.contains('active')) loadDashboard();
@@ -1977,7 +1977,7 @@ async function loadAuditPage() {
   // Ensure the library folder is populated (Prepare loads it lazily too).
   if (!prepConfigLoaded) await loadConvert();
   onLibDirChange();
-  await Promise.all([loadLatestAudit(), loadLatestCrosscheck(), updatePrepSteps()]);
+  await Promise.all([loadLatestAudit(), loadCrosscheck(), updatePrepSteps()]);
 }
 
 async function fetchLibraryData() {
@@ -2478,7 +2478,8 @@ function prepSummaryChips(type, s, jobId) {
     if (s.changed != null) parts.push(`${s.changed} aligned`);
   } else if (type === 'crosscheck') {
     if (s.checked != null) parts.push(`${s.checked} checked`);
-    if (s.disagreements) parts.push(`${s.disagreements} disagreements`);
+    if (s.disagreements) parts.push(`${s.disagreements} new disagreements`);
+    if (s.remaining) parts.push(`${s.remaining} left`);
   }
   const errFiles = Array.isArray(s.error_files) ? s.error_files : [];
   let errPanel = '';
@@ -3048,27 +3049,33 @@ async function startCrosscheck() {
   });
 }
 
-async function loadLatestCrosscheck() {
+async function loadCrosscheck() {
   try {
-    const res = await fetch('/api/prep/genres/cross-check/latest');
-    const data = await res.json();
-    renderCrosscheckTable(data.crosscheck && data.crosscheck.summary);
+    const [ocRes, lastRes] = await Promise.all([
+      fetch('/api/prep/genres/cross-check/outstanding'),
+      fetch('/api/prep/genres/cross-check/latest'),
+    ]);
+    const oc = await ocRes.json().catch(() => null);
+    const last = ((await lastRes.json().catch(() => ({}))).crosscheck || {}).summary || null;
+    renderCrosscheckTable(oc, last);
   } catch {}
 }
 
-let _lastCrosscheck = null;   // summary of the latest cross-check, for apply
+let _lastCrosscheck = null;   // outstanding data (artists) for apply
 
-function renderCrosscheckTable(s) {
+function renderCrosscheckTable(oc, last) {
   const el = document.getElementById('crosscheckReport');
   if (!el) return;
-  _lastCrosscheck = s;
-  if (!s) { el.innerHTML = ''; return; }
-  const artists = s.artists || [];
-  const meta = `checked ${s.checked || 0} of ${s.consistent_artists || 0} consistent artists`
-    + (s.online_lookups ? ` · ${s.online_lookups} MusicBrainz${s.online_capped ? ' (capped)' : ''}` : '')
-    + (s.llm_lookups ? ` · ${s.llm_lookups} via Claude` : '');
+  _lastCrosscheck = oc;
+  if (!oc) { el.innerHTML = ''; return; }
+  const total = oc.consistent_artists || 0, checked = oc.checked || 0, remaining = oc.remaining || 0;
+  const lastNote = last && last.checked != null ? ` · last run checked ${last.checked}${last.online_capped ? ' (hit the per-run cap)' : ''}` : '';
+  const coverage = total
+    ? `<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Coverage: <strong style="color:var(--text)">${checked}</strong> of ${total} consistent artists checked${remaining ? ` · <strong style="color:var(--warn)">${remaining}</strong> not yet checked — run again to continue` : ' · <span style="color:var(--success)">complete</span>'}${lastNote}${checked ? ` · <a href="#" onclick="resetCrosscheck();return false" style="color:var(--muted)">reset coverage</a>` : ''}</div>`
+    : '';
+  const artists = oc.artists || [];
   if (!artists.length) {
-    el.innerHTML = `<div style="color:var(--muted);font-size:13px">✓ No disagreements — ${meta}. Every consistent artist matches its external genre.</div>`;
+    el.innerHTML = coverage + `<div style="color:var(--muted);font-size:13px">${checked ? '✓ No outstanding disagreements — every checked artist matches its external genre.' : 'Not run yet — start the cross-check above.'}</div>`;
     return;
   }
   const rows = artists.map((a, i) => {
@@ -3086,8 +3093,8 @@ function renderCrosscheckTable(s) {
       </div>
     </div>`;
   }).join('');
-  const heading = `<strong style="color:var(--warn)">${artists.length}</strong> artist${artists.length !== 1 ? 's' : ''} whose consistent library genre disagrees with the external source (${meta}). Genre is subjective — <strong>review carefully</strong>, uncheck any you disagree with, then apply (reversible from Activity).`;
-  el.innerHTML = `<div style="font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.5">${heading}</div>
+  const heading = `<strong style="color:var(--warn)">${artists.length}</strong> artist${artists.length !== 1 ? 's' : ''} whose consistent library genre disagrees with the external source (accumulated across runs). Genre is subjective — <strong>review carefully</strong>, uncheck any you disagree with, then apply (reversible from Activity).`;
+  el.innerHTML = coverage + `<div style="font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.5">${heading}</div>
     <div class="suspect-list">${rows}</div>
     <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap">
       <button class="btn-primary btn-sm" id="ccApplyBtn" onclick="applyCrosscheck()">Apply <span id="ccApplyN">${artists.length}</span> selected</button>
@@ -3135,6 +3142,12 @@ async function applyCrosscheck() {
       switchTab('activity');
     } catch { if (note) note.innerHTML = '<span style="color:var(--danger)">Apply failed.</span>'; }
   });
+}
+
+async function resetCrosscheck() {
+  if (!confirm('Forget all cross-check coverage? The next run re-checks every artist from scratch.')) return;
+  try { await fetch('/api/prep/genres/cross-check', { method: 'DELETE' }); } catch {}
+  loadCrosscheck();
 }
 
 // ── Playlists (smart / rule-based) ───────────────────────────────────────────

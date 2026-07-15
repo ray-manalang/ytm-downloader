@@ -167,6 +167,24 @@ async def _update_track_genres(updated: list):
         await db.commit()
 
 
+async def _fetch_crosscheck_checked() -> set:
+    """Lowercased artist keys already cross-checked (persisted for incremental coverage)."""
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute("SELECT artist_key FROM crosscheck_state") as cur:
+            return {r[0] for r in await cur.fetchall()}
+
+
+async def _record_crosscheck(key: str, source: str, external: list):
+    async with aiosqlite.connect(_db_path) as db:
+        await db.execute(
+            "INSERT INTO crosscheck_state (artist_key, checked_at, source, external) "
+            "VALUES (?,?,?,?) ON CONFLICT(artist_key) DO UPDATE SET "
+            "checked_at=excluded.checked_at, source=excluded.source, external=excluded.external",
+            (key, time.time(), source, json.dumps(external)),
+        )
+        await db.commit()
+
+
 async def _update_track_albumartist(updated: list):
     """updated = [(path, albumartist), ...] — refresh library_tracks after a relabel."""
     if not updated:
@@ -296,10 +314,17 @@ async def _prep_worker():
                     if job_spec["settings"].get("use_llm") and ai_curator.is_enabled():
                         llm_resolver = lambda names: ai_curator.genres_for_artists(
                             names, tagtools.CONTROLLED_GENRES)
+                    already = await _fetch_crosscheck_checked()
+
+                    def record_cb(key, source, external, _jid=job_id):
+                        asyncio.run_coroutine_threadsafe(
+                            _record_crosscheck(key, source, external), _loop
+                        ).result()
                     summary = await _loop.run_in_executor(
                         None, lambda: tagtools.run_genre_crosscheck(
                             rows, use_online, progress_cb, cancel_ev.is_set,
-                            llm_resolver=llm_resolver)
+                            llm_resolver=llm_resolver, already_checked=already,
+                            record_cb=record_cb)
                     )
                 elif jtype == "unify":
                     rows = await _fetch_library_tracks()
@@ -726,11 +751,73 @@ async def start_genre_crosscheck(body: dict):
 
 @router.get("/genres/cross-check/latest")
 async def latest_crosscheck():
-    """Most recent completed cross-check result (durable)."""
+    """Most recent completed cross-check run's stats (durable)."""
     st = await _latest_summary("crosscheck")
     if not st:
         return {"crosscheck": None}
     return {"crosscheck": {"summary": st["summary"], "created_at": st["when"]}}
+
+
+@router.get("/genres/cross-check/outstanding")
+async def crosscheck_outstanding():
+    """Accumulated cross-check disagreements across ALL runs + coverage. Each stored
+    artist's disagreement is re-derived against the CURRENT library genre, so applied
+    fixes drop out automatically. This is what the review table reads."""
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute("SELECT artist_key, source, external FROM crosscheck_state") as cur:
+            state = {r[0]: (r[1], r[2]) for r in await cur.fetchall()}
+        async with db.execute("SELECT artist, albumartist, genre FROM library_tracks") as cur:
+            rows = await cur.fetchall()
+
+    groups: dict = {}
+    for artist, albumartist, genre in rows:
+        key = tagtools.artist_key(albumartist, artist)
+        if key:
+            groups.setdefault(key, []).append((genre or "").strip())
+
+    consistent: dict = {}     # key.lower() -> (display, local_list, local_set, track_count)
+    for key, gs in groups.items():
+        n = len(gs)
+        counts = Counter(g for g in gs if g)
+        if not counts:
+            continue
+        dom, dc = counts.most_common(1)[0]
+        if dc < 2 or dc < 0.6 * n:
+            continue
+        local_list = [x.strip() for x in dom.split(",") if x.strip()]
+        consistent[key.lower()] = (key, local_list, {g.lower() for g in local_list}, n)
+
+    artists = []
+    for k, (source, ext_json) in state.items():
+        c = consistent.get(k)
+        if not c:
+            continue                        # no longer consistent — stays "checked", just not shown
+        disp, local_list, local_set, n = c
+        try:
+            external = json.loads(ext_json or "[]")
+        except (TypeError, ValueError):
+            external = []
+        if external and local_set.isdisjoint({g.lower() for g in external}):
+            artists.append({"artist": disp, "key": k, "local": local_list,
+                            "external": external, "source": source, "track_count": n})
+
+    checked = sum(1 for k in consistent if k in state)
+    artists.sort(key=lambda a: (-a["track_count"], a["artist"].lower()))
+    return {
+        "consistent_artists": len(consistent),
+        "checked": checked,
+        "remaining": len(consistent) - checked,
+        "artists": artists,
+    }
+
+
+@router.delete("/genres/cross-check")
+async def reset_crosscheck():
+    """Forget all cross-check coverage — the next run re-checks from scratch."""
+    async with aiosqlite.connect(_db_path) as db:
+        await db.execute("DELETE FROM crosscheck_state")
+        await db.commit()
+    return {"ok": True}
 
 
 @router.post("/genres/apply")

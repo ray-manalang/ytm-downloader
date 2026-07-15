@@ -146,6 +146,14 @@ async def db_init():
                 updated_at REAL
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS crosscheck_state (
+                artist_key TEXT PRIMARY KEY,           -- lowercased artist key already cross-checked
+                checked_at REAL,
+                source     TEXT,                       -- musicbrainz|llm|none
+                external   TEXT                        -- JSON list of external genres ([] = none/not found)
+            )
+        """)
         await db.commit()
 
 

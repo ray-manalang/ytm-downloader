@@ -859,7 +859,8 @@ def run_genre_align(tracks: List[dict], approved: dict, progress_cb, record_cb,
 
 def run_genre_crosscheck(tracks: List[dict], use_online: bool, progress_cb, should_cancel,
                          online_cap: int = 150, online_budget_s: float = 120.0,
-                         llm_resolver=None, llm_cap: int = 200) -> dict:
+                         llm_resolver=None, llm_cap: int = 200,
+                         already_checked=None, record_cb=None) -> dict:
     """Cross-check locally-consistent artist genres against external sources and flag
     DISAGREEMENTS — the case majority-vote can never catch, where every track of an
     artist agrees on a genre that MusicBrainz (or Claude) contradicts.
@@ -869,9 +870,19 @@ def run_genre_crosscheck(tracks: List[dict], use_online: bool, progress_cb, shou
     external genre is fetched (MusicBrainz per artist, bounded by ``online_cap`` +
     ``online_budget_s`` like the review; then an optional batched Claude pass over
     artists MusicBrainz didn't cover). A disagreement = the local genre set is
-    *disjoint* from the external set. Returns only disagreements as proposals
-    [{artist, key, local, external, source, track_count}]; genre is subjective, so
-    this is advisory — the user reviews and applies via unify."""
+    *disjoint* from the external set.
+
+    **Incremental coverage:** ``already_checked`` (a set of lowercased artist keys)
+    is skipped so successive runs advance to new artists; ``record_cb(key, source,
+    external_list)`` persists each *attempted* artist so it isn't re-checked (an
+    artist that budget/cap skipped is NOT recorded → retried next run). Returns
+    this-run proposals + coverage counts."""
+    already = {str(k).lower() for k in (already_checked or set())}
+
+    def record(key, source, external):
+        if record_cb:
+            record_cb(str(key).lower(), source, external)
+
     maybe_reload()
     groups: dict = {}
     for t in tracks:
@@ -901,6 +912,9 @@ def run_genre_crosscheck(tracks: List[dict], use_online: bool, progress_cb, shou
         local_list = _parse_stored_genre(dom)
         consistent.append((key, {g.lower() for g in local_list}, local_list, n))
 
+    already_consistent = sum(1 for c in consistent if c[0].lower() in already)
+    to_check = [c for c in consistent if c[0].lower() not in already]
+
     proposals = []
     checked = 0
     online_used = 0
@@ -908,24 +922,25 @@ def run_genre_crosscheck(tracks: List[dict], use_online: bool, progress_cb, shou
     online_budget_hit = False
     unresolved_after_mb = []               # MB gave nothing → candidates for Claude
 
-    # Phase 2 — the slow online lookups. This drives its own progress (over the
-    # consistent artists) so the bar reflects the network phase instead of sitting
-    # frozen at the phase-1 total while MusicBrainz is queried.
-    n_consistent = len(consistent)
-    for idx, (key, local_set, local_list, n) in enumerate(consistent, 1):
+    # Phase 2 — the slow online lookups over NOT-yet-checked artists. Drives its own
+    # progress so the bar reflects the network phase (not the phase-1 scan total).
+    n_to_check = len(to_check)
+    for idx, (key, local_set, local_list, n) in enumerate(to_check, 1):
         if should_cancel():
             break
         can_lookup = use_online and online_used < online_cap and not online_budget_hit
         if can_lookup and time.monotonic() - online_started > online_budget_s:
             online_budget_hit = True       # budget spent — skip remaining lookups
             can_lookup = False
-        progress_cb({"done": idx, "total": n_consistent, "action": "crosscheck",
+        progress_cb({"done": idx, "total": n_to_check, "action": "crosscheck",
                      "current_file": (f"MusicBrainz · {key}" if can_lookup else "finalizing…")})
-        external = musicbrainz_genres(key) if can_lookup else []
-        if can_lookup:
-            online_used += 1
+        if not can_lookup:
+            continue                       # not attempted → not recorded → retried next run
+        online_used += 1
+        external = musicbrainz_genres(key)
         if external:
             checked += 1
+            record(key, "musicbrainz", external)
             if local_set.isdisjoint({g.lower() for g in external}):
                 proposals.append({"artist": key, "key": key.lower(), "local": local_list,
                                   "external": external, "source": "musicbrainz", "track_count": n})
@@ -933,29 +948,39 @@ def run_genre_crosscheck(tracks: List[dict], use_online: bool, progress_cb, shou
             unresolved_after_mb.append((key, local_set, local_list, n))
 
     llm_used = 0
+    resolved = {}
     if llm_resolver and unresolved_after_mb and not should_cancel():
-        progress_cb({"done": n_consistent, "total": n_consistent, "action": "crosscheck",
+        progress_cb({"done": n_to_check, "total": n_to_check, "action": "crosscheck",
                      "current_file": f"asking Claude about {len(unresolved_after_mb)} artists…"})
         names = [k for k, _, _, _ in unresolved_after_mb][:llm_cap]
         try:
             resolved = llm_resolver(names) or {}
         except Exception:
             resolved = {}
-        by_low = {(k or "").lower(): v for k, v in resolved.items()}
-        for key, local_set, local_list, n in unresolved_after_mb:
-            ext = normalize_genre(by_low.get(key.lower()) or [])
-            if ext:
-                checked += 1
-                if local_set.isdisjoint({g.lower() for g in ext}):
-                    proposals.append({"artist": key, "key": key.lower(), "local": local_list,
-                                      "external": ext, "source": "llm", "track_count": n})
-                    llm_used += 1
+    by_low = {(k or "").lower(): v for k, v in resolved.items()}
+    # Every MB-attempted-but-empty artist is recorded (via Claude if it resolved,
+    # else as "none") so it isn't re-looked-up next run.
+    for key, local_set, local_list, n in unresolved_after_mb:
+        ext = normalize_genre(by_low.get(key.lower()) or [])
+        if ext:
+            checked += 1
+            record(key, "llm", ext)
+            if local_set.isdisjoint({g.lower() for g in ext}):
+                proposals.append({"artist": key, "key": key.lower(), "local": local_list,
+                                  "external": ext, "source": "llm", "track_count": n})
+                llm_used += 1
+        else:
+            record(key, "none", [])
 
     proposals.sort(key=lambda p: (-p["track_count"], p["artist"].lower()))
+    remaining = max(0, len(consistent) - already_consistent - online_used)
     return {
         "total_artists": total,
         "consistent_artists": len(consistent),
-        "checked": checked,
+        "already_checked": already_consistent,
+        "checked": online_used,            # artists attempted this run
+        "found_external": checked,         # of those, how many had an external genre
+        "remaining": remaining,
         "disagreements": len(proposals),
         "online_lookups": online_used,
         "online_capped": use_online and (online_used >= online_cap or online_budget_hit),
