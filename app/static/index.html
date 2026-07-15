@@ -857,7 +857,9 @@
       <!-- Primary: AI -->
       <div id="plAiBox">
         <div id="plAiBody">
-          <textarea id="plAiPrompt" placeholder="e.g. upbeat 80s new wave for a road trip"
+          <input id="plAiName" placeholder="Playlist name (optional — the AI names it if left blank)"
+            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:9px 12px;font-size:13px;outline:none;margin-bottom:8px">
+          <textarea id="plAiPrompt" placeholder="Describe the playlist — e.g. upbeat 80s new wave for a road trip"
             style="min-height:76px;font-family:inherit"></textarea>
           <div class="pl-row">
             <div class="pl-targets">Write to:
@@ -3232,6 +3234,7 @@ async function loadPlaylists() {
 
 async function generateAi() {
   const prompt = document.getElementById('plAiPrompt').value.trim();
+  const name = document.getElementById('plAiName').value.trim();
   const targets = plTargets('plAiLibrary', 'plAiIpod');
   const out = document.getElementById('plAiResult');
   if (!prompt) { out.innerHTML = '<span style="color:var(--danger)">Describe what you want.</span>'; return; }
@@ -3242,13 +3245,14 @@ async function generateAi() {
   try {
     const res = await fetch('/api/playlists/ai', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({prompt, targets}),
+      body: JSON.stringify({prompt, targets, name: name || undefined}),
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) { out.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'AI generation failed.')}</span>`; return; }
     out.innerHTML = `<span style="color:var(--accent)">✓ "${escHtml(d.name)}" — ${d.matched} tracks</span>
       <span style="color:var(--muted)"> from ${d.candidates} candidates</span>`;
     document.getElementById('plAiPrompt').value = '';
+    document.getElementById('plAiName').value = '';
     await loadPlaylistList();
   } finally { btn.disabled = false; btn.innerHTML = label; }
 }

@@ -457,21 +457,25 @@ async def create_ai_playlist(body: dict):
     if not prompt:
         raise HTTPException(400, "A prompt is required")
     targets = _clean_targets(body.get("targets"))
+    # The playlist name is independent of the prompt: use the user's name if they
+    # gave one, otherwise fall back to the AI-suggested name.
+    name = (body.get("name") or "").strip()[:80]
 
     cur = await _run_ai_curation(prompt)
+    final_name = name or cur["name"]
     spec = {"source": "ai", "prompt": prompt, "intent": cur["intent"],
             "ai_paths": [t["path"] for t in cur["selected"]]}
     pid = str(uuid.uuid4())[:8]
     now = time.time()
-    gen = await _generate(cur["name"], spec, targets)
+    gen = await _generate(final_name, spec, targets)
     async with aiosqlite.connect(_db_path) as db:
         await db.execute(
             "INSERT INTO playlists (id,name,type,spec,targets,track_count,auto_refresh,updated_at) "
             "VALUES (?,?,?,?,?,?,?,?)",
-            (pid, cur["name"], "ai", json.dumps(spec), json.dumps(targets), gen["track_count"], 1, now),
+            (pid, final_name, "ai", json.dumps(spec), json.dumps(targets), gen["track_count"], 1, now),
         )
         await db.commit()
-    return {"id": pid, "name": cur["name"], "type": "ai", "targets": targets,
+    return {"id": pid, "name": final_name, "type": "ai", "targets": targets,
             "candidates": cur["candidates"], "matched": gen["track_count"],
             "written": gen["written"], "updated_at": now}
 
