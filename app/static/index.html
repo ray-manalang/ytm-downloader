@@ -254,6 +254,10 @@
   .genre-fill { height: 100%; background: var(--accent); border-radius: 4px; }
   .genre-count { width: 84px; flex-shrink: 0; text-align: right; font-size: 12px; color: var(--text); display: flex; justify-content: flex-end; gap: 6px; align-items: baseline; }
   .genre-share { color: var(--muted); font-size: 11px; min-width: 30px; text-align: right; }
+  /* Radial chart: drag-to-rotate + per-column hover emphasis */
+  #genreRadialSvg .genre-col { transition: stroke-width .12s ease; }
+  #genreRadialSvg .genre-col:hover { stroke-width: 21; }
+  .genre-hint { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2px; opacity: .75; user-select: none; }
 
   /* Clickable audit stat (missing album artist → list) */
   .aa-link { cursor: pointer; }
@@ -1061,25 +1065,29 @@ function genreAnalyticHTML(dist) {
 const GENRE_COLORS = ['#ef3e57', '#3987e5', '#c98500', '#199e70', '#9085e9', '#d95926',
   '#1aa39c', '#d55181', '#6fa83a', '#6d78e0', '#b5763f', '#008300'];
 
-function genreRadialSVG(entries, totalTagged) {
-  const TOP = 12;
-  const top = entries.slice(0, TOP);
-  const max = top[0][1] || 1;
-  const N = top.length;
-  // Wide-but-short viewBox so long radial labels never clip.
-  const cx = 300, cy = 240, r0 = 52, r1 = 150, labelR = 158, P = 2 * Math.PI;
+// Drag-to-rotate state. The offset (radians) persists across dashboard
+// re-renders so a spin isn't lost when the data refreshes.
+let genreRotorOffset = 0;
+let _genreRotor = null;   // geometry + data snapshot, so a drag can re-render cheaply
+let _rotorDrag = null;
+let _rotorSpin = null;    // inertial-spin rAF handle
 
-  const columns = [], labels = [];
+// The rotating part (columns + labels) for a given angular offset. Recomputed on
+// every drag frame rather than CSS-rotated, so each label re-runs its upright
+// left/right flip and stays readable at any rotation.
+function _genreRotorContent(offset) {
+  if (!_genreRotor) return '';
+  const { top, max, N, totalTagged, cx, cy, r0, r1, labelR } = _genreRotor;
+  const P = 2 * Math.PI, cols = [], labels = [];
   top.forEach(([g, n], i) => {
-    const ang = (i / N) * P - Math.PI / 2;               // start at 12 o'clock
+    const ang = (i / N) * P - Math.PI / 2 + offset;      // 0 = 12 o'clock
     const len = r0 + (n / max) * (r1 - r0);
     const co = Math.cos(ang), si = Math.sin(ang);
     const x0 = (cx + r0 * co).toFixed(1), y0 = (cy + r0 * si).toFixed(1);
     const x1 = (cx + len * co).toFixed(1), y1 = (cy + len * si).toFixed(1);
     const share = totalTagged ? Math.round((n / totalTagged) * 100) : 0;
     const color = GENRE_COLORS[i % GENRE_COLORS.length];
-    columns.push(`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="${color}" stroke-width="15" stroke-linecap="round"><title>${escHtml(g)}: ${n.toLocaleString()} (${share}%)</title></line>`);
-    // Radial label, flipped on the left half so it stays upright.
+    cols.push(`<line class="genre-col" x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="${color}" stroke-width="15" stroke-linecap="round"><title>${escHtml(g)}: ${n.toLocaleString()} (${share}%)</title></line>`);
     const lx = (cx + labelR * co).toFixed(1), ly = (cy + labelR * si).toFixed(1);
     const deg = ang * 180 / Math.PI;
     const left = co < -0.01;
@@ -1087,6 +1095,17 @@ function genreRadialSVG(entries, totalTagged) {
     const anchor = left ? 'end' : 'start';
     labels.push(`<text x="${lx}" y="${ly}" transform="rotate(${rot} ${lx} ${ly})" text-anchor="${anchor}" dominant-baseline="middle" font-size="10.5" fill="var(--muted)">${escHtml(g)} <tspan fill="var(--text)" font-weight="700">${n.toLocaleString()}</tspan></text>`);
   });
+  return cols.join('') + labels.join('');
+}
+
+function genreRadialSVG(entries, totalTagged) {
+  const TOP = 12;
+  const top = entries.slice(0, TOP);
+  const max = top[0][1] || 1;
+  const N = top.length;
+  // Wide-but-short viewBox so long radial labels never clip.
+  const cx = 300, cy = 240, r0 = 52, r1 = 150, labelR = 158;
+  _genreRotor = { top, max, N, totalTagged, cx, cy, r0, r1, labelR };
 
   const rings = [1 / 3, 2 / 3, 1].map(f =>
     `<circle cx="${cx}" cy="${cy}" r="${(r0 + f * (r1 - r0)).toFixed(1)}" fill="none" stroke="var(--border)" stroke-width="1" opacity="0.45"/>`).join('');
@@ -1094,13 +1113,69 @@ function genreRadialSVG(entries, totalTagged) {
   const more = entries.length > TOP
     ? `<div style="color:var(--muted);font-size:12px;text-align:center;margin-top:4px">Top ${TOP} of ${entries.length} genres — switch to <strong>All</strong> for the rest</div>` : '';
 
-  return `<svg viewBox="0 0 600 480" width="100%" style="max-width:600px;display:block;margin:0 auto" role="img" aria-label="Genre distribution radial chart">
+  return `<svg id="genreRadialSvg" viewBox="0 0 600 480" width="100%" style="max-width:600px;display:block;margin:0 auto;cursor:grab;touch-action:none" role="img" aria-label="Genre distribution radial chart — drag to rotate" onpointerdown="genreRotorStart(event)">
     ${rings}${hub}
-    ${columns.join('')}
-    ${labels.join('')}
+    <g id="genreRotorInner">${_genreRotorContent(genreRotorOffset)}</g>
     <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="24" font-weight="800" fill="var(--text)">${totalTagged.toLocaleString()}</text>
     <text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="10" letter-spacing="0.5" fill="var(--muted)">TAGGED TRACKS</text>
-  </svg>${more}`;
+  </svg>
+  <div class="genre-hint">↻ Drag the wheel to spin</div>${more}`;
+}
+
+function _applyRotor() {
+  const inner = document.getElementById('genreRotorInner');
+  if (inner) inner.innerHTML = _genreRotorContent(genreRotorOffset);
+}
+
+// Pointer angle around the chart's on-screen center (viewBox 600×480 → center at
+// 0.5, 0.5 of the element box; uniform scaling preserves angles).
+function _rotorAngle(e, svg) {
+  const r = svg.getBoundingClientRect();
+  return Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2));
+}
+
+function genreRotorStart(e) {
+  const svg = document.getElementById('genreRadialSvg');
+  if (!svg) return;
+  if (_rotorSpin) { cancelAnimationFrame(_rotorSpin); _rotorSpin = null; }
+  _rotorDrag = { lastAng: _rotorAngle(e, svg), lastT: e.timeStamp, vel: 0 };
+  svg.style.cursor = 'grabbing';
+  window.addEventListener('pointermove', genreRotorMove);
+  window.addEventListener('pointerup', genreRotorEnd);
+  e.preventDefault();
+}
+
+function genreRotorMove(e) {
+  const svg = document.getElementById('genreRadialSvg');
+  if (!_rotorDrag || !svg) return;
+  const ang = _rotorAngle(e, svg);
+  let d = ang - _rotorDrag.lastAng;
+  if (d > Math.PI) d -= 2 * Math.PI; else if (d < -Math.PI) d += 2 * Math.PI;  // unwrap
+  const dt = Math.max(1, e.timeStamp - _rotorDrag.lastT);
+  _rotorDrag.vel = d / dt;                    // rad/ms, for release inertia
+  _rotorDrag.lastAng = ang; _rotorDrag.lastT = e.timeStamp;
+  genreRotorOffset += d;
+  _applyRotor();
+}
+
+function genreRotorEnd() {
+  const svg = document.getElementById('genreRadialSvg');
+  if (svg) svg.style.cursor = 'grab';
+  window.removeEventListener('pointermove', genreRotorMove);
+  window.removeEventListener('pointerup', genreRotorEnd);
+  let vel = _rotorDrag ? _rotorDrag.vel : 0;
+  _rotorDrag = null;
+  if (Math.abs(vel) < 0.0008) return;         // a click, not a flick — no spin
+  let last = null;
+  const step = (t) => {
+    if (last == null) last = t;
+    const dt = t - last; last = t;
+    genreRotorOffset += vel * dt;
+    vel *= Math.pow(0.95, dt / 16);           // frame-rate-independent decay
+    _applyRotor();
+    _rotorSpin = Math.abs(vel) > 0.0002 ? requestAnimationFrame(step) : null;
+  };
+  _rotorSpin = requestAnimationFrame(step);
 }
 
 function genreListHTML(entries, totalTagged) {
