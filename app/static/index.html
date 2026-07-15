@@ -261,14 +261,18 @@
   .act-seg button { background: transparent; color: var(--muted); border: none; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 0; }
   .act-seg button.on { background: var(--accent-soft); color: var(--accent); }
   .proc-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
-  .proc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  /* Fixed layout: column widths follow the <th> widths and stay put regardless of
+     cell content, so a changing audited-filename can't re-flow the columns. */
+  .proc-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
   .proc-table thead th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 700; padding: 9px 14px; background: var(--surface2); border-bottom: 1px solid var(--border); white-space: nowrap; }
   .proc-table tbody tr { border-top: 1px solid var(--border); }
   .proc-table tbody tr:first-child { border-top: none; }
   .proc-table tbody tr.proc-active { background: var(--accent-soft); }
   .proc-table td { padding: 9px 14px; vertical-align: middle; }
-  .proc-name-main { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
-  .proc-cf { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; margin-top: 2px; }
+  .proc-name-main { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  /* Reserve one line's height so the row doesn't grow when the first filename
+     arrives; max-width:100% keeps a long name inside the fixed Name column. */
+  .proc-cf { color: var(--muted); font-size: 11px; line-height: 15px; min-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; margin-top: 2px; }
   .proc-kind { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
   .proc-kind.kind-dl { background: rgba(62,166,255,.14); color: var(--info); }
   .proc-kind.kind-lib { background: var(--accent-soft); color: var(--accent); }
@@ -606,7 +610,7 @@
     <div class="proc-wrap">
       <table class="proc-table">
         <thead><tr>
-          <th style="width:34%">Name</th><th>Kind</th><th>Status</th><th style="width:26%">Progress</th><th>Updated</th><th></th>
+          <th style="width:34%">Name</th><th style="width:9%">Kind</th><th style="width:12%">Status</th><th style="width:25%">Progress</th><th style="width:11%">Updated</th><th style="width:9%"></th>
         </tr></thead>
         <tbody id="procBody"></tbody>
       </table>
