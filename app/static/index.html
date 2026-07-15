@@ -399,12 +399,12 @@
       <span class="nav-ico"><svg class="eq-ico" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><rect x="3" y="9" width="4" height="6" rx="2" fill="currentColor" opacity=".55"/><rect x="10" y="4" width="4" height="16" rx="2" fill="var(--accent)"/><rect x="17" y="7" width="4" height="10" rx="2" fill="currentColor" opacity=".8"/></svg></span> Add music
     </div>
 
-    <div class="nav-group-label">Prepare</div>
+    <div class="nav-group-label">Library</div>
     <div class="nav-item" data-nav="audit" onclick="switchTab('audit')">
-      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6a1 1 0 0 1 1 1v1h1.5A1.5 1.5 0 0 1 19 6.5v13A1.5 1.5 0 0 1 17.5 21h-11A1.5 1.5 0 0 1 5 19.5v-13A1.5 1.5 0 0 1 6.5 5H8V4a1 1 0 0 1 1-1z"/><path d="M9 12l1.5 1.5L14 10"/></svg></span> Library audit
+      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6a1 1 0 0 1 1 1v1h1.5A1.5 1.5 0 0 1 19 6.5v13A1.5 1.5 0 0 1 17.5 21h-11A1.5 1.5 0 0 1 5 19.5v-13A1.5 1.5 0 0 1 6.5 5H8V4a1 1 0 0 1 1-1z"/><path d="M9 12l1.5 1.5L14 10"/></svg></span> Audit
     </div>
     <div class="nav-item" data-nav="convert" onclick="switchTab('convert')">
-      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><line x1="15" y1="5" x2="15" y2="9"/><line x1="9" y1="10" x2="9" y2="14"/><line x1="16" y1="15" x2="16" y2="19"/></svg></span> Prepare library
+      <span class="nav-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><line x1="15" y1="5" x2="15" y2="9"/><line x1="9" y1="10" x2="9" y2="14"/><line x1="16" y1="15" x2="16" y2="19"/></svg></span> Optimize
     </div>
 
     <div class="nav-group-label">Organize</div>
@@ -685,7 +685,7 @@
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
         <div style="flex:1;min-width:220px">
           <div style="font-weight:600;font-size:15px">Audit library</div>
-          <div style="color:var(--muted);font-size:13px;margin-top:2px">A read-only scan that indexes tags, genres, and file sizes. Everything in Prepare builds on this — run it first, and after adding music.</div>
+          <div style="color:var(--muted);font-size:13px;margin-top:2px">A read-only scan that indexes tags, genres, and file sizes. Everything in Optimize builds on this — run it first, and after adding music.</div>
         </div>
         <button class="btn-primary" id="auditBtn" onclick="startAudit()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Run audit</button>
       </div>
@@ -747,8 +747,8 @@
       <div class="step-body">
         <div class="step-title">Audit library</div>
         <div class="step-status" id="stepAuditStatus">Not run yet.</div>
-        <div class="step-desc">A read-only scan that indexes tags, genres, and file sizes. Everything below builds on this — run it first, and after adding music. Run it and see the details on the <strong>Library audit</strong> page.</div>
-        <div class="step-actions"><button class="btn-primary" onclick="switchTab('audit')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Open Library audit →</button></div>
+        <div class="step-desc">A read-only scan that indexes tags, genres, and file sizes. Everything below builds on this — run it first, and after adding music. Run it and see the details on the <strong>Audit</strong> page.</div>
+        <div class="step-actions"><button class="btn-primary" onclick="switchTab('audit')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Open Audit →</button></div>
       </div>
     </div>
 
@@ -760,7 +760,7 @@
         <div class="step-status" id="stepCleanStatus">Normalize genres &amp; fill album artists.</div>
         <div class="step-desc">Maps genres to a controlled vocabulary and fills missing album artists, in place. One-click reversible from the Jobs list.</div>
         <div class="step-actions"><button class="btn-ghost" id="cleanBtn" onclick="startClean()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Clean tags</button></div>
-        <div class="step-desc" style="margin-top:8px">Album-artist looks wrong on some albums? Fix mislabeled album artists on the <a href="#" onclick="switchTab('audit'); return false" style="color:var(--accent)">Library audit</a> page.</div>
+        <div class="step-desc" style="margin-top:8px">Album-artist looks wrong on some albums? Fix mislabeled album artists on the <a href="#" onclick="switchTab('audit'); return false" style="color:var(--accent)">Audit</a> page.</div>
       </div>
     </div>
 
@@ -1006,7 +1006,7 @@ function eqMark(size = 15) {
 // ── Navigation ────────────────────────────────────────────────────────────────
 const PAGE_TITLES = {
   dashboard: 'Dashboard', activity: 'Activity', library: 'Add music',
-  audit: 'Library audit', convert: 'Prepare library', playlists: 'Playlists',
+  audit: 'Audit', convert: 'Optimize', playlists: 'Playlists',
   files: 'Files', setup: 'Setup',
 };
 function switchTab(name) {
@@ -1108,9 +1108,9 @@ function renderDashboard(ytm, pipe, dls, pls) {
 
   const prepBox = total === 0
     ? `<div class="add-box"><p style="color:var(--muted);font-size:13px;margin-bottom:12px">Your library isn't indexed yet. Point Prepare at your music and run an audit to unlock cleanup, analysis, conversion, and playlists.</p>
-         <button class="btn-primary" onclick="switchTab('convert')">Open Prepare →</button></div>`
+         <button class="btn-primary" onclick="switchTab('convert')">Open Optimize →</button></div>`
     : `<div class="add-box"><div style="margin-bottom:4px">${stepRows}</div>
-         <div style="margin-top:14px"><button class="btn-primary" onclick="switchTab('convert')">Continue in Prepare →</button></div></div>`;
+         <div style="margin-top:14px"><button class="btn-primary" onclick="switchTab('convert')">Continue in Optimize →</button></div></div>`;
 
   const actions = `<div class="stat-grid">
     <div class="stat-card click" onclick="switchTab('library')"><div style="font-weight:600">${eqMark(14)} Add music</div><div class="stat-label">YouTube Music & URLs</div></div>
@@ -1122,7 +1122,7 @@ function renderDashboard(ytm, pipe, dls, pls) {
 
   document.getElementById('dashBody').innerHTML =
     conn + stats +
-    `<div class="section-title">Prepare your library</div>` + prepBox +
+    `<div class="section-title">Optimize your library</div>` + prepBox +
     genreSection +
     `<div class="section-title">Quick actions</div>` + actions;
 }
@@ -3384,7 +3384,7 @@ function writeResultHTML(name, data) {
   }
   const ipod = written.find(w => w.target === 'ipod');
   if (ipod && ipod.count === 0 && (data.track_count || 0) > 0) {
-    html += `<div style="color:var(--warn);font-size:12px;margin-top:6px">⚠ The iPod playlist is empty: it only includes tracks that already have an AAC mirror. Run <strong>Convert → iPod</strong> in Prepare (so the mirror exists), then <strong>Regenerate</strong> this playlist. The mirror must live at the same <code>IPOD_DIR</code> the playlist writes to (above).</div>`;
+    html += `<div style="color:var(--warn);font-size:12px;margin-top:6px">⚠ The iPod playlist is empty: it only includes tracks that already have an AAC mirror. Run <strong>Convert → iPod</strong> in Optimize (so the mirror exists), then <strong>Regenerate</strong> this playlist. The mirror must live at the same <code>IPOD_DIR</code> the playlist writes to (above).</div>`;
   }
   return html + `</div>`;
 }
