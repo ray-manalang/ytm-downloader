@@ -861,6 +861,10 @@
             style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:9px 12px;font-size:13px;outline:none;margin-bottom:8px">
           <textarea id="plAiPrompt" placeholder="Describe the playlist — e.g. upbeat 80s new wave for a road trip"
             style="min-height:76px;font-family:inherit"></textarea>
+          <label style="display:flex;align-items:flex-start;gap:8px;color:var(--muted);font-size:12px;cursor:pointer;margin:8px 0 4px">
+            <input type="checkbox" id="plAiCompletionist" style="accent-color:var(--accent);margin-top:2px">
+            <span><strong>Complete set</strong> — find <em>every</em> match in my library (for a known set like “all James Bond themes”). Otherwise the AI curates a tasteful subset.</span>
+          </label>
           <div class="pl-row">
             <div class="pl-targets">Write to:
               <label><input type="checkbox" id="plAiLibrary" checked style="accent-color:var(--accent)"> Library</label>
@@ -3235,24 +3239,28 @@ async function loadPlaylists() {
 async function generateAi() {
   const prompt = document.getElementById('plAiPrompt').value.trim();
   const name = document.getElementById('plAiName').value.trim();
+  const completionist = document.getElementById('plAiCompletionist').checked;
   const targets = plTargets('plAiLibrary', 'plAiIpod');
   const out = document.getElementById('plAiResult');
   if (!prompt) { out.innerHTML = '<span style="color:var(--danger)">Describe what you want.</span>'; return; }
   if (!targets.length) { out.innerHTML = '<span style="color:var(--danger)">Pick at least one target.</span>'; return; }
   const btn = document.getElementById('plAiBtn'); const label = btn.innerHTML;
   btn.disabled = true; btn.textContent = 'Curating…';
-  out.innerHTML = '<span style="color:var(--muted)">Asking Claude to build it…</span>';
+  out.innerHTML = `<span style="color:var(--muted)">${completionist ? 'Asking Claude for the full set, then matching your library…' : 'Asking Claude to build it…'}</span>`;
   try {
     const res = await fetch('/api/playlists/ai', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({prompt, targets, name: name || undefined}),
+      body: JSON.stringify({prompt, targets, name: name || undefined, completionist}),
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) { out.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'AI generation failed.')}</span>`; return; }
-    out.innerHTML = `<span style="color:var(--accent)">✓ "${escHtml(d.name)}" — ${d.matched} tracks</span>
-      <span style="color:var(--muted)"> from ${d.candidates} candidates</span>`;
+    const detail = d.completionist
+      ? `<span style="color:var(--muted)"> — <strong style="color:var(--text)">${d.matched}</strong> of ${d.candidates} set members are in your library</span>`
+      : `<span style="color:var(--muted)"> — ${d.matched} tracks from ${d.candidates} candidates</span>`;
+    out.innerHTML = `<span style="color:var(--accent)">✓ "${escHtml(d.name)}"</span>${detail}`;
     document.getElementById('plAiPrompt').value = '';
     document.getElementById('plAiName').value = '';
+    document.getElementById('plAiCompletionist').checked = false;
     await loadPlaylistList();
   } finally { btn.disabled = false; btn.innerHTML = label; }
 }

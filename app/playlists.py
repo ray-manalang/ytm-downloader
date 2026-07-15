@@ -218,7 +218,12 @@ def _match_ytm_tracks(ytm_tracks: List[dict], library: List[dict]) -> tuple:
 
 
 def _matched_for_spec(spec: dict, tracks: List[dict]) -> List[dict]:
-    """A spec is a rule set (smart), a YTM track list, or a fixed AI selection."""
+    """A spec is a rule set (smart), a YTM/enumerated track list, or a fixed AI selection."""
+    if spec.get("enumerated"):
+        # Completionist AI: re-match the named set against the CURRENT library, so a
+        # regenerate picks up members downloaded since (like the YTM-import flow).
+        matched, _ = _match_ytm_tracks(spec["enumerated"], tracks)
+        return matched
     if spec.get("ai_paths"):
         by_path = {t["path"]: t for t in tracks}
         return [by_path[p] for p in spec["ai_paths"] if p in by_path]
@@ -448,6 +453,27 @@ async def _run_ai_curation(prompt: str) -> dict:
     return {"intent": intent, "selected": selected, "candidates": len(candidates), "name": name}
 
 
+async def _run_completionist(prompt: str) -> dict:
+    """Completionist path for 'the entire set of X' requests: Claude enumerates the
+    set's members from world knowledge, then we match each against the library by
+    title+artist (so members are found regardless of how they're genre-tagged, and a
+    prolific artist's multiple entries all make it in). Returns
+    {name, enumerated:[{artist,title}], selected, set_size}."""
+    tracks = await _all_tracks()
+    if not tracks:
+        raise HTTPException(400, "No indexed tracks — run Audit first.")
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(None, lambda: ai_curator.enumerate_set(prompt))
+    except Exception as e:
+        raise HTTPException(502, f"AI enumeration failed: {e}")
+    songs = [{"artist": s.get("artist", ""), "title": s.get("title", "")}
+             for s in (result.get("songs") or []) if s.get("title")]
+    matched, _ = _match_ytm_tracks(songs, tracks)
+    name = ((result.get("name") or f"AI: {prompt}").strip())[:80] or "AI playlist"
+    return {"name": name, "enumerated": songs, "selected": matched, "set_size": len(songs)}
+
+
 @router.post("/ai")
 async def create_ai_playlist(body: dict):
     """Two-stage AI curation: prompt → intent (Claude) → local candidates → Claude re-rank."""
@@ -460,11 +486,19 @@ async def create_ai_playlist(body: dict):
     # The playlist name is independent of the prompt: use the user's name if they
     # gave one, otherwise fall back to the AI-suggested name.
     name = (body.get("name") or "").strip()[:80]
+    completionist = bool(body.get("completionist"))
 
-    cur = await _run_ai_curation(prompt)
+    if completionist:
+        cur = await _run_completionist(prompt)
+        spec = {"source": "ai", "prompt": prompt, "completionist": True,
+                "enumerated": cur["enumerated"]}
+        candidates = cur["set_size"]
+    else:
+        cur = await _run_ai_curation(prompt)
+        spec = {"source": "ai", "prompt": prompt, "intent": cur["intent"],
+                "ai_paths": [t["path"] for t in cur["selected"]]}
+        candidates = cur["candidates"]
     final_name = name or cur["name"]
-    spec = {"source": "ai", "prompt": prompt, "intent": cur["intent"],
-            "ai_paths": [t["path"] for t in cur["selected"]]}
     pid = str(uuid.uuid4())[:8]
     now = time.time()
     gen = await _generate(final_name, spec, targets)
@@ -476,8 +510,8 @@ async def create_ai_playlist(body: dict):
         )
         await db.commit()
     return {"id": pid, "name": final_name, "type": "ai", "targets": targets,
-            "candidates": cur["candidates"], "matched": gen["track_count"],
-            "written": gen["written"], "updated_at": now}
+            "candidates": candidates, "completionist": completionist,
+            "matched": gen["track_count"], "written": gen["written"], "updated_at": now}
 
 
 @router.post("/{pid}/recurate")
@@ -497,16 +531,23 @@ async def recurate_playlist(pid: str):
     if not prompt:
         raise HTTPException(400, "This playlist has no saved prompt to re-curate")
 
-    cur = await _run_ai_curation(prompt)
-    spec = {"source": "ai", "prompt": prompt, "intent": cur["intent"],
-            "ai_paths": [t["path"] for t in cur["selected"]]}
+    if pub["spec"].get("completionist"):
+        cur = await _run_completionist(prompt)
+        spec = {"source": "ai", "prompt": prompt, "completionist": True,
+                "enumerated": cur["enumerated"]}
+        candidates = cur["set_size"]
+    else:
+        cur = await _run_ai_curation(prompt)
+        spec = {"source": "ai", "prompt": prompt, "intent": cur["intent"],
+                "ai_paths": [t["path"] for t in cur["selected"]]}
+        candidates = cur["candidates"]
     now = time.time()
     gen = await _generate(row["name"], spec, pub["targets"])   # keep the user's name + targets
     async with aiosqlite.connect(_db_path) as db:
         await db.execute("UPDATE playlists SET spec=?, track_count=?, updated_at=? WHERE id=?",
                          (json.dumps(spec), gen["track_count"], now, pid))
         await db.commit()
-    return {"id": pid, "name": row["name"], "candidates": cur["candidates"],
+    return {"id": pid, "name": row["name"], "candidates": candidates,
             "matched": gen["track_count"], "written": gen["written"], "updated_at": now}
 
 

@@ -136,6 +136,49 @@ def prompt_to_intent(prompt: str, facets: dict, controlled_genres: List[str]) ->
     return intent
 
 
+# ── Completionist enumeration (for "the entire set of X" requests) ──────────
+
+_ENUM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "songs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "artist": {"type": "string"},
+                    "title": {"type": "string"},
+                },
+                "required": ["artist", "title"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["name", "songs"],
+    "additionalProperties": False,
+}
+
+
+def enumerate_set(prompt: str, max_items: int = 400) -> dict:
+    """List every song in the named set the prompt describes, from world knowledge,
+    as ``{artist, title}`` — so the caller can match them against the library. This
+    is the completionist path (e.g. 'all James Bond theme songs'): unlike the vibe
+    curator it does NOT filter the library first, so cross-genre members aren't lost.
+    Returns ``{name, songs:[{artist,title}]}``."""
+    system = (
+        "You are a music expert. The user wants the COMPLETE set of songs matching their "
+        "request — e.g. 'all James Bond theme songs', 'every Beatles UK #1 single', 'the whole "
+        "Now That's What I Call Music Vol. 1 tracklist'. List EVERY song that genuinely belongs "
+        "to that set, from your knowledge, as {artist, title}. Be exhaustive — include all "
+        "members across every era/entry/volume, not just the famous ones. Use the best-known "
+        "performing artist and the canonical song title (no parenthetical notes). Do NOT invent "
+        "songs and do NOT pad with loosely-related tracks — only real members of the set. Also "
+        f"give the set a short descriptive name. Return at most {max_items} songs."
+    )
+    return _structured(_client(), system, prompt, _ENUM_SCHEMA, max_tokens=4096)
+
+
 # ── Artist genre resolution (augments MusicBrainz in the genre-review step) ──
 
 _ARTIST_GENRES_SCHEMA = {
