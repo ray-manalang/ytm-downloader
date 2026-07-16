@@ -217,8 +217,21 @@ def _match_ytm_tracks(ytm_tracks: List[dict], library: List[dict]) -> tuple:
     return matched, missing
 
 
+def _track_public(t: dict) -> dict:
+    """A track as the staging/review UI needs it."""
+    return {"path": t.get("path"),
+            "artist": t.get("artist") or t.get("albumartist") or "",
+            "title": _display_title(t.get("path", "")),
+            "album": t.get("album"), "genre": t.get("genre"), "year": t.get("year")}
+
+
 def _matched_for_spec(spec: dict, tracks: List[dict]) -> List[dict]:
-    """A spec is a rule set (smart), a YTM/enumerated track list, or a fixed AI selection."""
+    """A spec is a rule set (smart), a YTM/enumerated track list, or a fixed selection."""
+    if spec.get("frozen"):
+        # Hand-curated before saving: the track set is fixed, so never re-match (that
+        # would undo the user's add/removes). Missing files simply drop out.
+        by_path = {t["path"]: t for t in tracks}
+        return [by_path[p] for p in (spec.get("ai_paths") or []) if p in by_path]
     if spec.get("enumerated"):
         # Completionist AI: re-match the named set against the CURRENT library, so a
         # regenerate picks up members downloaded since (like the YTM-import flow).
@@ -337,15 +350,32 @@ async def playlists_config():
 
 @router.post("/preview")
 async def preview(body: dict):
+    """Resolve a smart spec without saving. Returns the full matched list so the UI
+    can stage it for add/remove before saving (plus count for the summary line)."""
     spec = body.get("spec") or {}
     if not spec.get("rules"):
         raise HTTPException(400, "Add at least one rule")
     tracks = await _all_tracks()
     matched = _match_tracks(tracks, spec)
-    sample = [{"artist": t.get("artist"), "title": _display_title(t.get("path", "")),
-               "album": t.get("album"), "genre": t.get("genre"), "year": t.get("year")}
-              for t in matched[:25]]
-    return {"count": len(matched), "sample": sample}
+    return {"count": len(matched), "tracks": [_track_public(t) for t in matched[:2000]]}
+
+
+@router.get("/search")
+async def search_tracks(q: str, limit: int = 25):
+    """Library search for the staging list's 'add track' box — substring over
+    title / artist / album."""
+    needle = (q or "").strip().lower()
+    if len(needle) < 2:
+        return {"tracks": []}
+    out = []
+    for t in await _all_tracks():
+        hay = f"{t.get('artist') or ''} {t.get('albumartist') or ''} {t.get('album') or ''} " \
+              f"{_display_title(t.get('path', ''))}".lower()
+        if needle in hay:
+            out.append(_track_public(t))
+            if len(out) >= max(1, min(limit, 100)):
+                break
+    return {"tracks": out}
 
 
 # Max tracks per artist in an AI playlist, unless the request is artist-specific.
@@ -474,6 +504,35 @@ async def _run_completionist(prompt: str) -> dict:
     return {"name": name, "enumerated": songs, "selected": matched, "set_size": len(songs)}
 
 
+async def _ai_curate(prompt: str, completionist: bool) -> tuple:
+    """Run the right curation flow. Returns (cur, spec, candidates)."""
+    if completionist:
+        cur = await _run_completionist(prompt)
+        spec = {"source": "ai", "prompt": prompt, "completionist": True,
+                "enumerated": cur["enumerated"]}
+        return cur, spec, cur["set_size"]
+    cur = await _run_ai_curation(prompt)
+    spec = {"source": "ai", "prompt": prompt, "intent": cur["intent"],
+            "ai_paths": [t["path"] for t in cur["selected"]]}
+    return cur, spec, cur["candidates"]
+
+
+@router.post("/ai/preview")
+async def preview_ai_playlist(body: dict):
+    """Curate WITHOUT saving, so the UI can stage the result for add/remove first.
+    Returns the resolved tracks + the spec to save once the user is happy."""
+    if not ai_curator.is_enabled():
+        raise HTTPException(400, "AI curation is disabled — set ANTHROPIC_API_KEY to enable it.")
+    prompt = (body.get("prompt") or "").strip()
+    if not prompt:
+        raise HTTPException(400, "A prompt is required")
+    completionist = bool(body.get("completionist"))
+    cur, spec, candidates = await _ai_curate(prompt, completionist)
+    return {"name": cur["name"], "spec": spec, "candidates": candidates,
+            "completionist": completionist,
+            "tracks": [_track_public(t) for t in cur["selected"]]}
+
+
 @router.post("/ai")
 async def create_ai_playlist(body: dict):
     """Two-stage AI curation: prompt → intent (Claude) → local candidates → Claude re-rank."""
@@ -567,11 +626,15 @@ def _clean_targets(raw) -> List[str]:
 
 @router.post("")
 async def create_playlist(body: dict):
+    """Save a playlist from a resolved spec. Used by the smart builder and by the
+    staging/review step (which saves a `frozen` hand-curated spec, or the original
+    spec untouched when the user didn't edit the list). `type` defaults to smart."""
     name = (body.get("name") or "").strip()
     spec = body.get("spec") or {}
+    ptype = (body.get("type") or "smart").strip() or "smart"
     if not name:
         raise HTTPException(400, "Name is required")
-    if not spec.get("rules"):
+    if not (spec.get("rules") or spec.get("ai_paths") or spec.get("enumerated")):
         raise HTTPException(400, "Add at least one rule")
     targets = _clean_targets(body.get("targets"))
 
@@ -582,11 +645,11 @@ async def create_playlist(body: dict):
         await db.execute(
             "INSERT INTO playlists (id,name,type,spec,targets,track_count,auto_refresh,updated_at) "
             "VALUES (?,?,?,?,?,?,?,?)",
-            (pid, name, "smart", json.dumps(spec), json.dumps(targets),
+            (pid, name, ptype, json.dumps(spec), json.dumps(targets),
              gen["track_count"], 1 if body.get("auto_refresh", True) else 0, now),
         )
         await db.commit()
-    return {"id": pid, "name": name, "type": "smart", "spec": spec, "targets": targets,
+    return {"id": pid, "name": name, "type": ptype, "spec": spec, "targets": targets,
             "track_count": gen["track_count"], "written": gen["written"], "updated_at": now}
 
 

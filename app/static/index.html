@@ -284,6 +284,26 @@
   .suspect-row.off { opacity: .45; }
   .suspect-row.off .suspect-input { color: var(--muted); }
 
+  /* Staging: review + edit a playlist's tracks before saving */
+  .stage-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .stage-input { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 8px 12px; font-size: 13px; outline: none; }
+  .stage-input:focus { border-color: var(--accent); }
+  .stage-list { max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+  .stage-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-top: 1px solid var(--border); font-size: 13px; }
+  .stage-row:first-child { border-top: none; }
+  .stage-row:hover { background: var(--surface2); }
+  .stage-n { width: 24px; flex-shrink: 0; text-align: right; color: var(--muted); font-size: 11px; }
+  .stage-main { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stage-main .s-artist { font-weight: 600; }
+  .stage-main .s-title { color: var(--muted); }
+  .stage-meta { color: var(--muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+  .stage-results { border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); max-height: 200px; overflow: auto; width: 100%; }
+  .stage-result { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--border); font-size: 12px; cursor: pointer; }
+  .stage-result:first-child { border-top: none; }
+  .stage-result:hover { background: var(--surface); color: var(--accent); }
+  .stage-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .pl-frozen { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; padding: 2px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); }
+
   /* Unmapped-genre mapper */
   .unmapped-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); }
   .unmapped-raw { flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -955,6 +975,9 @@
         </div>
       </details>
     </div>
+
+    <!-- Staging: review/edit the resolved tracks before saving (AI + smart) -->
+    <div id="plStaging"></div>
 
     <div class="section-title">Your playlists</div>
     <div id="plList"></div>
@@ -3255,20 +3278,24 @@ async function generateAi() {
   btn.disabled = true; btn.textContent = 'Curating…';
   out.innerHTML = `<span style="color:var(--muted)">${completionist ? 'Asking Claude for the full set, then matching your library…' : 'Asking Claude to build it…'}</span>`;
   try {
-    const res = await fetch('/api/playlists/ai', {
+    // Curate WITHOUT saving, then stage it for review (add/remove) before saving.
+    const res = await fetch('/api/playlists/ai/preview', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({prompt, targets, name: name || undefined, completionist}),
+      body: JSON.stringify({prompt, completionist}),
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) { out.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'AI generation failed.')}</span>`; return; }
-    const detail = d.completionist
-      ? `<span style="color:var(--muted)"> — <strong style="color:var(--text)">${d.matched}</strong> of ${d.candidates} set members are in your library</span>`
-      : `<span style="color:var(--muted)"> — ${d.matched} tracks from ${d.candidates} candidates</span>`;
-    out.innerHTML = `<span style="color:var(--accent)">✓ "${escHtml(d.name)}"</span>${detail}`;
+    const tracks = d.tracks || [];
+    out.innerHTML = '';
+    _openStaging({
+      type: 'ai', name: name || d.name, spec: d.spec, targets, tracks,
+      meta: d.completionist
+        ? `<strong style="color:var(--text)">${tracks.length}</strong> of ${d.candidates} set members are in your library.`
+        : `<strong style="color:var(--text)">${tracks.length}</strong> tracks curated from ${d.candidates} candidates.`,
+    });
     document.getElementById('plAiPrompt').value = '';
     document.getElementById('plAiName').value = '';
     document.getElementById('plAiCompletionist').checked = false;
-    await loadPlaylistList();
   } finally { btn.disabled = false; btn.innerHTML = label; }
 }
 
@@ -3373,21 +3400,27 @@ function buildSpec() {
   return spec;
 }
 
+// "Preview" resolves the rules and opens the staging list, where you can add/remove
+// tracks and then save. ("Save Playlist" stays the direct, unreviewed path.)
 async function previewPlaylist() {
   const spec = buildSpec();
   const errEl = document.getElementById('plError'); errEl.textContent = '';
   if (!spec.rules.length) { errEl.textContent = 'Add at least one rule with a value.'; return; }
-  const res = await fetch('/api/playlists/preview', {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({spec}),
+  const targets = plTargets('plTargetLibrary', 'plTargetIpod');
+  if (!targets.length) { errEl.textContent = 'Pick at least one target (Library or iPod).'; return; }
+  const name = document.getElementById('plName').value.trim() || 'Smart playlist';
+  return runBusy(document.getElementById('plPreviewBtn'), async () => {
+    const res = await fetch('/api/playlists/preview', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({spec}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { errEl.textContent = data.detail || 'Preview failed.'; return; }
+    document.getElementById('plPreview').innerHTML = '';
+    _openStaging({
+      type: 'smart', name, spec, targets, tracks: data.tracks || [],
+      meta: `<strong style="color:var(--text)">${data.count}</strong> tracks match your rules.`,
+    });
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) { errEl.textContent = data.detail || 'Preview failed.'; return; }
-  const el = document.getElementById('plPreview');
-  const rows = (data.sample || []).map(s =>
-    `<div style="padding:5px 0;border-top:1px solid var(--border);font-size:12px">
-       <span>${escHtml(s.artist || '')}</span> <span style="color:var(--muted)">— ${escHtml(s.title || '')}${s.year ? ' · ' + s.year : ''}${s.genre ? ' · ' + escHtml(s.genre) : ''}</span></div>`).join('');
-  el.innerHTML = `<div style="border-top:1px solid var(--border);padding-top:12px">
-    <div style="font-size:13px;margin-bottom:6px"><strong style="color:var(--accent)">${data.count}</strong> tracks match${data.count > 25 ? ' (showing 25)' : ''}</div>${rows}</div>`;
 }
 
 async function savePlaylist() {
@@ -3411,6 +3444,138 @@ async function savePlaylist() {
     document.getElementById('plPreview').innerHTML = writeResultHTML(name, data);
     await loadPlaylistList();
   } finally { btn.disabled = false; btn.textContent = 'Save Playlist'; }
+}
+
+// ── Staging: review + edit the resolved tracks before saving (AI + smart) ────
+let _staging = null;          // { type, name, spec, targets, tracks, edited, meta }
+let _stageResults = [];
+let _stageSearchTimer = null;
+
+function _openStaging(s) {
+  _staging = Object.assign({ edited: false, meta: '' }, s);
+  _stageResults = [];
+  renderStaging();
+  document.getElementById('plStaging').scrollIntoView({ block: 'nearest' });
+}
+
+function closeStaging() { _staging = null; _stageResults = []; renderStaging(); }
+
+function renderStaging() {
+  const el = document.getElementById('plStaging');
+  if (!el) return;
+  if (!_staging) { el.innerHTML = ''; return; }
+  const s = _staging;
+  el.innerHTML = `
+    <div class="section-title">Review before saving</div>
+    <div class="add-box">
+      <div style="color:var(--muted);font-size:12px;margin-bottom:10px;line-height:1.5">${s.meta || ''}
+        Remove anything you don't want, or search to add tracks — then save.</div>
+      <div class="stage-head">
+        <input id="stageName" class="stage-input" style="flex:1;min-width:170px" value="${escHtml(s.name)}" placeholder="Playlist name">
+        <input id="stageSearch" class="stage-input" style="flex:1;min-width:170px" placeholder="Add a track — search your library…" oninput="stageSearch()" autocomplete="off">
+      </div>
+      <div id="stageResults" style="margin-bottom:8px"></div>
+      <div id="stageCount" style="color:var(--muted);font-size:12px;margin:0 0 6px"></div>
+      <div class="stage-list" id="stageList"></div>
+      <div class="stage-actions">
+        <button class="btn-primary" id="stageSaveBtn" onclick="saveStaging()">Save playlist</button>
+        <button class="btn-ghost btn-sm" onclick="closeStaging()">Cancel</button>
+        <span id="stageNote" style="font-size:12px"></span>
+      </div>
+      <div id="stageError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+    </div>`;
+  renderStageList();
+}
+
+// List-only re-render, so editing never steals focus from the search box.
+function renderStageList() {
+  const s = _staging;
+  if (!s) return;
+  const list = document.getElementById('stageList');
+  const count = document.getElementById('stageCount');
+  const note = document.getElementById('stageNote');
+  if (count) count.innerHTML = `<strong style="color:var(--text)">${s.tracks.length}</strong> track${s.tracks.length !== 1 ? 's' : ''}`;
+  if (note) note.innerHTML = s.edited
+    ? '<span style="color:var(--warn)">Hand-curated — saves as a fixed list (won\'t auto-refresh).</span>' : '';
+  if (!list) return;
+  list.innerHTML = s.tracks.length ? s.tracks.map((t, i) => `
+    <div class="stage-row">
+      <span class="stage-n">${i + 1}</span>
+      <div class="stage-main"><span class="s-artist">${escHtml(t.artist || '')}</span> <span class="s-title">— ${escHtml(t.title || '')}</span></div>
+      <span class="stage-meta">${escHtml([t.year, t.genre].filter(Boolean).join(' · '))}</span>
+      <button class="btn-danger btn-sm" title="Remove from playlist" aria-label="Remove" onclick="stageRemove(${i})">✕</button>
+    </div>`).join('')
+    : '<div style="padding:14px;color:var(--muted);font-size:13px">No tracks — search above to add some, or cancel.</div>';
+}
+
+function stageRemove(i) {
+  if (!_staging) return;
+  _staging.tracks.splice(i, 1);
+  _staging.edited = true;
+  renderStageList();
+}
+
+function stageSearch() {
+  clearTimeout(_stageSearchTimer);
+  _stageSearchTimer = setTimeout(async () => {
+    const box = document.getElementById('stageResults');
+    const q = (document.getElementById('stageSearch')?.value || '').trim();
+    if (!box) return;
+    if (q.length < 2) { box.innerHTML = ''; _stageResults = []; return; }
+    try {
+      const d = await (await fetch('/api/playlists/search?q=' + encodeURIComponent(q))).json();
+      _stageResults = d.tracks || [];
+      const have = new Set((_staging?.tracks || []).map(t => t.path));
+      box.innerHTML = _stageResults.length
+        ? `<div class="stage-results">${_stageResults.map((t, i) => `
+            <div class="stage-result" onclick="stageAdd(${i})">
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><strong>${escHtml(t.artist || '')}</strong> — ${escHtml(t.title || '')}</span>
+              <span style="flex-shrink:0;color:var(--muted)">${have.has(t.path) ? 'already added' : '+ add'}</span>
+            </div>`).join('')}</div>`
+        : '<div style="color:var(--muted);font-size:12px;padding:4px 2px">No matches</div>';
+    } catch { box.innerHTML = ''; }
+  }, 220);
+}
+
+function stageAdd(i) {
+  const t = _stageResults[i];
+  if (!t || !_staging) return;
+  if (_staging.tracks.some(x => x.path === t.path)) return;   // already in the list
+  _staging.tracks.push(t);
+  _staging.edited = true;
+  renderStageList();
+  const box = document.getElementById('stageResults'); if (box) box.innerHTML = '';
+  const q = document.getElementById('stageSearch'); if (q) { q.value = ''; q.focus(); }
+  _stageResults = [];
+}
+
+async function saveStaging() {
+  const s = _staging;
+  if (!s) return;
+  const err = document.getElementById('stageError'); if (err) err.textContent = '';
+  const name = (document.getElementById('stageName')?.value || '').trim() || s.name;
+  if (!name) { if (err) err.textContent = 'Name is required.'; return; }
+  if (!s.tracks.length) { if (err) err.textContent = 'Nothing to save — add at least one track.'; return; }
+  // Freeze ONLY if the user actually edited. An untouched list keeps its normal
+  // behavior (smart rules / a completionist set still re-match as music is added).
+  const spec = s.edited
+    ? Object.assign({}, s.spec, { frozen: true, ai_paths: s.tracks.map(t => t.path) })
+    : s.spec;
+  return runBusy(document.getElementById('stageSaveBtn'), async () => {
+    try {
+      const res = await fetch('/api/playlists', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name, type: s.type, spec, targets: s.targets }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { if (err) err.textContent = d.detail || 'Save failed.'; return; }
+      const outId = s.type === 'ai' ? 'plAiResult' : 'plPreview';
+      closeStaging();
+      await loadPlaylistList();
+      const out = document.getElementById(outId);
+      if (out) out.innerHTML = writeResultHTML(name, d);
+    } catch { if (err) err.textContent = 'Save failed.'; }
+  });
 }
 
 // Show where each target's .m3u landed + its count, so an empty iPod mirror
@@ -3457,6 +3622,9 @@ async function loadPlaylistList() {
       `<span class="status-chip" style="background:var(--surface2);color:var(--muted)">${t === 'ipod' ? 'iPod' : 'Library'}</span>`).join('');
     const typeBadge = p.type === 'ytm' ? '<span class="status-chip" style="background:var(--accent-soft);color:var(--accent)">YTM</span>'
       : p.type === 'ai' ? '<span class="status-chip" style="background:var(--accent-soft);color:var(--accent)">AI</span>' : '';
+    // Hand-curated before saving → fixed track set (regenerate replays it as-is).
+    const frozenBadge = (p.spec && p.spec.frozen)
+      ? '<span class="pl-frozen" title="You edited this list before saving, so the track set is fixed — it won\'t re-match your library">hand-curated</span>' : '';
     return `
     <div class="card" style="margin-bottom:10px">
       <div class="card-header">
@@ -3472,7 +3640,7 @@ async function loadPlaylistList() {
       </div>
       <div class="card-meta">
         <span class="status-chip status-done aa-link" onclick="togglePlaylistTracks('${p.id}')" title="Show tracks">${p.track_count} tracks ▸</span>
-        ${typeBadge}${targetBadges}
+        ${typeBadge}${frozenBadge}${targetBadges}
         <span style="color:var(--muted);font-size:12px">updated ${fmtDate(p.updated_at)}</span>
       </div>
       <div id="pltracks-${p.id}" class="pl-tracks" style="display:none"></div>
