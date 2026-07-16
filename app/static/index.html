@@ -723,6 +723,7 @@
         <span class="act-seg" id="ytSearchTypeSeg">
           <button class="on" data-t="songs" onclick="setYtSearchType('songs')">Songs</button>
           <button data-t="albums" onclick="setYtSearchType('albums')">Albums</button>
+          <button data-t="playlists" onclick="setYtSearchType('playlists')">Playlists</button>
         </span>
         <button class="btn-primary" id="ytSearchBtn" onclick="runYtSearch()">Search</button>
       </div>
@@ -2246,7 +2247,9 @@ function _ytRenderResults(rows) {
   box.innerHTML = '<div style="margin-top:10px">' + rows.map((r, i) => {
     const sub = r.kind === 'song'
       ? [r.artist, r.album, r.duration].filter(Boolean).join(' · ')
-      : [r.artist, r.year].filter(Boolean).join(' · ');
+      : r.kind === 'playlist'
+        ? [r.artist, r.count ? r.count + ' items' : ''].filter(Boolean).join(' · ')
+        : [r.artist, r.year].filter(Boolean).join(' · ');
     const art = r.thumbnail
       ? `<img class="yt-res-art" src="${escHtml(r.thumbnail)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
       : '<span class="yt-res-art"></span>';
@@ -2256,16 +2259,49 @@ function _ytRenderResults(rows) {
         <div class="yt-res-title">${escHtml(r.title)}</div>
         <div class="yt-res-sub">${escHtml(sub)}</div>
       </div>
-      <button class="btn-primary btn-sm" id="ytdl-${i}" onclick="ytDownload(${i})">Download</button>
+      <button class="btn-primary btn-sm" id="ytdl-${i}" onclick="ytDownload(${i})">${r.kind === 'playlist' ? 'Check' : 'Download'}</button>
     </div>`;
   }).join('') + '</div>';
   _ytResults = rows;
 }
 let _ytResults = [];
 
+// Playlists are a two-step: check, then queue. A playlist's advertised size is
+// mostly video — even YouTube's own featured lists run ~10 songs to ~104 videos
+// — so queueing 9 tracks from a "271 item" playlist without warning would read
+// as broken. Show the split first, let the user commit second.
+async function ytCheckPlaylist(i) {
+  const r = _ytResults[i];
+  const btn = document.getElementById('ytdl-' + i);
+  const sub = document.querySelector(`#ytres-${i} .yt-res-sub`);
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    const res = await fetch('/api/ytm/search/playlist?id=' + encodeURIComponent(r.id));
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || 'Could not read playlist');
+    const bits = [`<strong style="color:var(--text)">${d.songs} song${d.songs !== 1 ? 's' : ''}</strong>`];
+    if (d.videos) bits.push(`<span style="color:var(--warn)">${d.videos} video${d.videos !== 1 ? 's' : ''} skipped</span>`);
+    if (d.have) bits.push(`${d.have} already in your library`);
+    if (d.truncated) bits.push(`<span style="color:var(--warn)">first ${d.scanned} only</span>`);
+    sub.innerHTML = bits.join(' · ');
+    _ytResults[i].checked = true;
+    if (!d.queue) {
+      btn.textContent = d.songs ? 'Nothing new' : 'No music';
+      btn.classList.remove('btn-primary'); btn.classList.add('btn-ghost');
+      return;
+    }
+    btn.disabled = false;
+    btn.textContent = `Queue ${d.queue} song${d.queue !== 1 ? 's' : ''}`;
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Check';
+    sub.innerHTML = `<span style="color:var(--danger)">${escHtml(e.message)}</span>`;
+  }
+}
+
 async function ytDownload(i) {
   const r = _ytResults[i];
   if (!r) return;
+  if (r.kind === 'playlist' && !r.checked) return ytCheckPlaylist(i);
   const btn = document.getElementById('ytdl-' + i);
   const label = btn.innerHTML;
   btn.disabled = true; btn.textContent = 'Adding…';
@@ -2276,8 +2312,10 @@ async function ytDownload(i) {
     });
     const d = await res.json();
     if (!res.ok) throw new Error(d.detail || 'Could not add');
-    // The download lands in the normal queue; Activity shows it via WS.
-    btn.textContent = r.kind === 'album' ? 'Album queued' : 'Queued';
+    // Everything lands in the normal queue; Activity shows it via WS.
+    btn.textContent = r.kind === 'playlist'
+      ? `Queued ${d.queued} song${d.queued !== 1 ? 's' : ''}`
+      : (r.kind === 'album' ? 'Album queued' : 'Queued');
     btn.classList.remove('btn-primary'); btn.classList.add('btn-ghost');
   } catch (e) {
     btn.disabled = false; btn.innerHTML = label;

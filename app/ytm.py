@@ -291,7 +291,20 @@ def set_dependencies(enqueue_fn, db_path: str):
 # the results afterwards. The resultType check below is a second belt.
 
 _search_client = None
-_SEARCH_FILTERS = ("songs", "albums")
+_SEARCH_FILTERS = ("songs", "albums", "playlists")
+
+# A playlist's tracks each carry a videoType. ONLY these are music; everything
+# else is video content and must never be enqueued (see the music-only rule).
+#   MUSIC_VIDEO_TYPE_ATV  — audio track (the real song). Keep.
+#   MUSIC_VIDEO_TYPE_OMV  — official music video. Drop.
+#   MUSIC_VIDEO_TYPE_UGC  — user-uploaded video. Drop.
+#   None                  — unavailable/unknown. Drop.
+# This matters more than it sounds: even YouTube Music's OWN featured playlists
+# are mostly OMV (e.g. "The Hits: '80s" is 10 ATV to 104 OMV), and the top hit
+# for "80s new wave" is a 275-track playlist that's 192 videos to 6 songs. A
+# whole-playlist URL download would drag all of that in.
+_MUSIC_VIDEO_TYPES = {"MUSIC_VIDEO_TYPE_ATV"}
+_PLAYLIST_SCAN_LIMIT = 300      # some results claim millions of items
 
 
 def _get_search_client():
@@ -329,12 +342,21 @@ async def ytm_search(q: str = "", type: str = "songs", limit: int = 20):
         logger.warning("ytm search failed for %r: %s", q, exc)
         raise HTTPException(502, f"YouTube Music search failed: {exc}")
 
-    want = "song" if type == "songs" else "album"
+    want = {"songs": "song", "albums": "album", "playlists": "playlist"}[type]
     out = []
     for r in raw:
         if r.get("resultType") != want:
             continue                      # belt for the filter= above
-        if want == "song":
+        if want == "playlist":
+            pid = r.get("browseId") or r.get("playlistId")
+            if not pid:
+                continue
+            out.append({
+                "kind": "playlist", "id": pid, "title": r.get("title") or "",
+                "artist": r.get("author") or "", "count": r.get("itemCount") or "",
+                "thumbnail": _thumb(r),
+            })
+        elif want == "song":
             vid = r.get("videoId")
             if not vid:
                 continue                  # unplayable result — nothing to download
@@ -353,6 +375,76 @@ async def ytm_search(q: str = "", type: str = "songs", limit: int = 20):
                 "thumbnail": _thumb(r),
             })
     return {"results": out, "type": type}
+
+
+def _norm_playlist_id(raw: str) -> str:
+    """Search returns a browseId like 'VLPL…'; get_playlist wants the 'PL…'."""
+    pid = (raw or "").strip()
+    return pid[2:] if pid.startswith("VL") else pid
+
+
+def _scan_playlist(pid: str) -> dict:
+    """Expand a playlist and split music from video. Blocking — run in executor."""
+    pl = _get_search_client().get_playlist(_norm_playlist_id(pid), limit=_PLAYLIST_SCAN_LIMIT)
+    tracks = pl.get("tracks") or []
+    songs, videos = [], 0
+    for t in tracks:
+        vid = t.get("videoId")
+        if not vid:
+            continue
+        if t.get("videoType") in _MUSIC_VIDEO_TYPES:
+            songs.append({
+                "videoId": vid, "title": t.get("title") or "",
+                "artist": ", ".join(a.get("name", "") for a in (t.get("artists") or []) if a.get("name")),
+            })
+        else:
+            videos += 1                   # music video / UGC / unavailable
+    return {
+        "title": pl.get("title") or "", "author": (pl.get("author") or {}).get("name", "")
+        if isinstance(pl.get("author"), dict) else (pl.get("author") or ""),
+        "songs": songs, "videos": videos, "scanned": len(tracks),
+        "truncated": len(tracks) >= _PLAYLIST_SCAN_LIMIT,
+    }
+
+
+async def _playlist_plan(pid: str) -> dict:
+    """What downloading this playlist would actually do: music only, minus what's
+    already in the library (reusing the same matcher the YTM import uses, so the
+    two agree about what 'already have it' means)."""
+    try:
+        scan = await asyncio.get_running_loop().run_in_executor(None, _scan_playlist, pid)
+    except Exception as exc:
+        logger.warning("ytm playlist scan failed for %s: %s", pid, exc)
+        raise HTTPException(502, f"Could not read that playlist: {exc}")
+
+    have = []
+    missing = scan["songs"]
+    if scan["songs"] and _db_path:
+        try:
+            from . import playlists as playlists_module   # lazy: avoids a cycle
+            library = await playlists_module._all_tracks()
+            if library:
+                have, missing = playlists_module._match_ytm_tracks(scan["songs"], library)
+        except Exception as exc:
+            logger.warning("playlist library match failed: %s", exc)
+            have, missing = [], scan["songs"]   # degrade to "queue everything"
+    return {**scan, "have": len(have), "missing": missing}
+
+
+@router.get("/search/playlist")
+async def ytm_search_playlist(id: str = ""):
+    """Preview a playlist before queueing: how much is music, how much is video,
+    how much you already own. The UI shows this *before* enqueuing anything —
+    the video ratio is often so lopsided that a silent filter would look broken."""
+    if not (id or "").strip():
+        raise HTTPException(400, "id is required")
+    plan = await _playlist_plan(id)
+    return {
+        "title": plan["title"], "author": plan["author"],
+        "songs": len(plan["songs"]), "videos": plan["videos"],
+        "have": plan["have"], "queue": len(plan["missing"]),
+        "scanned": plan["scanned"], "truncated": plan["truncated"],
+    }
 
 
 @router.post("/search/download")
@@ -383,8 +475,27 @@ async def ytm_search_download(body: dict):
         if not pid:
             raise HTTPException(404, "That album has no playlist to download")
         url = f"https://music.youtube.com/playlist?list={pid}"
+    elif kind == "playlist":
+        # NOT a playlist-URL download: that would pull the videos in too. Expand
+        # it, keep only real songs, drop what's already in the library, and
+        # enqueue each track individually — exactly what liked-songs sync does.
+        # Re-scanned server-side rather than trusting ids posted by the client.
+        plan = await _playlist_plan(ident)
+        if not plan["missing"]:
+            return {"ok": True, "queued": 0, "videos_skipped": plan["videos"],
+                    "already_have": plan["have"], "songs": len(plan["songs"])}
+        queued = 0
+        for t in plan["missing"]:
+            try:
+                await _enqueue_fn(f"https://music.youtube.com/watch?v={t['videoId']}")
+                queued += 1
+            except Exception as exc:
+                logger.warning("playlist enqueue failed for %s: %s", t.get("videoId"), exc)
+        return {"ok": True, "queued": queued, "videos_skipped": plan["videos"],
+                "already_have": plan["have"], "songs": len(plan["songs"]),
+                "truncated": plan["truncated"]}
     else:
-        raise HTTPException(400, "kind must be 'song' or 'album'")
+        raise HTTPException(400, "kind must be 'song', 'album', or 'playlist'")
 
     entry = await _enqueue_fn(url)
     return {"ok": True, "url": url, "download": entry}
