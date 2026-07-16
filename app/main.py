@@ -167,6 +167,14 @@ async def db_init():
             dl_cols = [r[1] for r in await cur.fetchall()]
         if "track_count" not in dl_cols:
             await db.execute("ALTER TABLE downloads ADD COLUMN track_count INTEGER")
+        # Whether Clean would touch this file, decided by the Audit that read it
+        # (tagtools.clean_plan). Lets Clean act on the flagged set instead of
+        # re-reading the whole library. NULL = never audited since this column
+        # existed, which makes Clean fall back to a full walk.
+        async with db.execute("PRAGMA table_info(library_tracks)") as cur:
+            lt_cols = [r[1] for r in await cur.fetchall()]
+        if "needs_clean" not in lt_cols:
+            await db.execute("ALTER TABLE library_tracks ADD COLUMN needs_clean INTEGER")
         await db.commit()
 
 

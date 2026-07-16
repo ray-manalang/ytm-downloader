@@ -91,6 +91,41 @@ def _job_public(row: dict) -> dict:
     return out
 
 
+async def _clean_targets(source_dir: str):
+    """Paths the last Audit flagged as needing a Clean, or None if it can't say.
+
+    None (→ Clean walks everything, as it always did) when no row under this root
+    has a non-NULL `needs_clean` — i.e. no Audit has run since the column existed.
+    Returning [] instead would mean "audited, nothing to do", which is a different
+    claim entirely and would silently skip a library that was never scanned.
+    """
+    prefix = str(Path(source_dir).resolve()).rstrip(os.sep) + os.sep
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM library_tracks "
+            "WHERE needs_clean IS NOT NULL AND substr(path,1,?)=?",
+            (len(prefix), prefix),
+        ) as cur:
+            (known,) = await cur.fetchone()
+        if not known:
+            return None                     # never audited → nothing to trust
+        async with db.execute(
+            "SELECT path FROM library_tracks "
+            "WHERE needs_clean=1 AND substr(path,1,?)=?",
+            (len(prefix), prefix),
+        ) as cur:
+            return [r[0] for r in await cur.fetchall()]
+
+
+async def _clear_needs_clean(paths: list):
+    if not paths:
+        return
+    async with aiosqlite.connect(_db_path) as db:
+        await db.executemany(
+            "UPDATE library_tracks SET needs_clean=0 WHERE path=?", [(p,) for p in paths])
+        await db.commit()
+
+
 def _summary_file_count(summary: dict) -> int:
     """How many files a job actually traversed — the denominator for ms/file.
     Each engine names its total differently, so this reads them rather than
@@ -112,18 +147,19 @@ async def _upsert_tracks(tracks: list):
     now = time.time()
     rows = [
         (t["path"], t.get("artist"), t.get("albumartist"), t.get("album"),
-         t.get("genre"), t.get("year"), t.get("duration"), now)
+         t.get("genre"), t.get("year"), t.get("duration"), now, t.get("needs_clean"))
         for t in tracks
     ]
     async with aiosqlite.connect(_db_path) as db:
         await db.executemany(
             "INSERT INTO library_tracks "
-            "(path,artist,albumartist,album,genre,year,duration,added_at) "
-            "VALUES (?,?,?,?,?,?,?,?) "
+            "(path,artist,albumartist,album,genre,year,duration,added_at,needs_clean) "
+            "VALUES (?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(path) DO UPDATE SET "
             "artist=excluded.artist, albumartist=excluded.albumartist, "
             "album=excluded.album, genre=excluded.genre, year=excluded.year, "
-            "duration=excluded.duration, added_at=excluded.added_at",
+            "duration=excluded.duration, added_at=excluded.added_at, "
+            "needs_clean=excluded.needs_clean",
             rows,
         )
         await db.commit()
@@ -305,10 +341,16 @@ async def _prep_worker():
                         asyncio.run_coroutine_threadsafe(
                             _insert_change(_jid, path, field, old_json, new_json), _loop
                         ).result()
+                    # Act on what the Audit already worked out rather than
+                    # re-reading the library to rediscover it.
+                    targets = await _clean_targets(job_spec["source_dir"])
                     summary = await _loop.run_in_executor(
                         None, lambda: tagtools.run_clean(
-                            job_spec["source_dir"], progress_cb, record_cb, cancel_ev.is_set)
+                            job_spec["source_dir"], progress_cb, record_cb,
+                            cancel_ev.is_set, only_paths=targets)
                     )
+                    if targets and not cancel_ev.is_set():
+                        await _clear_needs_clean(targets)   # handled; don't re-offer them
                 elif jtype == "review":
                     rows = await _fetch_library_tracks()
                     use_online = bool(job_spec["settings"].get("use_online"))

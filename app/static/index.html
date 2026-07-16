@@ -3056,6 +3056,10 @@ function prepSummaryChips(type, s, jobId) {
     if (s.changed != null) parts.push(`${s.changed} changed`);
     if (s.genre_changes) parts.push(`${s.genre_changes} genres`);
     if (s.albumartist_filled) parts.push(`${s.albumartist_filled} album artists`);
+    // Say which set it worked on: "0 changed" out of the whole library and out of
+    // the 2 files the audit flagged mean very different things.
+    if (s.scanned_all === false && s.total_tracks != null)
+      parts.push(`${s.total_tracks} flagged by audit`);
   } else if (type === 'review') {
     if (s.total_artists != null) parts.push(`${s.total_artists} artists`);
     if (s.artists_with_changes) parts.push(`${s.artists_with_changes} to change`);

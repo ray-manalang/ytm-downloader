@@ -351,6 +351,28 @@ def _iter_audio(source_dir: Union[str, Path]):
             yield p
 
 
+def clean_plan(tags: dict, path) -> dict:
+    """Exactly what `run_clean` would do to this file — and nothing else decides it.
+
+    Audit records the verdict as `needs_clean` so Clean can act on just those files
+    instead of re-reading the whole library. That only works if the two agree
+    perfectly: if Audit's idea of "needs work" ever drifted from Clean's, Clean
+    would silently skip files it should fix. So both call this.
+    """
+    old_genre = _genre_list(tags.get("genre"))
+    new_genre = normalize_genre(old_genre)
+    do_genre = new_genre != old_genre
+
+    old_aa = tags.get("albumartist")
+    old_aa = str(old_aa).strip() if old_aa else ""
+    desired_aa = fill_album_artist(tags, path)
+    do_aa = bool(desired_aa) and not old_aa and desired_aa != old_aa
+
+    return {"do_genre": do_genre, "old_genre": old_genre, "new_genre": new_genre,
+            "do_aa": do_aa, "old_aa": old_aa, "new_aa": desired_aa,
+            "needs_clean": do_genre or do_aa}
+
+
 def run_audit(source_dir: Union[str, Path], progress_cb, should_cancel) -> dict:
     """Scan the library read-only. Returns {'tracks': [...], 'summary': {...}}.
 
@@ -404,6 +426,9 @@ def run_audit(source_dir: Union[str, Path], progress_cb, should_cancel) -> dict:
             if not (aa and str(aa).strip()):
                 missing_albumartist += 1
 
+            # Record whether Clean would touch this file, so Clean can act on the
+            # flagged set instead of re-reading every file to discover (often)
+            # that nothing needs doing. Same function Clean itself uses.
             tracks.append({
                 "path": str(path),
                 "artist": tags.get("artist"),
@@ -412,6 +437,7 @@ def run_audit(source_dir: Union[str, Path], progress_cb, should_cancel) -> dict:
                 "genre": ", ".join(norm),
                 "year": tags.get("year"),
                 "duration": tags.get("duration"),
+                "needs_clean": 1 if clean_plan(tags, path)["needs_clean"] else 0,
             })
         except Exception:
             errors += 1
@@ -440,16 +466,28 @@ def _genre_list(raw) -> List[str]:
     return [str(x) for x in raw] if isinstance(raw, list) else [str(raw)]
 
 
-def run_clean(source_dir: Union[str, Path], progress_cb, record_cb, should_cancel) -> dict:
+def run_clean(source_dir: Union[str, Path], progress_cb, record_cb, should_cancel,
+              only_paths=None) -> dict:
     """Normalize genres + fill missing album-artist, writing files IN PLACE.
 
     ``record_cb(path, field, old_json, new_json)`` MUST durably persist the
     pre-image before the file is written, so a crash mid-run still leaves every
     modified file rollback-able. Returns a summary dict.
+
+    ``only_paths`` — the files the last Audit flagged as needing work. Clean used
+    to re-walk and re-read the entire library to rediscover what the Audit that
+    just ran had already worked out; on a clean library that's tens of thousands
+    of reads to change nothing. None (no audit data) falls back to a full walk,
+    so a Clean without a prior Audit still behaves as it always did.
     """
     maybe_reload()  # pick up any edits to a mounted genres.json
     base = Path(source_dir).resolve()
-    files = list(_iter_audio(base))
+    if only_paths is None:
+        files = list(_iter_audio(base))
+        scanned_all = True
+    else:
+        files = [Path(p) for p in only_paths]
+        scanned_all = False
     total = len(files)
 
     changed = genre_changes = albumartist_filled = errors = 0
@@ -458,17 +496,16 @@ def run_clean(source_dir: Union[str, Path], progress_cb, record_cb, should_cance
     for path in files:
         if should_cancel():
             break
-        rel = str(path.relative_to(base))
+        try:
+            rel = str(path.relative_to(base))
+        except ValueError:
+            rel = str(path)          # flagged path from outside the current root
         try:
             tags = read_tags(path)
-            old_genre = _genre_list(tags.get("genre"))
-            new_genre = normalize_genre(old_genre)
-            do_genre = new_genre != old_genre
-
-            old_aa = tags.get("albumartist")
-            old_aa = str(old_aa).strip() if old_aa else ""
-            desired_aa = fill_album_artist(tags, path)
-            do_aa = bool(desired_aa) and not old_aa and desired_aa != old_aa
+            plan = clean_plan(tags, path)
+            do_genre, do_aa = plan["do_genre"], plan["do_aa"]
+            old_genre, new_genre = plan["old_genre"], plan["new_genre"]
+            old_aa, desired_aa = plan["old_aa"], plan["new_aa"]
 
             if do_genre or do_aa:
                 # Durable pre-images BEFORE touching the file.
@@ -503,6 +540,9 @@ def run_clean(source_dir: Union[str, Path], progress_cb, record_cb, should_cance
         "genre_changes": genre_changes,
         "albumartist_filled": albumartist_filled,
         "errors": errors,
+        # False when Clean worked from the Audit's flagged set rather than walking
+        # everything — so the summary can say "12 needing work" not "12 tracks".
+        "scanned_all": scanned_all,
         "cancelled": bool(should_cancel()),
     }
 
