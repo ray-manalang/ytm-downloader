@@ -72,7 +72,18 @@
 
   /* ── Guided stepper (Prepare) ─────────────────────────────────────────── */
   .step { display: flex; gap: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 12px; }
+  /* Flash the step you were sent to from the Dashboard (back to --surface, which
+     is .step's own background — not transparent). */
+  .step.flash { animation: stepflash 1.2s ease; }
+  @keyframes stepflash { 0%, 40% { background: var(--accent-soft); } 100% { background: var(--surface); } }
   .step-num { width: 26px; height: 26px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0; color: var(--muted); }
+
+  /* Dashboard "Optimize your library" rows — click through to that step */
+  .dash-step { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-top: 1px solid var(--border); font-size: 13px; cursor: pointer; border-radius: 6px; transition: background .12s; }
+  .dash-step:hover { background: var(--surface2); }
+  .dash-step:hover .dash-step-label { color: var(--accent); }
+  .dash-step-go { color: var(--muted); font-size: 12px; opacity: 0; transition: opacity .12s; flex-shrink: 0; }
+  .dash-step:hover .dash-step-go { opacity: 1; }
   .step.done .step-num { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
   .step-body { flex: 1; min-width: 0; }
   .step-title { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -1064,6 +1075,19 @@ function switchTab(name) {
 async function loadActivity() { loadPrepJobs(); renderActivity(); }
 const navigate = switchTab;
 
+// Dashboard "Optimize your library" rows → jump straight to that step's controls.
+// Audit has its own page; the rest live as steps on the Optimize stepper.
+function gotoStep(key) {
+  if (key === 'audit') { switchTab('audit'); return; }
+  switchTab('convert');
+  setTimeout(() => {
+    const el = document.getElementById('step-' + key);
+    if (!el) return;
+    el.scrollIntoView({ block: 'center' });
+    el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+  }, 80);
+}
+
 // Run an async action from a button click with a "working" spinner on the button.
 // Locks the button, prepends a spinner, and restores it when the promise settles —
 // so any click that kicks off a request visibly reads as in-progress.
@@ -1130,17 +1154,18 @@ function renderDashboard(ytm, pipe, dls, pls) {
 
   // Guided next-step
   const steps = [
-    { done: total > 0, label: 'Audit library', note: total ? `${total.toLocaleString()} indexed` : 'not run' },
-    { done: !!pipe.clean, label: 'Clean tags', note: needGenre ? `${needGenre} need a genre fix` : (pipe.clean ? 'done' : 'not run') },
-    { done: !!pipe.genres && !unresolved, label: 'Complete genres', note: unresolved ? `${unresolved} unresolved` : (pipe.genres ? 'done' : 'not run') },
-    { done: total > 0 && notEnriched === 0, label: 'Analyze BPM & energy', note: total ? `${enriched}/${total} analyzed${enrichErrors ? ` · ${enrichErrors} skipped` : ''}` : 'not run' },
-    { done: !!pipe.convert, label: 'Convert → iPod', note: pipe.convert && pipe.convert.summary ? `${pipe.convert.summary.transcoded || 0} transcoded` : 'not run' },
+    { key: 'audit', done: total > 0, label: 'Audit library', note: total ? `${total.toLocaleString()} indexed` : 'not run' },
+    { key: 'clean', done: !!pipe.clean, label: 'Clean tags', note: needGenre ? `${needGenre} need a genre fix` : (pipe.clean ? 'done' : 'not run') },
+    { key: 'genres', done: !!pipe.genres && !unresolved, label: 'Complete genres', note: unresolved ? `${unresolved} unresolved` : (pipe.genres ? 'done' : 'not run') },
+    { key: 'enrich', done: total > 0 && notEnriched === 0, label: 'Analyze BPM & energy', note: total ? `${enriched}/${total} analyzed${enrichErrors ? ` · ${enrichErrors} skipped` : ''}` : 'not run' },
+    { key: 'convert', done: !!pipe.convert, label: 'Convert → iPod', note: pipe.convert && pipe.convert.summary ? `${pipe.convert.summary.transcoded || 0} transcoded` : 'not run' },
   ];
   const stepRows = steps.map(s =>
-    `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--border);font-size:13px">
+    `<div class="dash-step" onclick="gotoStep('${s.key}')" title="Open ${escHtml(s.label)}">
        <span style="color:${s.done ? 'var(--accent)' : 'var(--muted)'};font-weight:700">${s.done ? '✓' : '○'}</span>
-       <span style="flex:1">${s.label}</span>
-       <span style="color:var(--muted);font-size:12px">${s.note}</span></div>`).join('');
+       <span class="dash-step-label" style="flex:1">${s.label}</span>
+       <span style="color:var(--muted);font-size:12px">${s.note}</span>
+       <span class="dash-step-go">→</span></div>`).join('');
 
   const prepBox = total === 0
     ? `<div class="add-box"><p style="color:var(--muted);font-size:13px;margin-bottom:12px">Your library isn't indexed yet. Point Prepare at your music and run an audit to unlock cleanup, analysis, conversion, and playlists.</p>
@@ -3112,7 +3137,9 @@ function renderCrosscheckTable(oc, last) {
     : '';
   const artists = oc.artists || [];
   if (!artists.length) {
-    el.innerHTML = coverage + `<div style="color:var(--muted);font-size:13px">${checked ? '✓ No outstanding disagreements — every checked artist matches its external genre.' : 'Not run yet — start the cross-check above.'}</div>`;
+    el.innerHTML = coverage + (checked
+      ? '<div style="color:var(--success);font-size:13px">✓ No outstanding disagreements — every checked artist matches its external genre.</div>'
+      : '<div style="color:var(--muted);font-size:13px">Not run yet — start the cross-check above.</div>');
     return;
   }
   const rows = artists.map((a, i) => {

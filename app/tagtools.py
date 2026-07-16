@@ -71,12 +71,16 @@ _JUNK_PATTERNS = [re.compile(p, re.IGNORECASE) for p in _DATA.get("junk_patterns
 _KEYWORDS = [(kw.lower(), canon) for kw, canon in _DATA["keywords"]]
 _COMPILATION_KEYWORDS = [k.lower() for k in _DATA.get("compilation_dir_keywords", [])]
 _CONTROLLED_LOWER = {g.lower(): g for g in CONTROLLED_GENRES}
+# Genres that carry no signal ON THEIR OWN (§10's bare "Vocal"). Data-driven, so an
+# explicit mapping in the UI can remove one and make that genre stick. The default
+# keeps the old behavior for a mounted genres.json that predates the key.
+_SOLE_DROP = {s.lower() for s in _DATA.get("sole_drop", ["Vocal"])}
 
 
 def reload_data():
     """Re-read genres.json + artist_genres.json (after the user edits the vocab/maps)."""
     global _DATA, CONTROLLED_GENRES, _EXACT, _JUNK, _JUNK_PATTERNS, _KEYWORDS
-    global _COMPILATION_KEYWORDS, _CONTROLLED_LOWER, ARTIST_GENRES
+    global _COMPILATION_KEYWORDS, _CONTROLLED_LOWER, _SOLE_DROP, ARTIST_GENRES
     _DATA = _load_data()
     CONTROLLED_GENRES = list(_DATA["controlled"])
     _EXACT = {k.lower(): v for k, v in _DATA["exact"].items()}
@@ -85,6 +89,7 @@ def reload_data():
     _KEYWORDS = [(kw.lower(), canon) for kw, canon in _DATA["keywords"]]
     _COMPILATION_KEYWORDS = [k.lower() for k in _DATA.get("compilation_dir_keywords", [])]
     _CONTROLLED_LOWER = {g.lower(): g for g in CONTROLLED_GENRES}
+    _SOLE_DROP = {s.lower() for s in _DATA.get("sole_drop", ["Vocal"])}
     ARTIST_GENRES = _load_artist_genres()
 
 
@@ -137,6 +142,7 @@ def save_vocab_additions(assignments: dict) -> dict:
     junk = data.setdefault("junk", [])
     junk_lower = {str(j).lower() for j in junk}
     controlled_lower = {g.lower(): g for g in data.get("controlled", [])}
+    sole = data.setdefault("sole_drop", ["Vocal"])
 
     added_exact = added_junk = 0
     for raw, target in assignments.items():
@@ -151,6 +157,10 @@ def save_vocab_additions(assignments: dict) -> dict:
         elif target and str(target).lower() in controlled_lower:
             exact[raw] = controlled_lower[str(target).lower()]  # canonical casing
             added_exact += 1
+            # Mapping something deliberately means you want it kept — so it must no
+            # longer be silently dropped when it's a track's only genre.
+            drop = {raw.lower(), str(target).lower()}
+            sole[:] = [s for s in sole if str(s).lower() not in drop]
 
     tmp = str(path) + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -207,19 +217,22 @@ def normalize_genre(values: Union[str, List[str], None]) -> List[str]:
         if not raw:
             continue
         low = raw.lower()
-        # Whole-value match first (protects R&B/Soul, Christian/Gospel, etc.)
-        if low in _CONTROLLED_LOWER:
-            mapped = [_CONTROLLED_LOWER[low]]
-        elif low in _EXACT:
+        # Whole-value match first (protects R&B/Soul, Christian/Gospel, etc.). An
+        # explicit alias wins over the controlled-name passthrough, so a mapping made
+        # in the UI can override a default (e.g. Vocal → Easy Listening).
+        if low in _EXACT:
             mapped = [_EXACT[low]]
+        elif low in _CONTROLLED_LOWER:
+            mapped = [_CONTROLLED_LOWER[low]]
         else:
             mapped = [m for tok in _SPLIT_RE.split(raw) if (m := _map_token(tok))]
         for g in mapped:
             if g and g not in out:
                 out.append(g)
 
-    # Vocal alone carries no useful signal — drop it (§10).
-    if out == ["Vocal"]:
+    # A lone `sole_drop` genre carries no useful signal (§10's bare "Vocal") — but
+    # mapping it in the UI removes it from that list, so the choice sticks.
+    if len(out) == 1 and out[0].lower() in _SOLE_DROP:
         return []
     return out
 

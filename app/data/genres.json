@@ -8,6 +8,9 @@
     "Christian/Gospel", "Holiday", "Metal", "Children"
   ],
 
+  "_sole_drop_comment": "Genres dropped when they are a track's ONLY genre (§10: bare 'Vocal' carries no signal). Mapping one of these in the Audit page's genre mapper removes it from this list, so your choice sticks.",
+  "sole_drop": ["Vocal"],
+
   "exact": {
     "pop": "Pop",
     "rock": "Rock",
