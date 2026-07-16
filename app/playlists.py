@@ -649,8 +649,53 @@ async def create_playlist(body: dict):
              gen["track_count"], 1 if body.get("auto_refresh", True) else 0, now),
         )
         await db.commit()
+    # Optional: queue downloads for set members you don't own yet (the YTM import's
+    # misses) — keeps one save path for every source. Best-effort.
+    enqueued = 0
+    for vid in (body.get("enqueue_video_ids") or []):
+        if not vid or not _enqueue_fn:
+            continue
+        try:
+            await _enqueue_fn(f"https://music.youtube.com/watch?v={vid}")
+            enqueued += 1
+        except Exception:
+            pass
     return {"id": pid, "name": name, "type": ptype, "spec": spec, "targets": targets,
+            "enqueued": enqueued,
             "track_count": gen["track_count"], "written": gen["written"], "updated_at": now}
+
+
+@router.post("/import/ytm/preview")
+async def preview_ytm_import(body: dict):
+    """Fetch + match a YTM playlist WITHOUT saving or queuing anything, so it can go
+    through the same staging/review step as the other sources. The misses come back
+    so the UI can offer to queue them on save."""
+    playlist_id = (body.get("playlist_id") or "").strip()
+    if not playlist_id:
+        raise HTTPException(400, "playlist_id is required")
+    if not ytm_module.is_connected():
+        raise HTTPException(400, "YouTube Music is not connected")
+    try:
+        ytm_tracks = await ytm_module.fetch_playlist_tracks(playlist_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Could not fetch playlist: {e}")
+    if not ytm_tracks:
+        raise HTTPException(400, "Playlist has no tracks")
+
+    library = await _all_tracks()
+    matched, missing = _match_ytm_tracks(ytm_tracks, library)
+    spec = {"source": "ytm", "ytm_playlist_id": playlist_id,
+            "ytm_tracks": [{"videoId": y.get("videoId"), "title": y.get("title"),
+                            "artist": y.get("artist")} for y in ytm_tracks]}
+    return {
+        "name": (body.get("name") or f"YTM {playlist_id}").strip(),
+        "spec": spec, "candidates": len(ytm_tracks),
+        "tracks": [_track_public(t) for t in matched],
+        "missing": [{"videoId": y.get("videoId"), "title": y.get("title"),
+                     "artist": y.get("artist")} for y in missing if y.get("videoId")],
+    }
 
 
 @router.post("/import/ytm")

@@ -244,6 +244,13 @@
   .pl-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
   .pl-targets { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 13px; }
   .pl-targets label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  /* One source picker for every creation path */
+  .pl-sources { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 14px; flex-wrap: wrap; }
+  .pl-sources button { background: transparent; color: var(--muted); border: none; padding: 8px 15px; font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 0; display: flex; align-items: center; gap: 7px; }
+  .pl-sources button:hover { color: var(--text); background: var(--surface2); }
+  .pl-sources button.on { background: var(--accent-soft); color: var(--accent); }
+  .pl-src { min-height: 40px; }
+
   .pl-advanced { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 4px; }
   .pl-advanced > summary { cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 600; padding: 10px 0 4px; list-style: none; user-select: none; }
   .pl-advanced > summary::-webkit-details-marker { display: none; }
@@ -304,6 +311,15 @@
   .stage-row:first-child { border-top: none; }
   .stage-row:hover { background: var(--surface2); }
   .stage-n { width: 24px; flex-shrink: 0; text-align: right; color: var(--muted); font-size: 11px; }
+  /* Manual sorting: drag a row by its grip to reorder */
+  .stage-grip { flex-shrink: 0; color: var(--muted); cursor: grab; font-size: 13px; line-height: 1; padding: 0 2px; user-select: none; opacity: .45; }
+  .stage-row:hover .stage-grip { opacity: 1; }
+  .stage-row.dragging { opacity: .4; }
+  .stage-row.drop-before { box-shadow: inset 0 2px 0 0 var(--accent); }
+  .stage-row.drop-after { box-shadow: inset 0 -2px 0 0 var(--accent); }
+  .stage-sorts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .stage-sorts button { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 5px; padding: 3px 9px; font-size: 11px; font-weight: 600; cursor: pointer; }
+  .stage-sorts button:hover { color: var(--accent); border-color: var(--accent); }
   .stage-main { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .stage-main .s-artist { font-weight: 600; }
   .stage-main .s-title { color: var(--muted); }
@@ -884,107 +900,79 @@
         <span class="pl-mark"><svg class="eq-ico" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="3" y="9" width="4" height="6" rx="2" fill="currentColor" opacity=".55"/><rect x="10" y="4" width="4" height="16" rx="2" fill="var(--accent)"/><rect x="17" y="7" width="4" height="10" rx="2" fill="currentColor" opacity=".8"/></svg></span>
         <div>
           <div class="pl-creator-title">Create a playlist</div>
-          <div class="pl-creator-sub">Describe a vibe and Claude builds it from your library — or open Advanced to hand-craft a rule or import from YouTube Music. <span id="plIndexNote"></span></div>
+          <div class="pl-creator-sub">Pick a source, preview what it builds, then fine-tune the tracks and order before saving. <span id="plIndexNote"></span></div>
         </div>
       </div>
 
-      <!-- Primary: AI -->
-      <div id="plAiBox">
+      <!-- One source picker — every source funnels into the same preview → review → save -->
+      <div class="pl-sources" id="plSources">
+        <button class="on" data-src="ai" onclick="setPlSource('ai')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 3 12.6 8.4 18 10 12.6 11.6 11 17 9.4 11.6 4 10 9.4 8.4Z"/><path d="M18 4.5v3M16.5 6h3"/></svg>AI</button>
+        <button data-src="rules" onclick="setPlSource('rules')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="16" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Rules</button>
+        <button data-src="ytm" onclick="setPlSource('ytm')"><svg class="eq-ico" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="3" y="9" width="4" height="6" rx="2" fill="currentColor" opacity=".55"/><rect x="10" y="4" width="4" height="16" rx="2" fill="currentColor"/><rect x="17" y="7" width="4" height="10" rx="2" fill="currentColor" opacity=".8"/></svg>YouTube Music</button>
+      </div>
+
+      <!-- Source: AI -->
+      <div class="pl-src" id="plSrc-ai">
         <div id="plAiBody">
-          <input id="plAiName" placeholder="Playlist name (optional — the AI names it if left blank)"
-            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:9px 12px;font-size:13px;outline:none;margin-bottom:8px">
           <textarea id="plAiPrompt" placeholder="Describe the playlist — e.g. upbeat 80s new wave for a road trip"
             style="min-height:76px;font-family:inherit"></textarea>
-          <label style="display:flex;align-items:flex-start;gap:8px;color:var(--muted);font-size:12px;cursor:pointer;margin:8px 0 4px">
+          <label style="display:flex;align-items:flex-start;gap:8px;color:var(--muted);font-size:12px;cursor:pointer;margin:8px 0 0">
             <input type="checkbox" id="plAiCompletionist" style="accent-color:var(--accent);margin-top:2px">
             <span><strong>Complete set</strong> — find <em>every</em> match in my library (for a known set like “all James Bond themes”). Otherwise the AI curates a tasteful subset.</span>
           </label>
-          <div class="pl-row">
-            <div class="pl-targets">Write to:
-              <label><input type="checkbox" id="plAiLibrary" checked style="accent-color:var(--accent)"> Library</label>
-              <label><input type="checkbox" id="plAiIpod" style="accent-color:var(--accent)"> iPod mirror</label>
-            </div>
-            <div style="display:flex;align-items:center;gap:12px">
-              <span id="plAiModel" style="color:var(--muted);font-weight:400;font-size:11px"></span>
-              <button class="btn-primary" id="plAiBtn" onclick="generateAi()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M11 3 12.6 8.4 18 10 12.6 11.6 11 17 9.4 11.6 4 10 9.4 8.4Z"/><path d="M18 4.5v3M16.5 6h3"/></svg>Generate with AI</button>
-            </div>
-          </div>
-          <div id="plAiResult" style="margin-top:10px;font-size:13px"></div>
+          <div id="plAiModel" style="color:var(--muted);font-size:11px;margin-top:6px"></div>
         </div>
         <div id="plAiDisabled" style="color:var(--muted);font-size:13px;display:none">
-          AI curation is off. Set <code>ANTHROPIC_API_KEY</code> in the container environment to enable it — or use Advanced below to build a smart playlist by rules.
+          AI curation is off. Set <code>ANTHROPIC_API_KEY</code> in the container environment to enable it — or switch to <strong style="color:var(--text)">Rules</strong>.
         </div>
       </div>
 
-      <!-- Advanced: smart rules + YTM import -->
-      <details class="pl-advanced">
-        <summary>Advanced — smart rules &amp; YouTube Music import</summary>
-
-        <!-- Smart (rule-based) playlist -->
-        <div class="pl-adv-section">
-          <div class="pl-adv-title">Smart playlist</div>
-          <p class="pl-adv-desc">Build a rule over your library and Music Monster keeps a matching <code>.m3u</code> in sync.</p>
-          <input id="plName" type="text" placeholder="Playlist name — e.g. 80s Alternative"
-            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;margin-bottom:12px">
-          <div style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;margin-bottom:10px">
-            Match
-            <select id="plMatch"><option value="all">all</option><option value="any">any</option></select>
-            of these rules:
-          </div>
-          <div id="plRulesTable"></div>
-          <button class="btn-ghost btn-sm" style="margin-top:8px" onclick="addRule()">+ Add rule</button>
-          <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:14px;flex-wrap:wrap">
-            <span style="display:flex;align-items:center;gap:6px">Sort
-              <select id="plSort">
-                <option value="diverse" selected>spread artists</option>
-                <option value="">album order</option>
-                <option value="artist">artist</option>
-                <option value="album">album</option>
-                <option value="year">year</option>
-                <option value="random">random</option>
-              </select></span>
-            <span style="display:flex;align-items:center;gap:6px">Limit
-              <input id="plLimit" type="number" min="0" placeholder="none"
-                style="width:80px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-size:13px;outline:none"></span>
-          </div>
-          <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:12px">
-            Write to:
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-              <input type="checkbox" id="plTargetLibrary" checked style="accent-color:var(--accent)"> Library</label>
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-              <input type="checkbox" id="plTargetIpod" style="accent-color:var(--accent)"> iPod mirror</label>
-          </div>
-          <div class="add-actions" style="margin-top:14px">
-            <button class="btn-ghost" id="plPreviewBtn" onclick="previewPlaylist()">Preview</button>
-            <button class="btn-primary" id="plSaveBtn" onclick="savePlaylist()">Save Playlist</button>
-          </div>
-          <div id="plError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
-          <div id="plPreview" style="margin-top:14px"></div>
+      <!-- Source: smart rules -->
+      <div class="pl-src" id="plSrc-rules" style="display:none">
+        <div style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;margin-bottom:10px">
+          Match
+          <select id="plMatch"><option value="all">all</option><option value="any">any</option></select>
+          of these rules:
         </div>
-
-        <!-- Import from YouTube Music -->
-        <div class="pl-adv-section" id="plImportBox">
-          <div class="pl-adv-title">Import from YouTube Music</div>
-          <p class="pl-adv-desc">Turn a YTM playlist into a local <code>.m3u</code> — tracks you already have are linked, and anything missing is queued for download.</p>
-          <div id="plImportBody">
-            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-              <select id="plYtmSelect" style="flex:1;min-width:220px"></select>
-              <button class="btn-primary" id="plImportBtn" onclick="importYtm()">Import</button>
-            </div>
-            <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:12px">
-              Write to:
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-                <input type="checkbox" id="plImpLibrary" checked style="accent-color:var(--accent)"> Library</label>
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-                <input type="checkbox" id="plImpIpod" style="accent-color:var(--accent)"> iPod mirror</label>
-            </div>
-            <div id="plImportResult" style="margin-top:10px;font-size:13px"></div>
-          </div>
-          <div id="plImportDisconnected" style="color:var(--muted);font-size:13px;display:none">
-            Connect YouTube Music in the <strong style="color:var(--text)">YouTube Music</strong> tab to import playlists.
-          </div>
+        <div id="plRulesTable"></div>
+        <button class="btn-ghost btn-sm" style="margin-top:8px" onclick="addRule()">+ Add rule</button>
+        <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:14px;flex-wrap:wrap">
+          <span style="display:flex;align-items:center;gap:6px">Sort
+            <select id="plSort">
+              <option value="diverse" selected>spread artists</option>
+              <option value="">album order</option>
+              <option value="artist">artist</option>
+              <option value="album">album</option>
+              <option value="year">year</option>
+              <option value="random">random</option>
+            </select></span>
+          <span style="display:flex;align-items:center;gap:6px">Limit
+            <input id="plLimit" type="number" min="0" placeholder="none"
+              style="width:80px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-size:13px;outline:none"></span>
         </div>
-      </details>
+      </div>
+
+      <!-- Source: YouTube Music import -->
+      <div class="pl-src" id="plSrc-ytm" style="display:none">
+        <div id="plImportBody">
+          <select id="plYtmSelect" style="width:100%"></select>
+          <div style="color:var(--muted);font-size:12px;margin-top:8px">Tracks you already own are linked; anything missing is queued for download when you save.</div>
+        </div>
+        <div id="plImportDisconnected" style="color:var(--muted);font-size:13px;display:none">
+          Connect YouTube Music in <strong style="color:var(--text)">Setup</strong> to import playlists.
+        </div>
+      </div>
+
+      <!-- Shared: one targets control + one action, whatever the source -->
+      <div class="pl-row">
+        <div class="pl-targets">Write to:
+          <label><input type="checkbox" id="plTargetLibrary" checked style="accent-color:var(--accent)"> Library</label>
+          <label><input type="checkbox" id="plTargetIpod" style="accent-color:var(--accent)"> iPod mirror</label>
+        </div>
+        <button class="btn-primary" id="plPreviewBtn" onclick="previewSource()">Preview →</button>
+      </div>
+      <div id="plError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+      <div id="plResult" style="margin-top:10px;font-size:13px"></div>
     </div>
 
     <!-- Staging: review/edit the resolved tracks before saving (AI + smart) -->
@@ -3293,37 +3281,18 @@ async function loadPlaylists() {
   await loadPlaylistList();
 }
 
-async function generateAi() {
-  const prompt = document.getElementById('plAiPrompt').value.trim();
-  const name = document.getElementById('plAiName').value.trim();
-  const completionist = document.getElementById('plAiCompletionist').checked;
-  const targets = plTargets('plAiLibrary', 'plAiIpod');
-  const out = document.getElementById('plAiResult');
-  if (!prompt) { out.innerHTML = '<span style="color:var(--danger)">Describe what you want.</span>'; return; }
-  if (!targets.length) { out.innerHTML = '<span style="color:var(--danger)">Pick at least one target.</span>'; return; }
-  const btn = document.getElementById('plAiBtn'); const label = btn.innerHTML;
-  btn.disabled = true; btn.textContent = 'Curating…';
-  out.innerHTML = `<span style="color:var(--muted)">${completionist ? 'Asking Claude for the full set, then matching your library…' : 'Asking Claude to build it…'}</span>`;
-  try {
-    // Curate WITHOUT saving, then stage it for review (add/remove) before saving.
-    const res = await fetch('/api/playlists/ai/preview', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({prompt, completionist}),
-    });
-    const d = await res.json().catch(() => ({}));
-    if (!res.ok) { out.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'AI generation failed.')}</span>`; return; }
-    const tracks = d.tracks || [];
-    out.innerHTML = '';
-    _openStaging({
-      type: 'ai', name: name || d.name, spec: d.spec, targets, tracks,
-      meta: d.completionist
-        ? `<strong style="color:var(--text)">${tracks.length}</strong> of ${d.candidates} set members are in your library.`
-        : `<strong style="color:var(--text)">${tracks.length}</strong> tracks curated from ${d.candidates} candidates.`,
-    });
-    document.getElementById('plAiPrompt').value = '';
-    document.getElementById('plAiName').value = '';
-    document.getElementById('plAiCompletionist').checked = false;
-  } finally { btn.disabled = false; btn.innerHTML = label; }
+// ── Unified creator: one source picker → one preview → the shared staging list ─
+let plSource = 'ai';
+
+function setPlSource(src) {
+  plSource = src;
+  document.querySelectorAll('#plSources button').forEach(b => b.classList.toggle('on', b.dataset.src === src));
+  ['ai', 'rules', 'ytm'].forEach(s => {
+    const el = document.getElementById('plSrc-' + s);
+    if (el) el.style.display = (s === src) ? '' : 'none';
+  });
+  document.getElementById('plError').textContent = '';
+  document.getElementById('plResult').innerHTML = '';
 }
 
 function plTargets(libId, ipodId) {
@@ -3333,27 +3302,71 @@ function plTargets(libId, ipodId) {
   return t;
 }
 
-async function importYtm() {
+// Every source resolves here and hands off to the SAME staging list — one preview
+// action, one review step, one save.
+async function previewSource() {
+  const err = document.getElementById('plError'); err.textContent = '';
+  document.getElementById('plResult').innerHTML = '';
+  const targets = plTargets('plTargetLibrary', 'plTargetIpod');
+  if (!targets.length) { err.textContent = 'Pick at least one target (Library or iPod).'; return; }
+  return runBusy(document.getElementById('plPreviewBtn'), async () => {
+    try {
+      if (plSource === 'ai') return await _previewAi(targets, err);
+      if (plSource === 'rules') return await _previewRules(targets, err);
+      return await _previewYtm(targets, err);
+    } catch { err.textContent = 'Preview failed.'; }
+  });
+}
+
+async function _previewAi(targets, err) {
+  const prompt = document.getElementById('plAiPrompt').value.trim();
+  const completionist = document.getElementById('plAiCompletionist').checked;
+  if (!prompt) { err.textContent = 'Describe the playlist you want.'; return; }
+  const res = await fetch('/api/playlists/ai/preview', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ prompt, completionist }),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) { err.textContent = d.detail || 'AI curation failed.'; return; }
+  const tracks = d.tracks || [];
+  _openStaging({
+    type: 'ai', name: d.name, spec: d.spec, targets, tracks,
+    meta: d.completionist
+      ? `<strong style="color:var(--text)">${tracks.length}</strong> of ${d.candidates} set members are in your library.`
+      : `<strong style="color:var(--text)">${tracks.length}</strong> tracks curated from ${d.candidates} candidates.`,
+  });
+}
+
+async function _previewRules(targets, err) {
+  const spec = buildSpec();
+  if (!spec.rules.length) { err.textContent = 'Add at least one rule with a value.'; return; }
+  const res = await fetch('/api/playlists/preview', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ spec }),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) { err.textContent = d.detail || 'Preview failed.'; return; }
+  _openStaging({
+    type: 'smart', name: ruleSummary(spec) || 'Smart playlist', spec, targets, tracks: d.tracks || [],
+    meta: `<strong style="color:var(--text)">${d.count}</strong> tracks match your rules.`,
+  });
+}
+
+async function _previewYtm(targets, err) {
   const sel = document.getElementById('plYtmSelect');
   const playlist_id = sel.value;
-  const name = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].dataset.title : '';
-  const targets = plTargets('plImpLibrary', 'plImpIpod');
-  const out = document.getElementById('plImportResult');
-  if (!playlist_id) { out.innerHTML = '<span style="color:var(--danger)">Pick a playlist.</span>'; return; }
-  if (!targets.length) { out.innerHTML = '<span style="color:var(--danger)">Pick at least one target.</span>'; return; }
-  const btn = document.getElementById('plImportBtn'); btn.disabled = true; btn.textContent = 'Importing…';
-  out.textContent = '';
-  try {
-    const res = await fetch('/api/playlists/import/ytm', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({playlist_id, name, targets}),
-    });
-    const d = await res.json().catch(() => ({}));
-    if (!res.ok) { out.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'Import failed.')}</span>`; return; }
-    out.innerHTML = `<span style="color:var(--accent)">✓ ${d.matched}/${d.total} matched</span>
-      <span style="color:var(--muted)"> · ${d.missing} missing${d.enqueued ? ` (${d.enqueued} queued for download)` : ''}</span>`;
-    await loadPlaylistList();
-  } finally { btn.disabled = false; btn.textContent = 'Import'; }
+  const title = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].dataset.title : '';
+  if (!playlist_id) { err.textContent = 'Pick a YouTube Music playlist.'; return; }
+  const res = await fetch('/api/playlists/import/ytm/preview', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ playlist_id, name: title }),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) { err.textContent = d.detail || 'Import preview failed.'; return; }
+  const tracks = d.tracks || [], missing = d.missing || [];
+  _openStaging({
+    type: 'ytm', name: title || d.name, spec: d.spec, targets, tracks, missing,
+    meta: `<strong style="color:var(--text)">${tracks.length}</strong> of ${d.candidates} tracks are already in your library.`,
+  });
 }
 
 function renderRules() {
@@ -3427,52 +3440,6 @@ function buildSpec() {
   return spec;
 }
 
-// "Preview" resolves the rules and opens the staging list, where you can add/remove
-// tracks and then save. ("Save Playlist" stays the direct, unreviewed path.)
-async function previewPlaylist() {
-  const spec = buildSpec();
-  const errEl = document.getElementById('plError'); errEl.textContent = '';
-  if (!spec.rules.length) { errEl.textContent = 'Add at least one rule with a value.'; return; }
-  const targets = plTargets('plTargetLibrary', 'plTargetIpod');
-  if (!targets.length) { errEl.textContent = 'Pick at least one target (Library or iPod).'; return; }
-  const name = document.getElementById('plName').value.trim() || 'Smart playlist';
-  return runBusy(document.getElementById('plPreviewBtn'), async () => {
-    const res = await fetch('/api/playlists/preview', {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({spec}),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { errEl.textContent = data.detail || 'Preview failed.'; return; }
-    document.getElementById('plPreview').innerHTML = '';
-    _openStaging({
-      type: 'smart', name, spec, targets, tracks: data.tracks || [],
-      meta: `<strong style="color:var(--text)">${data.count}</strong> tracks match your rules.`,
-    });
-  });
-}
-
-async function savePlaylist() {
-  const name = document.getElementById('plName').value.trim();
-  const spec = buildSpec();
-  const errEl = document.getElementById('plError'); errEl.textContent = '';
-  if (!name) { errEl.textContent = 'Name is required.'; return; }
-  if (!spec.rules.length) { errEl.textContent = 'Add at least one rule with a value.'; return; }
-  const targets = plTargets('plTargetLibrary', 'plTargetIpod');
-  if (!targets.length) { errEl.textContent = 'Pick at least one target (Library or iPod).'; return; }
-  const btn = document.getElementById('plSaveBtn'); btn.disabled = true; btn.textContent = 'Saving…';
-  try {
-    const res = await fetch('/api/playlists', {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, spec, targets}),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { errEl.textContent = data.detail || 'Save failed.'; return; }
-    document.getElementById('plName').value = '';
-    plRules = [{ field: 'genre', op: 'is', value: '' }];
-    renderRules();
-    document.getElementById('plPreview').innerHTML = writeResultHTML(name, data);
-    await loadPlaylistList();
-  } finally { btn.disabled = false; btn.textContent = 'Save Playlist'; }
-}
-
 // ── Staging: review + edit the resolved tracks before saving (AI + smart) ────
 let _staging = null;          // { type, name, spec, targets, tracks, edited, meta }
 let _stageResults = [];
@@ -3492,16 +3459,32 @@ function renderStaging() {
   if (!el) return;
   if (!_staging) { el.innerHTML = ''; return; }
   const s = _staging;
+  const missing = s.missing || [];
+  const missingBox = missing.length ? `
+    <label style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;margin:0 0 10px;cursor:pointer">
+      <input type="checkbox" id="stageEnqueue" checked style="accent-color:var(--accent)">
+      <span><strong style="color:var(--warn)">${missing.length}</strong> track${missing.length !== 1 ? 's aren\'t' : " isn't"} in your library — queue ${missing.length !== 1 ? 'them' : 'it'} for download when I save.</span>
+    </label>` : '';
   el.innerHTML = `
     <div class="section-title">Review before saving</div>
     <div class="add-box">
       <div style="color:var(--muted);font-size:12px;margin-bottom:10px;line-height:1.5">${s.meta || ''}
-        Remove anything you don't want, or search to add tracks — then save.</div>
+        Reorder by dragging, remove anything you don't want, or search to add — then save.</div>
+      ${missingBox}
       <div class="stage-head">
         <input id="stageName" class="stage-input" style="flex:1;min-width:170px" value="${escHtml(s.name)}" placeholder="Playlist name">
         <input id="stageSearch" class="stage-input" style="flex:1;min-width:170px" placeholder="Add a track — search your library…" oninput="stageSearch()" autocomplete="off">
       </div>
       <div id="stageResults" style="margin-bottom:8px"></div>
+      <div class="stage-sorts">Sort:
+        <button onclick="stageSort('artist')">Artist</button>
+        <button onclick="stageSort('title')">Title</button>
+        <button onclick="stageSort('album')">Album</button>
+        <button onclick="stageSort('year')">Year</button>
+        <button onclick="stageSort('shuffle')">Shuffle</button>
+        <button onclick="stageSort('reverse')">Reverse</button>
+        <span style="margin-left:4px">— or drag rows to order them by hand</span>
+      </div>
       <div id="stageCount" style="color:var(--muted);font-size:12px;margin:0 0 6px"></div>
       <div class="stage-list" id="stageList"></div>
       <div class="stage-actions">
@@ -3526,13 +3509,66 @@ function renderStageList() {
     ? '<span style="color:var(--warn)">Hand-curated — saves as a fixed list (won\'t auto-refresh).</span>' : '';
   if (!list) return;
   list.innerHTML = s.tracks.length ? s.tracks.map((t, i) => `
-    <div class="stage-row">
+    <div class="stage-row" draggable="true" data-i="${i}"
+         ondragstart="stageDragStart(event,${i})" ondragover="stageDragOver(event,${i})"
+         ondragleave="stageDragLeave(event)" ondrop="stageDrop(event,${i})" ondragend="stageDragEnd()">
+      <span class="stage-grip" title="Drag to reorder">⠿</span>
       <span class="stage-n">${i + 1}</span>
       <div class="stage-main"><span class="s-artist">${escHtml(t.artist || '')}</span> <span class="s-title">— ${escHtml(t.title || '')}</span></div>
       <span class="stage-meta">${escHtml([t.year, t.genre].filter(Boolean).join(' · '))}</span>
       <button class="btn-danger btn-sm" title="Remove from playlist" aria-label="Remove" onclick="stageRemove(${i})">✕</button>
     </div>`).join('')
     : '<div style="padding:14px;color:var(--muted);font-size:13px">No tracks — search above to add some, or cancel.</div>';
+}
+
+// ── Manual ordering: drag a row onto another to move it there ────────────────
+let _dragFrom = null;
+
+function stageDragStart(e, i) {
+  _dragFrom = i;
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', String(i)); } catch {}
+  e.currentTarget.classList.add('dragging');
+}
+function stageDragOver(e, i) {
+  if (_dragFrom === null || _dragFrom === i) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.toggle('drop-before', i < _dragFrom);
+  e.currentTarget.classList.toggle('drop-after', i > _dragFrom);
+}
+function stageDragLeave(e) { e.currentTarget.classList.remove('drop-before', 'drop-after'); }
+function stageDragEnd() {
+  _dragFrom = null;
+  document.querySelectorAll('.stage-row').forEach(r =>
+    r.classList.remove('dragging', 'drop-before', 'drop-after'));
+}
+function stageDrop(e, i) {
+  e.preventDefault();
+  if (_dragFrom === null || _dragFrom === i || !_staging) return stageDragEnd();
+  const [moved] = _staging.tracks.splice(_dragFrom, 1);
+  _staging.tracks.splice(i, 0, moved);
+  _staging.edited = true;          // a hand order must be preserved → freeze on save
+  _dragFrom = null;
+  renderStageList();
+}
+
+// Quick sorts. Any reorder counts as an edit: the order can only be kept by
+// freezing the list (re-matching would re-sort it).
+function stageSort(mode) {
+  if (!_staging) return;
+  const t = _staging.tracks;
+  const cmp = (f) => (a, b) => String(a[f] || '').localeCompare(String(b[f] || ''), undefined, { sensitivity: 'base' });
+  if (mode === 'artist') t.sort((a, b) => cmp('artist')(a, b) || cmp('album')(a, b) || cmp('title')(a, b));
+  else if (mode === 'title') t.sort(cmp('title'));
+  else if (mode === 'album') t.sort((a, b) => cmp('album')(a, b) || cmp('title')(a, b));
+  else if (mode === 'year') t.sort((a, b) => (a.year || 0) - (b.year || 0) || cmp('artist')(a, b));
+  else if (mode === 'reverse') t.reverse();
+  else if (mode === 'shuffle') {
+    for (let i = t.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [t[i], t[j]] = [t[j], t[i]]; }
+  }
+  _staging.edited = true;
+  renderStageList();
 }
 
 function stageRemove(i) {
@@ -3588,19 +3624,24 @@ async function saveStaging() {
   const spec = s.edited
     ? Object.assign({}, s.spec, { frozen: true, ai_paths: s.tracks.map(t => t.path) })
     : s.spec;
+  // A YTM import can queue the tracks you don't own yet — same single save call.
+  const body = { name, type: s.type, spec, targets: s.targets };
+  if ((s.missing || []).length && document.getElementById('stageEnqueue')?.checked) {
+    body.enqueue_video_ids = s.missing.map(m => m.videoId).filter(Boolean);
+  }
   return runBusy(document.getElementById('stageSaveBtn'), async () => {
     try {
       const res = await fetch('/api/playlists', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ name, type: s.type, spec, targets: s.targets }),
+        body: JSON.stringify(body),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { if (err) err.textContent = d.detail || 'Save failed.'; return; }
-      const outId = s.type === 'ai' ? 'plAiResult' : 'plPreview';
       closeStaging();
       await loadPlaylistList();
-      const out = document.getElementById(outId);
-      if (out) out.innerHTML = writeResultHTML(name, d);
+      const out = document.getElementById('plResult');
+      if (out) out.innerHTML = writeResultHTML(name, d)
+        + (d.enqueued ? `<div style="color:var(--muted);font-size:12px;margin-top:4px">${d.enqueued} missing track${d.enqueued !== 1 ? 's' : ''} queued for download — see Activity.</div>` : '');
     } catch { if (err) err.textContent = 'Save failed.'; }
   });
 }
