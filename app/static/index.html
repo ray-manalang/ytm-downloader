@@ -404,7 +404,9 @@
   .proc-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
   /* Fixed layout: column widths follow the <th> widths and stay put regardless of
      cell content, so a changing audited-filename can't re-flow the columns. */
-  .proc-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+  /* min-width so the flexible columns can't squeeze below usable — .proc-wrap
+     scrolls instead of letting cells collide. */
+  .proc-table { width: 100%; min-width: 780px; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
   .proc-table thead th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 700; padding: 9px 14px; background: var(--surface2); border-bottom: 1px solid var(--border); white-space: nowrap; }
   .proc-table tbody tr { border-top: 1px solid var(--border); }
   .proc-table tbody tr:first-child { border-top: none; }
@@ -805,7 +807,11 @@
     <div class="proc-wrap">
       <table class="proc-table">
         <thead><tr>
-          <th style="width:28%">Name</th><th style="width:9%">Kind</th><th style="width:11%">Status</th><th style="width:26%">Progress</th><th style="width:11%">Updated</th><th style="width:15%"></th>
+          <!-- Kind/Status/Updated/Actions hold fixed-size chips and buttons, so they get
+               px, not %: a % column is wrong at some viewport by definition, and at 11%
+               the Status cell was 50px against a 111px "DOWNLOADING" chip, which spilled
+               60px over the Progress column. Name + Progress take the slack. -->
+          <th style="width:30%">Name</th><th style="width:100px">Kind</th><th style="width:140px">Status</th><th>Progress</th><th style="width:88px">Updated</th><th style="width:110px"></th>
         </tr></thead>
         <tbody id="procBody"></tbody>
       </table>
@@ -1608,7 +1614,15 @@ function _procDlRow(d, active) {
   // node to patch (see _procJobRow — same rationale).
   const cf = active ? `<div class="proc-cf" id="pcf-${d.id}">${escHtml(d.current_file || '')}</div>`
     : (d.status === 'error' && d.error) ? `<div class="proc-cf" style="color:var(--danger)" title="${escHtml(d.error)}">${escHtml(d.error)}</div>` : '';
-  let progress = d.status === 'done' ? '✓' : '—';
+  // A finished download reports what it actually produced — 1 track or 12.
+  // track_count is NULL on rows that predate the column, so those keep the tick
+  // rather than claiming "0 tracks".
+  let progress = '—';
+  if (d.status === 'done') {
+    progress = (d.track_count != null)
+      ? `${d.track_count} track${d.track_count === 1 ? '' : 's'}`
+      : '✓';
+  }
   if (active) {
     const pct = d.progress || 0;
     const pos = (d.playlist_index && d.playlist_count) ? `${d.playlist_index}/${d.playlist_count}` : (d.status === 'pending' ? 'queued' : `${Math.round(pct)}%`);
@@ -2052,6 +2066,7 @@ function handleWS(msg) {
       if (msg.error) downloads[id].error = msg.error;
       if (msg.status === 'done') {
         downloads[id].progress = 100;
+        if (msg.track_count != null) downloads[id].track_count = msg.track_count;
         const url = downloads[id].url || '';
         const m = url.match(/[?&]v=([A-Za-z0-9_-]+)/);
         if (m && url.includes('music.youtube.com') && likedTracksCache) {

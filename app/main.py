@@ -160,6 +160,13 @@ async def db_init():
             cc_cols = [r[1] for r in await cur.fetchall()]
         if "dismissed" not in cc_cols:
             await db.execute("ALTER TABLE crosscheck_state ADD COLUMN dismissed INTEGER DEFAULT 0")
+        # How many tracks a finished download actually produced. Set on `done`
+        # from run_download's file list; the Activity row shows it instead of a
+        # bare tick. NULL on rows that predate this (count genuinely unknown).
+        async with db.execute("PRAGMA table_info(downloads)") as cur:
+            dl_cols = [r[1] for r in await cur.fetchall()]
+        if "track_count" not in dl_cols:
+            await db.execute("ALTER TABLE downloads ADD COLUMN track_count INTEGER")
         await db.commit()
 
 
@@ -472,11 +479,16 @@ async def _worker():
                     await broadcast({"type": "status", "id": dl_id, "status": "cancelled"})
                 else:
                     title = result.get("title")
-                    update = {"status": "done", "progress": 100.0}
+                    # How many files this download actually produced — 1 for a
+                    # single track, N for an album/playlist. Persisted so the
+                    # Activity row can say "12 tracks" after a reload.
+                    n_tracks = len(result.get("files") or [])
+                    update = {"status": "done", "progress": 100.0, "track_count": n_tracks}
                     if title:
                         update["title"] = title
                     await db_update(dl_id, **update)
-                    await broadcast({"type": "status", "id": dl_id, "status": "done", "title": title})
+                    await broadcast({"type": "status", "id": dl_id, "status": "done",
+                                     "title": title, "track_count": n_tracks})
                     if "music.youtube.com/watch" in url and "?v=" in url:
                         vid = url.split("?v=", 1)[1].split("&")[0].split("#")[0]
                         try:
