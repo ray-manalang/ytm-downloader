@@ -736,9 +736,15 @@
       <!-- Search -->
       <div class="add-src" id="addSrc-search">
         <div class="yt-search-row">
-          <input id="ytSearchQ" placeholder="Artist, song, or album…" autocomplete="off"
+          <input id="ytSearchQ" placeholder="Song or album…" autocomplete="off"
             onkeydown="if (event.key === 'Enter') runYtSearch()"
-            style="flex:1;min-width:200px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none">
+            style="flex:2;min-width:170px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none">
+          <!-- Narrows to the performer, which is what cuts the tribute/karaoke
+               noise. On its own it means "everything by them". Hidden for
+               playlists, which have an author rather than artists. -->
+          <input id="ytSearchArtist" placeholder="Artist (optional)" autocomplete="off"
+            onkeydown="if (event.key === 'Enter') runYtSearch()"
+            style="flex:1;min-width:130px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none">
           <span class="act-seg" id="ytSearchTypeSeg">
             <button class="on" data-t="songs" onclick="setYtSearchType('songs')">Songs</button>
             <button data-t="albums" onclick="setYtSearchType('albums')">Albums</button>
@@ -2244,17 +2250,36 @@ function setYtSearchType(t) {
   ytSearchType = t;
   document.querySelectorAll('#ytSearchTypeSeg button').forEach(b =>
     b.classList.toggle('on', b.dataset.t === t));
-  if ((document.getElementById('ytSearchQ').value || '').trim().length >= 2) runYtSearch();
+  // Playlists have an author, not artists — the filter can't apply, so it goes.
+  const af = document.getElementById('ytSearchArtist');
+  if (af) af.style.display = (t === 'playlists') ? 'none' : '';
+  if (_ytSearchTerms().query.length >= 2) runYtSearch();
+}
+
+// Either box alone is a valid search: artist-only means "everything by them".
+function _ytSearchTerms() {
+  const q = (document.getElementById('ytSearchQ').value || '').trim();
+  const artistEl = document.getElementById('ytSearchArtist');
+  const artist = (ytSearchType === 'playlists' || !artistEl) ? '' : (artistEl.value || '').trim();
+  return { q, artist, query: q || artist };
+}
+
+function clearYtArtist() {
+  const el = document.getElementById('ytSearchArtist');
+  if (!el) return;
+  el.value = '';
+  runYtSearch();
 }
 
 async function runYtSearch() {
-  const q = (document.getElementById('ytSearchQ').value || '').trim();
+  const { q, artist, query } = _ytSearchTerms();
   const box = document.getElementById('ytSearchResults');
-  if (q.length < 2) { box.innerHTML = ''; return; }
+  if (query.length < 2) { box.innerHTML = ''; return; }
   const seq = ++_ytSearchSeq;
   box.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px 4px">Searching…</div>';
   try {
-    const res = await fetch(`/api/ytm/search?type=${ytSearchType}&q=${encodeURIComponent(q)}`);
+    const res = await fetch(`/api/ytm/search?type=${ytSearchType}`
+      + `&q=${encodeURIComponent(q)}&artist=${encodeURIComponent(artist)}`);
     const d = await res.json();
     if (seq !== _ytSearchSeq) return;             // a newer search already answered
     if (!res.ok) throw new Error(d.detail || 'Search failed');
@@ -2268,7 +2293,12 @@ async function runYtSearch() {
 function _ytRenderResults(rows) {
   const box = document.getElementById('ytSearchResults');
   if (!rows.length) {
-    box.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px 4px">No matches.</div>';
+    // An artist filter that matches nothing looks like a broken search unless
+    // it says so — and offers the way out.
+    const { artist } = _ytSearchTerms();
+    box.innerHTML = artist
+      ? `<div style="color:var(--muted);font-size:13px;padding:12px 4px">No matches by <strong style="color:var(--text)">${escHtml(artist)}</strong>. <a href="#" onclick="clearYtArtist(); return false" style="color:var(--accent)">Clear the artist filter</a></div>`
+      : '<div style="color:var(--muted);font-size:13px;padding:12px 4px">No matches.</div>';
     return;
   }
   box.innerHTML = '<div style="margin-top:10px">' + rows.map((r, i) => {

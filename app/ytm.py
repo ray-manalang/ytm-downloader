@@ -332,23 +332,52 @@ def _artists(r: dict) -> str:
     return ", ".join(a.get("name", "") for a in (r.get("artists") or []) if a.get("name"))
 
 
+def _artist_key(s: str) -> str:
+    """Fold an artist name for comparison: 'a-ha', 'A-Ha' and 'a‐ha' (U+2010 —
+    which is what's actually on disk) must all match."""
+    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+
 @router.get("/search")
-async def ytm_search(q: str = "", type: str = "songs", limit: int = 20):
-    """Search the public YouTube Music catalog. Songs and albums only."""
-    q = (q or "").strip()
+async def ytm_search(q: str = "", type: str = "songs", limit: int = 20, artist: str = ""):
+    """Search the public YouTube Music catalog. Songs, albums and playlists only.
+
+    `artist` narrows results to that performer — searching an album title alone
+    buries the real record under tributes, karaoke and covers ("hunting high and
+    low" returns Stratovarius and three karaoke albums before a-ha's). Matching
+    is on the **artist field, not the title**, so "Hunting High and Low (A Tribute
+    to A-Ha)" by Ameritz correctly drops out. With no `q`, the artist becomes the
+    query — i.e. it doubles as "show me everything by them".
+    """
+    q, artist = (q or "").strip(), (artist or "").strip()
     if type not in _SEARCH_FILTERS:
         raise HTTPException(400, f"type must be one of {', '.join(_SEARCH_FILTERS)}")
-    if len(q) < 2:
+    query = q or artist
+    if len(query) < 2:
         return {"results": [], "type": type}
+    # Playlists carry an `author`, not `artists` — filtering them by artist would
+    # match nothing and silently return zero, so it doesn't apply there (the UI
+    # hides the control for playlists to match).
+    want = _artist_key(artist) if type != "playlists" else ""
+    # Over-fetch when filtering, or a narrow artist leaves almost nothing.
+    fetch = min(limit * 3, 60) if want else limit
 
     def _run():
-        return _get_search_client().search(q, filter=type, limit=limit)
+        return _get_search_client().search(query, filter=type, limit=fetch)
 
     try:
         raw = await asyncio.get_running_loop().run_in_executor(None, _run)
     except Exception as exc:
-        logger.warning("ytm search failed for %r: %s", q, exc)
+        logger.warning("ytm search failed for %r: %s", query, exc)
         raise HTTPException(502, f"YouTube Music search failed: {exc}")
+
+    if want:
+        # Substring, not equality: it's what lets "beatles" find "The Beatles".
+        # The cost is the odd false positive (an artist whose name contains the
+        # key); acceptable for a filter you can make more specific.
+        raw = [r for r in raw
+               if any(want in _artist_key(a.get("name")) for a in (r.get("artists") or []))]
+        raw = raw[:limit]
 
     want = {"songs": "song", "albums": "album", "playlists": "playlist"}[type]
     out = []
