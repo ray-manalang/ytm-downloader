@@ -3075,6 +3075,15 @@ function prepSummaryChips(type, s, jobId) {
     if (s.disagreements) parts.push(`${s.disagreements} new disagreements`);
     if (s.remaining) parts.push(`${s.remaining} left`);
   }
+  // How long it took, and what that works out to per file. The per-file number is
+  // the one that matters: it's dominated by how the library is mounted, and it's
+  // the only way to tell a slow job from a slow disk.
+  if (s.elapsed_s != null) {
+    const t = s.elapsed_s < 60 ? `${s.elapsed_s}s`
+      : s.elapsed_s < 3600 ? `${Math.floor(s.elapsed_s / 60)}m ${Math.round(s.elapsed_s % 60)}s`
+      : `${(s.elapsed_s / 3600).toFixed(1)}h`;
+    parts.push(`<span title="${s.ms_per_file != null ? s.ms_per_file + ' ms per file' : ''}" style="color:var(--muted)">in ${t}${s.ms_per_file != null ? ` · ${s.ms_per_file}ms/file` : ''}</span>`);
+  }
   const errFiles = Array.isArray(s.error_files) ? s.error_files : [];
   let errPanel = '';
   if (s.errors) {

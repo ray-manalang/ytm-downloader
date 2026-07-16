@@ -59,6 +59,7 @@ Single-process FastAPI app. No test suite.
 | `COVER_CACHE_DIR` | `<dirname(DB_PATH)>/cover_cache` | Local-disk cache for Files-browser cover thumbnails (`covers.py`). Keep on fast local storage, **not** the network mount |
 | `MAX_CONCURRENT_CONVERSIONS` | `2` | Parallel **convert-job** workers (prep queue). A single convert *job* now parallelizes its files internally — see below |
 | `MAX_CONCURRENT_TRANSCODES` | *(CPU count)* | Parallel ffmpeg transcodes **within** one convert job (CPU-bound phase) |
+| `MAX_CONCURRENT_ANALYSES` | *(CPU count)* | Parallel librosa analyses **within** one Analyze job. librosa/numpy release the GIL in C, so threads genuinely parallelise: measured on a 12k library (10 cores, local SSD) **326 ms/track serial → 51 ms at 8 threads**, i.e. ~66 min → ~10 |
 | `CONVERT_STAT_WORKERS` | *(min(32, 4×transcodes))* | Parallel workers for the resumable skip-decision stats within a convert job (network-latency-bound phase) |
 | `AAC_BITRATE` | `256k` | Conversion bitrate |
 | `PLAYLIST_DIR_LIBRARY` | `<MUSIC_DIR>/Playlists` | Smart-playlist `.m3u` output pointing at the **source** library files |
@@ -183,6 +184,8 @@ Auto-generated YTM playlists ("Liked Music", "Episodes for Later", "New Episodes
 | POST | `/api/prep/jobs/{id}/rollback` | Restore a `tags` or `unify` job from its `prep_changes` pre-images |
 | GET | `/api/prep/jobs` | List all prep jobs |
 | DELETE | `/api/prep/jobs/{id}` | Cancel a running/pending job or remove a finished one |
+
+**Every prep job reports its own cost.** The worker times the executor call and injects `elapsed_s` + `ms_per_file` into the summary (`_summary_file_count` reads whichever total that engine happens to report), and the Activity row renders "in 18.1s · 1.5ms/file". The per-file number is the diagnostic one: it's dominated by **how the library is mounted**, which can't be known from outside the container. Reference point — a full audit of a 12,163-track library on a **local PCIe SSD** is 18.1 s / 1.5 ms per file; a network mount costs 10–50× that per file, which is what the convert engine's wide `CONVERT_STAT_WORKERS` exists for.
 
 Prep jobs run on a **separate** `_prep_queue` + worker pool (`MAX_CONCURRENT_CONVERSIONS`), independent of the download queue. Job types: `convert`/`audit`/`tags`/`review`/`unify`/`enrich`/`relabel`. After a **library/mirror-changing** job (`convert`/`tags`/`unify`/`enrich`) completes, the worker calls `playlists.regenerate_all_auto()` so auto-refresh playlists stay current.
 

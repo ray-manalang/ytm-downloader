@@ -91,6 +91,21 @@ def _job_public(row: dict) -> dict:
     return out
 
 
+def _summary_file_count(summary: dict) -> int:
+    """How many files a job actually traversed — the denominator for ms/file.
+    Each engine names its total differently, so this reads them rather than
+    assuming one shape."""
+    for k in ("total_tracks", "total_files", "total"):
+        v = summary.get(k)
+        if isinstance(v, int) and v > 0:
+            return v
+    # convert/enrich report their work split across buckets instead of a total
+    parts = [summary.get(k) or 0 for k in
+             ("transcoded", "copied", "skipped", "analyzed", "errors", "drm", "changed")]
+    n = sum(p for p in parts if isinstance(p, int))
+    return n
+
+
 async def _upsert_tracks(tracks: list):
     if not tracks:
         return
@@ -262,6 +277,7 @@ async def _prep_worker():
 
             job_spec = _job_public(job)
             jtype = job_spec.get("type") or "convert"
+            _t0 = time.monotonic()
             try:
                 if jtype == "convert":
                     summary = await _loop.run_in_executor(
@@ -383,6 +399,17 @@ async def _prep_worker():
                     )
                 else:
                     raise ValueError(f"Unknown prep job type: {jtype}")
+
+                # Every job reports its own wall-clock, and per-file cost where it
+                # walked files. Without this, "is this slow, and where?" is guesswork
+                # — and the answer depends on how the library is mounted *here*,
+                # which can't be known from outside the container.
+                if isinstance(summary, dict):
+                    elapsed = time.monotonic() - _t0
+                    summary["elapsed_s"] = round(elapsed, 1)
+                    n = _summary_file_count(summary)
+                    if n:
+                        summary["ms_per_file"] = round(elapsed * 1000 / n, 1)
 
                 if cancel_ev.is_set():
                     await _job_update(job_id, status="cancelled", error=json.dumps(summary))
