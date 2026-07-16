@@ -988,11 +988,16 @@
       <input id="amMacPath" type="text" placeholder="/Volumes/Terradrive/iPod" oninput="renderAppleScript()"
         style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
       <div class="cfg-note" style="margin:7px 0 12px">Normally <em>not</em> the server's mirror path (<span id="amServerPath" style="font-family:monospace">—</span>) — same files, mounted somewhere else.</div>
-      <pre class="code-block" id="amScript"></pre>
-      <div class="process-actions">
+      <div class="process-actions" style="margin-bottom:10px">
         <button class="btn-ghost btn-sm" id="amCopyBtn" onclick="copyAppleScript(this)">Copy script</button>
         <span id="amCopyNote" class="cfg-note"></span>
       </div>
+      <!-- Collapsed: it's ~50 lines and you copy it far more often than you read
+           it. Copy works while it's shut (see copyAppleScript). -->
+      <details class="help" id="amScriptDetails">
+        <summary>Show the script</summary>
+        <pre class="code-block" id="amScript" style="margin-top:10px"></pre>
+      </details>
     </div>
 
     <!-- Mirror maintenance — recurring housekeeping, not a pipeline step -->
@@ -2967,22 +2972,46 @@ function renderAppleScript() {
     + '\n' + body.map(escHtml).join('\n');
 }
 
+// Three tiers, because the script block is collapsed and the deployment is http.
 async function copyAppleScript(btn) {
   const note = document.getElementById('amCopyNote');
   const done = (html, ms) => { note.innerHTML = html; setTimeout(() => { note.innerHTML = ''; }, ms); };
+
+  // 1. Clipboard API — needs a secure context, which a self-hosted http:// origin
+  //    isn't, so this is usually skipped.
   try {
-    // Only exists in a secure context. A self-hosted http:// origin isn't one,
-    // so the selection fallback below is the normal path, not the rare one.
-    if (!navigator.clipboard) throw new Error('no clipboard api');
-    await navigator.clipboard.writeText(_amScriptText);
-    done('<span style="color:var(--success)">Copied</span>', 2000);
-  } catch {
-    const r = document.createRange();
-    r.selectNodeContents(document.getElementById('amScript'));
-    const sel = window.getSelection();
-    sel.removeAllRanges(); sel.addRange(r);
-    done('<span style="color:var(--warn)">Selected — press ⌘C</span>', 4000);
-  }
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(_amScriptText);
+      done('<span style="color:var(--success)">Copied</span>', 2000);
+      return;
+    }
+  } catch { /* fall through */ }
+
+  // 2. execCommand via an off-screen textarea. Deprecated, but it works on plain
+  //    http AND doesn't need the <pre> on screen — which matters, because the
+  //    script is collapsed and you can't select what isn't rendered.
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = _amScriptText;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    if (ok) { done('<span style="color:var(--success)">Copied</span>', 2000); return; }
+  } catch { /* fall through */ }
+
+  // 3. Last resort: open the block first, then select it — otherwise ⌘C would
+  //    copy nothing and the hint would be a lie.
+  const d = document.getElementById('amScriptDetails');
+  if (d) d.open = true;
+  const r = document.createRange();
+  r.selectNodeContents(document.getElementById('amScript'));
+  const sel = window.getSelection();
+  sel.removeAllRanges(); sel.addRange(r);
+  done('<span style="color:var(--warn)">Selected — press ⌘C</span>', 4000);
 }
 
 async function updatePrepSteps() {
