@@ -380,8 +380,18 @@
   /* YouTube Music search (Add music) */
   .yt-search-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
   .liked-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-  .yt-res { display: flex; align-items: center; gap: 12px; padding: 9px 4px; border-top: 1px solid var(--border); }
-  .yt-res:first-child { border-top: none; }
+  .yt-res-group { border-top: 1px solid var(--border); }
+  .yt-res-group:first-child { border-top: none; }
+  .yt-res { display: flex; align-items: center; gap: 12px; padding: 9px 4px; }
+  .yt-res.expandable { cursor: pointer; }
+  .yt-res.expandable:hover .yt-res-title { color: var(--accent); }
+  .yt-res .album-chevron { font-size: 10px; flex-shrink: 0; }
+  /* An album's tracklist, revealed on click. Indented under the cover so it
+     reads as belonging to the row above it. */
+  .yt-tracks { padding: 2px 4px 10px 64px; }
+  .yt-track { display: flex; align-items: center; gap: 10px; padding: 3px 0; font-size: 12px; color: var(--muted); }
+  .yt-track-n { min-width: 18px; text-align: right; opacity: .7; }
+  .yt-track-t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
   /* Same disc placeholder the Files browser uses, so a result with no artwork
      reads as "no cover" rather than as a dead box. */
   .yt-res-art { width: 40px; height: 40px; flex-shrink: 0; border-radius: 4px; object-fit: cover; background: var(--surface2) url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='20'%20height='20'%20viewBox='0%200%2020%2020'%20fill='none'%20stroke='%23777'%20stroke-width='1.5'%3E%3Ccircle%20cx='10'%20cy='10'%20r='7'/%3E%3Ccircle%20cx='10'%20cy='10'%20r='1.7'/%3E%3C/svg%3E") center/20px no-repeat; }
@@ -2038,18 +2048,66 @@ function _ytRenderResults(rows) {
     const art = r.thumbnail
       ? `<img class="yt-res-art" src="${escHtml(r.thumbnail)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
       : '<span class="yt-res-art"></span>';
-    return `<div class="yt-res" id="ytres-${i}">
-      ${art}
-      <div class="yt-res-main">
-        <div class="yt-res-title">${escHtml(r.title)}</div>
-        <div class="yt-res-sub">${escHtml(sub)}</div>
+    // Albums expand to their tracklist; the Download button still does the
+    // downloading, so the row click is purely "show me what's on it".
+    const expandable = r.kind === 'album';
+    return `<div class="yt-res-group">
+      <div class="yt-res${expandable ? ' expandable' : ''}" id="ytres-${i}"${expandable ? ` onclick="ytToggleAlbum(${i})"` : ''}>
+        ${expandable ? `<span class="album-chevron" id="ytchev-${i}">▶</span>` : ''}
+        ${art}
+        <div class="yt-res-main">
+          <div class="yt-res-title">${escHtml(r.title)}</div>
+          <div class="yt-res-sub">${escHtml(sub)}</div>
+        </div>
+        <button class="btn-primary btn-sm" id="ytdl-${i}" onclick="event.stopPropagation(); ytDownload(${i})">${r.kind === 'playlist' ? 'Check' : 'Download'}</button>
       </div>
-      <button class="btn-primary btn-sm" id="ytdl-${i}" onclick="ytDownload(${i})">${r.kind === 'playlist' ? 'Check' : 'Download'}</button>
+      ${expandable ? `<div class="yt-tracks" id="yttr-${i}" style="display:none"></div>` : ''}
     </div>`;
   }).join('') + '</div>';
   _ytResults = rows;
 }
 let _ytResults = [];
+const _ytAlbumTracks = {};   // browseId -> tracks[] (one fetch per album)
+
+// Expand an album result to its tracklist. Cached by browseId, so collapsing
+// and re-opening doesn't refetch — and a new search reuses it too.
+async function ytToggleAlbum(i) {
+  const r = _ytResults[i];
+  if (!r || r.kind !== 'album') return;
+  const box = document.getElementById('yttr-' + i);
+  const chev = document.getElementById('ytchev-' + i);
+  if (!box) return;
+  const open = box.style.display === 'none';
+  box.style.display = open ? '' : 'none';
+  if (chev) chev.classList.toggle('open', open);
+  if (!open || box.dataset.loaded) return;
+
+  box.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:4px 0">Loading tracks…</div>';
+  try {
+    const res = await fetch('/api/ytm/search/album?id=' + encodeURIComponent(r.id));
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || 'Could not read album');
+    _ytAlbumTracks[r.id] = d.tracks || [];
+    box.innerHTML = _ytAlbumTracksHTML(d);
+    box.dataset.loaded = '1';
+  } catch (e) {
+    box.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:4px 0">${escHtml(e.message)}</div>`;
+  }
+}
+
+function _ytAlbumTracksHTML(d) {
+  const tracks = d.tracks || [];
+  if (!tracks.length) return '<div style="color:var(--muted);font-size:12px;padding:4px 0">No tracks listed.</div>';
+  const rows = tracks.map(t => `
+    <div class="yt-track">
+      <span class="yt-track-n">${t.n != null ? t.n : ''}</span>
+      <span class="yt-track-t">${escHtml(t.title)}</span>
+      <span>${escHtml(t.duration || '')}</span>
+    </div>`).join('');
+  const foot = [d.trackCount ? `${d.trackCount} track${d.trackCount !== 1 ? 's' : ''}` : '', d.duration]
+    .filter(Boolean).join(' · ');
+  return rows + (foot ? `<div class="yt-track" style="opacity:.7;margin-top:4px"><span class="yt-track-n"></span><span class="yt-track-t">${escHtml(foot)}</span></div>` : '');
+}
 
 // Playlists are a two-step: check, then queue. A playlist's advertised size is
 // mostly video — even YouTube's own featured lists run ~10 songs to ~104 videos

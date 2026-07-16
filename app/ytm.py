@@ -377,6 +377,40 @@ async def ytm_search(q: str = "", type: str = "songs", limit: int = 20):
     return {"results": out, "type": type}
 
 
+@router.get("/search/album")
+async def ytm_search_album(id: str = ""):
+    """An album's tracklist, for expanding a search result. Read-only — the
+    download still goes through the album's audioPlaylistId, so nothing here
+    needs videoType filtering (yt-dlp takes the audio either way)."""
+    ident = (id or "").strip()
+    if not ident:
+        raise HTTPException(400, "id is required")
+
+    def _run():
+        return _get_search_client().get_album(ident)
+
+    try:
+        d = await asyncio.get_running_loop().run_in_executor(None, _run)
+    except Exception as exc:
+        logger.warning("ytm album fetch failed for %s: %s", ident, exc)
+        raise HTTPException(502, f"Could not read that album: {exc}")
+
+    tracks = []
+    for t in d.get("tracks") or []:
+        tracks.append({
+            "n": t.get("trackNumber"),
+            "title": t.get("title") or "",
+            "artist": ", ".join(a.get("name", "") for a in (t.get("artists") or []) if a.get("name")),
+            "duration": t.get("duration") or "",
+            "videoId": t.get("videoId") or "",
+        })
+    return {
+        "title": d.get("title") or "", "year": d.get("year") or "",
+        "duration": d.get("duration") or "", "trackCount": d.get("trackCount") or len(tracks),
+        "tracks": tracks,
+    }
+
+
 def _norm_playlist_id(raw: str) -> str:
     """Search returns a browseId like 'VLPL…'; get_playlist wants the 'PL…'."""
     pid = (raw or "").strip()

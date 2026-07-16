@@ -132,6 +132,7 @@ Single-process FastAPI app. No test suite.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/ytm/search` | **Catalog search** (`?q=`, `?type=songs\|albums\|playlists`, `?limit=`) → normalized results. **Unauthenticated on purpose** — see below |
+| GET | `/api/ytm/search/album` | An album's tracklist (`?id=<browseId>`) for expanding a search result. Read-only; no `videoType` filtering needed because the download goes via `audioPlaylistId` and yt-dlp takes the audio regardless |
 | GET | `/api/ytm/search/playlist` | **Preview** a playlist (`?id=`) before queueing → `{songs, videos, have, queue, scanned, truncated}`. Backs the UI's two-step |
 | POST | `/api/ytm/search/download` | Enqueue a result (`{kind:"song"\|"album"\|"playlist", id}`) → hands URLs to the **same** download queue via `_enqueue_fn`. Songs → `watch?v=<videoId>`; albums → `get_album(browseId).audioPlaylistId` → `playlist?list=<id>` (resolved **on download**, not per search result — that would be N API calls to render one page); playlists → **expanded and enqueued track-by-track**, never as a playlist URL (see below) |
 | GET | `/api/ytm/library` | Playlists list + liked song count |
@@ -374,7 +375,7 @@ Single-file, no build step. **Left-sidebar app shell** (`.app` grid: `.sidebar` 
 
 **Add music page (`panel-library`) — ONE card, ONE source picker**, the same shape as the Playlists creator: a `.src-picker` (`#addSources` → `setAddSource`) swapping `#addSrc-search|-url|-liked`. There is no second way in and no stacked cards.
 
-- **Search** (default) — `#ytSearchQ` + a Songs/Albums/Playlists `.act-seg` → `runYtSearch`/`setYtSearchType`, results via `_ytRenderResults`, `ytDownload(i)` → `POST /api/ytm/search/download`. Playlist rows start as **Check** → `ytCheckPlaylist` shows the song/video/already-have split → the button becomes **Queue N songs**.
+- **Search** (default) — `#ytSearchQ` + a Songs/Albums/Playlists `.act-seg` → `runYtSearch`/`setYtSearchType`, results via `_ytRenderResults`, `ytDownload(i)` → `POST /api/ytm/search/download`. **Album rows expand to their tracklist** (`ytToggleAlbum` → `GET /api/ytm/search/album`, rendered by `_ytAlbumTracksHTML`): fetched **lazily on first expand** and cached per browseId, so a 20-album result page costs zero extra calls until you actually open one. The row click toggles; the Download button `stopPropagation`s so it doesn't also expand. Songs and playlists aren't expandable. Playlist rows start as **Check** → `ytCheckPlaylist` shows the song/video/already-have split → the button becomes **Queue N songs**.
 - **Paste a URL** — `#urlInput` → `submitDownloads`. The escape hatch for a link search can't reach; unfiltered, the same trade as the old `downloadPlaylist`.
 - **Liked Songs** — the YTM *inbox*: what you've liked, synced ticks, a per-track `downloadTrack` ↓ if you don't want to wait for the timer, and `syncNow`. **Not redundant with auto-sync** — search can't know what you liked in the car. As its own source it **loads on select** (`loadLikedTracks`, cached) instead of hiding behind a chevron; `toggleLiked`/`likedOpen`/`#liked-chevron` are gone. `applyYtmConnection` still drives `#libConnected`/`#libDisconnectedPrompt` inside it, and `loadLibrary` re-loads the list if you picked Liked while disconnected and then connected (`setAddSource` would already have skipped the load).
 
