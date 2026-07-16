@@ -783,6 +783,223 @@
     </div>
   </div>
 
+  <!-- ACTIVITY — unified process monitor (downloads + library jobs) -->
+  <div class="panel" id="panel-activity">
+    <div class="act-toolbar">
+      <span class="act-seg" id="actViewSeg">
+        <button data-view="all" class="on" onclick="setActView('all')">All</button>
+        <button data-view="downloads" onclick="setActView('downloads')">Downloads</button>
+        <button data-view="jobs" onclick="setActView('jobs')">Library jobs</button>
+      </span>
+      <span class="act-seg" id="actStatusSeg">
+        <button data-status="any" class="on" onclick="setActStatus('any')">Any</button>
+        <button data-status="active" onclick="setActStatus('active')">Running</button>
+        <button data-status="done" onclick="setActStatus('done')">Done</button>
+        <button data-status="error" onclick="setActStatus('error')">Failed</button>
+      </span>
+      <span id="runningCount" style="color:var(--muted);font-size:12px"></span>
+      <button class="btn-ghost btn-sm" onclick="refreshActivity()" title="Reload"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>Refresh</button>
+      <button class="btn-danger btn-sm" id="actRemoveAll" style="margin-left:auto" onclick="removeAllActivity()">Remove all</button>
+    </div>
+
+    <div class="proc-wrap">
+      <table class="proc-table">
+        <thead><tr>
+          <th style="width:28%">Name</th><th style="width:9%">Kind</th><th style="width:11%">Status</th><th style="width:26%">Progress</th><th style="width:11%">Updated</th><th style="width:15%"></th>
+        </tr></thead>
+        <tbody id="procBody"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="actEmpty" style="display:none;padding:44px 20px">
+      <p style="color:var(--muted)">No activity matches this filter.</p>
+    </div>
+  </div>
+
+  <!-- LIBRARY AUDIT (details split out of the Prepare stepper) -->
+  <div class="panel" id="panel-audit">
+    <div class="add-box" style="margin-bottom:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:3px">Music library</div>
+        <div id="auditLibDisplay" style="font-family:monospace;font-size:13px">—</div>
+      </div>
+      <button class="btn-ghost btn-sm" onclick="switchTab('setup')">Change in Setup →</button>
+    </div>
+
+    <div class="add-box" style="margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px">
+          <div style="font-weight:600;font-size:15px">Audit library</div>
+          <div style="color:var(--muted);font-size:13px;margin-top:2px">A read-only scan that indexes tags, genres, and file sizes. Everything in Optimize builds on this — run it first, and after adding music.</div>
+        </div>
+        <button class="btn-primary" id="auditBtn" onclick="startAudit()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Run audit</button>
+      </div>
+      <div id="auditError" style="color:var(--danger);font-size:13px;margin-top:10px"></div>
+      <div id="auditResults"></div>
+      <div id="missingAAReport"></div>
+    </div>
+
+    <div class="add-box">
+      <div style="font-weight:600;font-size:15px">Mislabeled album artists</div>
+      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Albums whose album-artist matches no track artist — usually a record label or wrong name in the tag (e.g. Dido albums filed under the label “Disky”). This is why <strong>Complete genres</strong> fragments those artists. Review, uncheck any false positives (producer/DJ &amp; classical albums), then apply — every change is reversible.</div>
+      <button class="btn-ghost btn-sm" id="suspectAABtn" onclick="loadSuspectAlbumArtist()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V4.8A2 2 0 0 1 4.8 2.8H12a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Scan for mislabeled album artists</button>
+      <div id="suspectAAReport" style="margin-top:12px"></div>
+    </div>
+
+    <!-- Complete genres — lives with the other genre tools, not on Optimize -->
+    <div class="add-box" id="genresCard" style="margin-top:20px">
+      <div style="font-weight:600;font-size:15px">Complete genres <span id="stepGenresStatus" style="color:var(--muted);font-weight:400;font-size:12px"></span></div>
+      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Give every artist one consistent genre. Proposes a genre per artist from the curated map, then the majority of existing tags, then optionally MusicBrainz/Claude. Review and edit before applying; a sole <strong style="color:var(--text)">Holiday</strong> tag is preserved.</div>
+      <div class="step-actions">
+        <button class="btn-ghost btn-sm" id="reviewBtn" onclick="startReview()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></svg>Review genres</button>
+        <label style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
+          <input type="checkbox" id="reviewOnline" style="width:15px;height:15px;accent-color:var(--accent)">
+          Look up unknown artists online (MusicBrainz — slower)
+        </label>
+        <label id="reviewLLMLabel" style="display:none;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
+          <input type="checkbox" id="reviewLLM" style="width:15px;height:15px;accent-color:var(--accent)">
+          Use Claude for still-unknown artists (one batched call)
+        </label>
+      </div>
+      <div id="reviewError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+      <div id="reviewResult"></div>
+    </div>
+
+    <div class="add-box" style="margin-top:20px">
+      <div style="font-weight:600;font-size:15px">Unmapped genres</div>
+      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Raw genre strings in your files that map to nothing in the controlled vocabulary — so they get dropped. Assign each to a controlled genre (or mark as junk) to <strong>teach the vocabulary</strong>; future Audit/Clean runs will normalize them automatically.</div>
+      <button class="btn-ghost btn-sm" id="unmappedBtn" onclick="loadUnmappedGenres()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m15 15 2.5 2.5L22 13"/></svg>Map unmapped genres</button>
+      <div id="unmappedReport" style="margin-top:12px"></div>
+    </div>
+
+    <div class="add-box" style="margin-top:20px">
+      <div style="font-weight:600;font-size:15px">Album genre outliers</div>
+      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Single-artist albums where most tracks share a genre but a few differ or are untagged — usually per-track tagging slips. Set the odd tracks to the album's genre (the rest stay as-is). Compilations are skipped since they're legitimately multi-genre.</div>
+      <button class="btn-ghost btn-sm" id="outlierBtn" onclick="loadAlbumOutliers()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>Scan for album genre outliers</button>
+      <div id="outlierReport" style="margin-top:12px"></div>
+    </div>
+
+    <div class="add-box" style="margin-top:20px">
+      <div style="font-weight:600;font-size:15px">Genre cross-check <span style="color:var(--muted);font-weight:400;font-size:12px">· MusicBrainz / Claude</span></div>
+      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Catches <strong>consistently-wrong</strong> genres — an artist whose every track agrees on a genre that an external source contradicts (which majority-vote can never fix). Looks up each locally-consistent artist online and flags disagreements. Genre is subjective, so review before applying. Bounded per run (~150 artists) but <strong>remembers what it checked</strong> — run it repeatedly to cover your whole library; disagreements accumulate below.</div>
+      <div class="step-actions" style="margin-bottom:8px">
+        <button class="btn-ghost btn-sm" id="crosscheckBtn" onclick="startCrosscheck()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>Run genre cross-check</button>
+        <label id="crosscheckLLMLabel" style="display:none;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
+          <input type="checkbox" id="crosscheckLLM" style="width:15px;height:15px;accent-color:var(--accent)">
+          Also use Claude for artists MusicBrainz doesn't cover
+        </label>
+      </div>
+      <div id="crosscheckError" style="color:var(--danger);font-size:13px"></div>
+      <div id="crosscheckReport" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <!-- OPTIMIZE — the jobs that change your library/mirror. Inspect + fix lives on Audit. -->
+  <div class="panel" id="panel-convert">
+    <div class="add-box" style="margin-bottom:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:3px">Music library</div>
+        <div id="prepLibDisplay" style="font-family:monospace;font-size:13px">—</div>
+      </div>
+      <button class="btn-ghost btn-sm" onclick="switchTab('setup')">Change in Setup →</button>
+    </div>
+    <div id="prepError" style="color:var(--danger);font-size:13px;margin:-8px 0 12px"></div>
+
+    <!-- Run every configured step in one go. Lives here, not on Setup: this is the
+         page for jobs that change your library, and Setup is for configuration. -->
+    <div class="add-box" id="processCard" style="margin-bottom:18px">
+      <div class="card-title">Process new additions</div>
+      <div class="card-sub">Runs your configured steps in order over new/changed files. Every engine is resumable, so it only touches what's new. <span id="procStepsNote"></span></div>
+      <div class="process-actions">
+        <button class="btn-primary" id="procBtn" onclick="startProcess()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><polygon points="13 2 3 14 11 14 11 22 21 10 13 10 13 2"/></svg>Process now</button>
+        <span id="procStatus" style="color:var(--muted);font-size:12px"></span>
+      </div>
+    </div>
+
+    <!-- Step 1: Clean tags -->
+    <div class="step" id="step-clean">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <div class="step-title">Clean tags</div>
+        <div class="step-status" id="stepCleanStatus">Normalize genres &amp; fill album artists.</div>
+        <div class="step-desc">Maps genres to a controlled vocabulary and fills missing album artists, in place. One-click reversible from the <a href="#" onclick="switchTab('activity'); return false" style="color:var(--accent)">Activity</a> page. Needs an <a href="#" onclick="switchTab('audit'); return false" style="color:var(--accent)">Audit</a> first.</div>
+        <div class="step-actions"><button class="btn-primary" id="cleanBtn" onclick="startClean()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Clean tags</button></div>
+      </div>
+    </div>
+
+    <!-- Step 2: Analyze BPM & energy -->
+    <div class="step" id="step-enrich">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <div class="step-title">Analyze BPM &amp; energy</div>
+        <div class="step-status" id="stepEnrichStatus">Enables tempo/energy playlist rules.</div>
+        <div class="step-desc">Detects each track's tempo and a 0–100 energy score. Slow (~1–2s/track) but resumable — safe to run overnight.</div>
+        <div class="step-actions"><button class="btn-primary" id="enrichBtn" onclick="startEnrich()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>Analyze</button></div>
+      </div>
+    </div>
+
+    <!-- Step 3: Convert → iPod -->
+    <div class="step" id="step-convert">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <div class="step-title">Convert → iPod</div>
+        <div class="step-status" id="stepConvertStatus">Build the AAC mirror for iPod/iTunes.</div>
+        <div class="step-desc">Transcodes FLAC from your music library to a 256k AAC mirror; MP3/AAC copied as-is, DRM skipped. The library is never modified, and re-runs only convert what's missing or changed.</div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px">
+          <div>
+            <label style="display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Output mirror</label>
+            <input id="convOutput" type="text" placeholder="/ipod"
+              style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:9px 12px;font-size:13px;outline:none;font-family:monospace">
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--muted);font-size:13px">
+            <input type="checkbox" id="convDownsample" style="width:16px;height:16px;cursor:pointer;accent-color:var(--accent)">
+            Downsample hi-res (&gt;16-bit / &gt;48kHz) to 44.1kHz/16-bit
+          </label>
+        </div>
+        <div class="step-actions">
+          <button class="btn-primary" id="convStartBtn" onclick="startConvert()">Start conversion</button>
+          <span id="convBitrateNote" style="color:var(--muted);font-size:12px"></span>
+        </div>
+        <div id="convError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- Apple Music — where the mirror hands off to a player, so it sits right
+         after Convert. NOT a numbered step: steps are jobs this app runs, and
+         Music Monster can't reach Apple Music at all (it's a container on the
+         server; Music is an app on the Mac). All it can do is hand you the
+         script. `refresh` re-reads tags from disk, which is what the old
+         delete-everything-and-reimport dance was really working around. -->
+    <div class="add-box" id="appleMusicCard" style="margin-bottom:18px">
+      <div class="card-title">Apple Music</div>
+      <div class="card-sub">Music Monster runs on your server and Apple Music runs on your Mac, so it can't sync for you. Run this on the Mac instead — it adds new mirror files, then re-reads tags for tracks already in your library. <strong style="color:var(--text)">Nothing is deleted</strong>, so play counts, ratings, and playlists survive. Paste it into Script Editor and press Run; it takes a few minutes on a big library and reports what it did. Tracks whose files have gone missing are skipped rather than failing the run.</div>
+      <label class="field-label" for="amMacPath">Mirror path, as your Mac sees it</label>
+      <input id="amMacPath" type="text" placeholder="/Volumes/Terradrive/iPod" oninput="renderAppleScript()"
+        style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
+      <div class="cfg-note" style="margin:7px 0 12px">Normally <em>not</em> the server's mirror path (<span id="amServerPath" style="font-family:monospace">—</span>) — same files, mounted somewhere else.</div>
+      <pre class="code-block" id="amScript"></pre>
+      <div class="process-actions">
+        <button class="btn-ghost btn-sm" id="amCopyBtn" onclick="copyAppleScript(this)">Copy script</button>
+        <span id="amCopyNote" class="cfg-note"></span>
+      </div>
+    </div>
+
+    <!-- Mirror maintenance — recurring housekeeping, not a pipeline step -->
+    <div class="section-title">Mirror maintenance</div>
+    <div class="add-box">
+      <div style="color:var(--muted);font-size:13px;margin-bottom:12px">Read-only checks on the AAC mirror. Convert only ever <em>adds</em> — these find what it can't.</div>
+      <button class="btn-ghost btn-sm" id="drmBtn" onclick="loadDrmReport()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>List DRM-protected files</button>
+      <span style="color:var(--muted);font-size:12px;margin-left:6px">.m4p files can't be transcoded — they're skipped by Convert.</span>
+      <div id="drmReport" style="margin-top:12px"></div>
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+        <button class="btn-ghost btn-sm" id="orphanBtn" onclick="loadMirrorOrphans()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6"/></svg>Find orphaned mirror files</button>
+        <span style="color:var(--muted);font-size:12px;margin-left:6px">Mirror files whose source is gone.</span>
+        <div id="orphanReport" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <p style="color:var(--muted);font-size:12px;margin-top:14px">Running jobs and history live on the <a href="#" onclick="switchTab('activity'); return false" style="color:var(--accent)">Activity</a> page.</p>
+  </div>
+
   <!-- PLAYLISTS -->
   <div class="panel" id="panel-playlists">
     <!-- Unified creator: AI-first, advanced (smart rules + YTM import) below -->
