@@ -227,10 +227,7 @@
   .lib-section-title { font-size: 15px; font-weight: 700; margin-bottom: 12px; }
   .lib-connected-bar { display: flex; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 20px; }
   .lib-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
-  .lib-playlist { margin-bottom: 10px; }
   .lib-playlist-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; user-select: none; }
-  .lib-playlist-header:hover .album-name { color: var(--accent); }
-  .lib-playlist-tracks { border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; }
   .lib-track-row { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-top: 1px solid var(--border); background: var(--surface2); }
   .lib-track-row:first-child { border-top: none; }
   .lib-track-info { flex: 1; min-width: 0; }
@@ -766,11 +763,18 @@
         <div id="liked-tracks" style="display:none"></div>
       </div>
 
-      <!-- Playlists -->
+      <!-- Your YTM playlists live on the Playlists page. There used to be a
+           browse list + "↓ Download" here, but it dumped the raw playlist URL:
+           no library matching, so it re-downloaded every track you already
+           owned. The Playlists page picks from the same list in a dropdown,
+           queues only what's missing, and builds an M3U. Strictly better, so
+           this is a pointer rather than a second way to do it. -->
       <div class="lib-section">
         <div class="lib-section-title">Playlists</div>
-        <div id="libPlaylistsList">
-          <div class="empty" style="padding:30px 20px"><p style="color:var(--muted)">Loading playlists…</p></div>
+        <div style="color:var(--muted);font-size:13px;line-height:1.6">
+          Import a YouTube Music playlist from the
+          <a href="#" onclick="switchTab('playlists'); return false" style="color:var(--accent)">Playlists</a>
+          page — it only downloads tracks you don't already have, and builds a playlist for Sonos and the iPod at the same time.
         </div>
       </div>
 
@@ -2162,8 +2166,6 @@ function updateActivityBadge() {
 
 // ── Library ───────────────────────────────────────────────────────────────────
 let ytmConnected = false;
-const ytmPlaylistTracks = {};  // playlistId -> tracks[]
-const ytmPlaylistOpen = {};    // playlistId -> bool
 let likedOpen = false;
 let likedTracksCache = null;
 
@@ -2454,56 +2456,16 @@ async function loadAuditPage() {
 }
 
 async function fetchLibraryData() {
-  document.getElementById('libPlaylistsList').innerHTML = '<div style="color:var(--muted);font-size:13px;padding:10px 0">Loading playlists…</div>';
+  // Only the liked-songs count now — YTM playlists are imported from the
+  // Playlists page, which fetches /api/ytm/library for its own dropdown.
   try {
     const res = await fetch('/api/ytm/library');
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     document.getElementById('likedCount').textContent = data.liked_count ? `— ${data.liked_count} songs` : '';
-    renderPlaylists(data.playlists || []);
   } catch (e) {
-    document.getElementById('libPlaylistsList').innerHTML = `<div style="color:var(--danger);font-size:13px">${escHtml(String(e))}</div>`;
+    document.getElementById('likedCount').textContent = '';
   }
-}
-
-function renderPlaylists(playlists) {
-  const el = document.getElementById('libPlaylistsList');
-  if (!playlists.length) {
-    el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:10px 0">No playlists found.</div>';
-    return;
-  }
-  el.innerHTML = playlists.map(p => playlistHTML(p)).join('');
-}
-
-function playlistHTML(p) {
-  const open = ytmPlaylistOpen[p.id] === true;
-  const count = p.count ? `${p.count} track${p.count !== 1 ? 's' : ''}` : '';
-  const tracksHtml = open ? renderPlaylistTracks(p.id) : '';
-  return `
-    <div class="lib-playlist" id="libpl-${escHtml(p.id)}">
-      <div class="lib-playlist-header" onclick="togglePlaylist(${escHtml(JSON.stringify(p.id))})">
-        <span class="album-chevron ${open ? 'open' : ''}" id="libchev-${escHtml(p.id)}">▶</span>
-        <span class="album-name" style="flex:1">${escHtml(p.title)}</span>
-        <span class="album-count">${escHtml(count)}</span>
-        <button class="btn-primary btn-sm" style="margin-left:10px" onclick="event.stopPropagation(); downloadPlaylist(${escHtml(JSON.stringify(p.id))})">↓ Download</button>
-      </div>
-      <div class="lib-playlist-tracks" id="libtr-${escHtml(p.id)}" style="${open ? '' : 'display:none'}">${tracksHtml}</div>
-    </div>`;
-}
-
-function renderPlaylistTracks(playlistId) {
-  const tracks = ytmPlaylistTracks[playlistId];
-  if (!tracks) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">Loading…</div>';
-  if (!tracks.length) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">No tracks.</div>';
-  return tracks.map(t => `
-    <div class="lib-track-row">
-      <div class="lib-track-info">
-        <div class="lib-track-title">${escHtml(t.title)}</div>
-        ${t.artist ? `<div class="lib-track-artist">${escHtml(t.artist)}</div>` : ''}
-      </div>
-      <div class="lib-track-dur">${escHtml(t.duration || '')}</div>
-      <button class="btn-ghost btn-sm" onclick="downloadTrack('${t.videoId}')">↓</button>
-    </div>`).join('');
 }
 
 function renderLikedTracks(tracks) {
@@ -2536,29 +2498,6 @@ async function resetTrackSync(videoId) {
   } catch (e) {}
 }
 
-async function togglePlaylist(playlistId) {
-  ytmPlaylistOpen[playlistId] = !ytmPlaylistOpen[playlistId];
-  const chevEl = document.getElementById(`libchev-${playlistId}`);
-  const tracksEl = document.getElementById(`libtr-${playlistId}`);
-  if (!tracksEl) return;
-
-  const open = ytmPlaylistOpen[playlistId];
-  if (chevEl) chevEl.classList.toggle('open', open);
-  tracksEl.style.display = open ? '' : 'none';
-
-  if (open && !ytmPlaylistTracks[playlistId]) {
-    tracksEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px 14px">Loading…</div>';
-    try {
-      const res = await fetch(`/api/ytm/playlist/${encodeURIComponent(playlistId)}`);
-      const data = await res.json();
-      ytmPlaylistTracks[playlistId] = data.tracks || [];
-    } catch {
-      ytmPlaylistTracks[playlistId] = [];
-    }
-    tracksEl.innerHTML = renderPlaylistTracks(playlistId);
-  }
-}
-
 async function toggleLiked() {
   likedOpen = !likedOpen;
   document.getElementById('liked-chevron').classList.toggle('open', likedOpen);
@@ -2573,19 +2512,8 @@ async function toggleLiked() {
     } catch {
       likedTracksCache = [];
     }
-    ytmPlaylistTracks['__liked__'] = likedTracksCache;
     el.innerHTML = renderLikedTracks(likedTracksCache);
   }
-}
-
-async function downloadPlaylist(playlistId) {
-  const url = `https://music.youtube.com/playlist?list=${encodeURIComponent(playlistId)}`;
-  await fetch('/api/downloads', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({urls: [url]}),
-  });
-  switchTab('activity');
 }
 
 async function downloadTrack(videoId) {
