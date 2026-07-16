@@ -937,7 +937,7 @@
          delete-everything-and-reimport dance was really working around. -->
     <div class="add-box" id="appleMusicCard" style="margin-bottom:18px">
       <div class="card-title">Apple Music</div>
-      <div class="card-sub">Music Monster runs on your server and Apple Music runs on your Mac, so it can't sync for you. Run this on the Mac instead — it adds new mirror files, then re-reads tags for tracks already in your library. <strong style="color:var(--text)">Nothing is deleted</strong>, so play counts, ratings, and playlists survive. Paste it into Script Editor and press Run.</div>
+      <div class="card-sub">Music Monster runs on your server and Apple Music runs on your Mac, so it can't sync for you. Run this on the Mac instead — it adds new mirror files, then re-reads tags for tracks already in your library. <strong style="color:var(--text)">Nothing is deleted</strong>, so play counts, ratings, and playlists survive. Paste it into Script Editor and press Run; it takes a few minutes on a big library and reports what it did. Tracks whose files have gone missing are skipped rather than failing the run.</div>
       <label class="field-label" for="amMacPath">Mirror path, as your Mac sees it</label>
       <input id="amMacPath" type="text" placeholder="/Volumes/Terradrive/iPod" oninput="renderAppleScript()"
         style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
@@ -2720,11 +2720,25 @@ function renderAppleScript() {
     '-- Music Monster → Apple Music. Run this in Script Editor on your Mac.',
     '-- Adds new files, then re-reads tags for tracks already in the library.',
     '-- Nothing is deleted: play counts, ratings and playlists are kept.',
+    '-- Takes a few minutes on a big library (~17ms/track). It is not stuck.',
   ];
+  // Per-track `try`, NOT `refresh (every file track ...)`: refresh throws 9044 on
+  // a track whose file is gone, and one dead entry kills the whole plural call.
+  // Music raises rather than returning missing value, so there's no cheap filter.
   const body = [
     'tell application "Music"',
     `  add POSIX file "${lit}"`,
-    '  refresh (every file track of library playlist 1)',
+    '  set refreshed to 0',
+    '  set skipped to 0',
+    '  repeat with t in (every file track of library playlist 1)',
+    '    try',
+    '      refresh t',
+    '      set refreshed to refreshed + 1',
+    '    on error',
+    '      set skipped to skipped + 1 -- file is missing (error 9044); leave it be',
+    '    end try',
+    '  end repeat',
+    '  return "Refreshed " & refreshed & " · skipped " & skipped & " with missing files"',
     'end tell',
   ];
   _amScriptText = [...comments, ...body].join('\n');   // what Copy puts on the clipboard
