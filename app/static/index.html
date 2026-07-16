@@ -83,7 +83,7 @@
   @keyframes stepflash { 0%, 40% { background: var(--accent-soft); } 100% { background: var(--surface); } }
   .step-num { width: 26px; height: 26px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0; color: var(--muted); }
 
-  /* Dashboard "Optimize your library" rows — click through to that step */
+  /* Dashboard "Get your library ready" rows — click through to that step */
   .dash-step { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-top: 1px solid var(--border); font-size: 13px; cursor: pointer; border-radius: 6px; transition: background .12s; }
   .dash-step:hover { background: var(--surface2); }
   .dash-step:hover .dash-step-label { color: var(--accent); }
@@ -1057,7 +1057,7 @@ function switchTab(name) {
 async function loadActivity() { loadPrepJobs(); renderActivity(); }
 const navigate = switchTab;
 
-// Dashboard "Optimize your library" rows → jump straight to that task's controls.
+// Dashboard "Get your library ready" rows → jump straight to that task's controls.
 // Inspect/fix work (audit + all genre tools) lives on the Audit page; the jobs
 // that change your library/mirror are steps on Optimize.
 const STEP_HOME = { audit: ['audit', null], genres: ['audit', 'genresCard'] };
@@ -1154,11 +1154,17 @@ function renderDashboard(ytm, pipe, dls, pls) {
        <span style="color:var(--muted);font-size:12px">${s.note}</span>
        <span class="dash-step-go">→</span></div>`).join('');
 
+  // The steps span two pages now, so the CTA follows the next undone one through
+  // gotoStep rather than hardcoding a page — Audit/Complete genres live on Audit.
+  const next = steps.find(s => !s.done);
+  const prepCta = next
+    ? `<div style="margin-top:14px"><button class="btn-ghost" onclick="gotoStep('${next.key}')">Continue → ${escHtml(next.label)}</button></div>`
+    : `<div style="margin-top:14px;color:var(--success);font-size:13px">✓ Every step is up to date.</div>`;
+
   const prepBox = total === 0
     ? `<div class="add-box"><p style="color:var(--muted);font-size:13px;margin-bottom:12px">Your library isn't indexed yet. Set your music folder in Setup, then run an audit to unlock cleanup, analysis, conversion, and playlists.</p>
-         <button class="btn-primary" onclick="switchTab('audit')">Open Audit →</button></div>`
-    : `<div class="add-box"><div style="margin-bottom:4px">${stepRows}</div>
-         <div style="margin-top:14px"><button class="btn-primary" onclick="switchTab('convert')">Continue in Optimize →</button></div></div>`;
+         <button class="btn-ghost" onclick="switchTab('audit')">Open Audit →</button></div>`
+    : `<div class="add-box"><div style="margin-bottom:4px">${stepRows}</div>${prepCta}</div>`;
 
   const actions = `<div class="stat-grid">
     <div class="stat-card click" onclick="switchTab('library')"><div style="font-weight:600">${eqMark(14)} Add music</div><div class="stat-label">YouTube Music & URLs</div></div>
@@ -1170,7 +1176,7 @@ function renderDashboard(ytm, pipe, dls, pls) {
 
   document.getElementById('dashBody').innerHTML =
     conn + stats +
-    `<div class="section-title">Optimize your library</div>` + prepBox +
+    `<div class="section-title">Get your library ready</div>` + prepBox +
     genreSection +
     `<div class="section-title">Quick actions</div>` + actions;
 }
