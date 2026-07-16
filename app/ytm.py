@@ -293,12 +293,20 @@ def set_dependencies(enqueue_fn, db_path: str):
 _search_client = None
 _SEARCH_FILTERS = ("songs", "albums", "playlists")
 
-# A playlist's tracks each carry a videoType. ONLY these are music; everything
-# else is video content and must never be enqueued (see the music-only rule).
-#   MUSIC_VIDEO_TYPE_ATV  — audio track (the real song). Keep.
-#   MUSIC_VIDEO_TYPE_OMV  — official music video. Drop.
-#   MUSIC_VIDEO_TYPE_UGC  — user-uploaded video. Drop.
+# A playlist's tracks each carry a videoType:
+#   MUSIC_VIDEO_TYPE_ATV  — Audio Track Video: the audio-only entry (cover art,
+#                           no footage). Keep.
+#   MUSIC_VIDEO_TYPE_OMV  — Official Music Video. Drop.
+#   MUSIC_VIDEO_TYPE_UGC  — user upload. Drop.
 #   None                  — unavailable/unknown. Drop.
+#
+# Dropping OMV is NOT just "video isn't music" — its audio is the song. It's that
+# the OMV is the wrong artifact. Same track, both entries, measured:
+#   OMV djV11Xbc914 : 'a-ha - Take On Me (Official Video) [4K]', 244s, album=None, artist=None
+#   ATV HzdD8kbDzZA : 'Take on Me',                              225s, album='Hunting High and Low', artist='a-ha'
+# A different edit (19s of video intro), a junk title, and NO album/artist tags —
+# which matters most, because main._promote_download files by album-artist, so an
+# OMV lands in Unknown/Unknown/ needing hand-fixing.
 # This matters more than it sounds: even YouTube Music's OWN featured playlists
 # are mostly OMV (e.g. "The Hits: '80s" is 10 ATV to 104 OMV), and the top hit
 # for "80s new wave" is a 275-track playlist that's 192 videos to 6 songs. A
