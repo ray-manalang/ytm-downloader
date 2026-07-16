@@ -504,7 +504,7 @@
     <div class="add-box" style="margin-bottom:18px">
       <label>Music library folder</label>
       <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.6">
-        The library the Prepare steps operate on. Audit and Analyze read only; Clean and Complete-genres
+        The library every step operates on. Audit and Analyze read only; Clean and Complete-genres
         write tags in place (mount read-write) and every change is reversible.
       </p>
       <input id="libDir" type="text" placeholder="/music" oninput="onLibDirChange()"
@@ -530,6 +530,28 @@
       <div class="process-actions">
         <button class="btn-primary" id="procBtn" onclick="startProcess()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><polygon points="13 2 3 14 11 14 11 22 21 10 13 10 13 2"/></svg>Process now</button>
         <span id="procStatus" style="color:var(--muted);font-size:12px"></span>
+      </div>
+    </div>
+
+    <!-- Scheduled audit — the one step worth running on a clock (read-only, and
+         everything else reads the index it builds). Reuses the auto-sync box. -->
+    <div class="setup-subhead">Scheduled audit</div>
+    <div class="lib-sync-box">
+      <div class="lib-sync-row">
+        <input type="checkbox" id="auditSchedEnabled" onchange="saveAuditSchedule()" style="width:16px;height:16px;cursor:pointer;accent-color:var(--accent)">
+        <label for="auditSchedEnabled" style="cursor:pointer">Re-index the library automatically</label>
+      </div>
+      <div class="lib-sync-row" style="color:var(--muted);font-size:13px">
+        <span>Run every</span>
+        <select id="auditSchedInterval" onchange="saveAuditSchedule()">
+          <option value="360">6 hours</option>
+          <option value="1440" selected>24 hours</option>
+          <option value="10080">Week</option>
+        </select>
+        <span id="auditSchedStatus" style="margin-left:4px"></span>
+      </div>
+      <div class="lib-sync-row" style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
+        <span style="color:var(--muted);font-size:12px;flex:1">The audit only reads — it never changes your files. Playlists and the genre tools read the index it builds, so this keeps them current when music changes outside the app.</span>
       </div>
     </div>
 
@@ -2099,9 +2121,55 @@ async function loadSetup() {
   } catch {}
   onLibDirChange();
   loadProcessConfig();
+  loadAuditSchedule();
 }
 
-// Keep the Prepare page's read-only library reference in sync with Setup's input.
+// ── Scheduled audit ──────────────────────────────────────────────────────────
+// A bare duration ("<1m", "5m", "3h", "2d") — the caller supplies "ago" or "in",
+// so it has to read correctly both forwards and backwards.
+function _fmtWhen(ts) {
+  const mins = Math.round(Math.abs(Date.now() / 1000 - ts) / 60);
+  if (mins < 1) return '<1m';
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.round(mins / 60);
+  return hrs < 48 ? `${hrs}h` : `${Math.round(hrs / 24)}d`;
+}
+
+async function loadAuditSchedule() {
+  const status = document.getElementById('auditSchedStatus');
+  try {
+    const cfg = await (await fetch('/api/prep/schedule')).json();
+    document.getElementById('auditSchedEnabled').checked = !!cfg.enabled;
+    const iv = document.getElementById('auditSchedInterval');
+    const opt = iv.querySelector(`option[value="${cfg.interval_minutes}"]`);
+    if (opt) opt.selected = true;
+    if (!status) return;
+    if (!cfg.enabled) status.textContent = '';
+    else if (!cfg.can_run) status.innerHTML = '· <span style="color:var(--warn)">set a music library folder first</span>';
+    else if (!cfg.last_run) status.textContent = '· first run starts shortly';
+    else status.textContent = `· last run ${_fmtWhen(cfg.last_run)} ago · next in ${_fmtWhen(cfg.next_run)}`;
+  } catch {
+    if (status) status.textContent = '';
+  }
+}
+
+async function saveAuditSchedule() {
+  const enabled = document.getElementById('auditSchedEnabled').checked;
+  const interval_minutes = parseInt(document.getElementById('auditSchedInterval').value, 10);
+  try {
+    const res = await fetch('/api/prep/schedule', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled, interval_minutes}),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    await loadAuditSchedule();
+  } catch (e) {
+    const status = document.getElementById('auditSchedStatus');
+    if (status) status.innerHTML = `· <span style="color:var(--danger)">could not save</span>`;
+  }
+}
+
+// Keep the Optimize page's read-only library reference in sync with Setup's input.
 function onLibDirChange() {
   const el = document.getElementById('libDir');
   const val = (el && el.value.trim()) || '—';

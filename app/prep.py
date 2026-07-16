@@ -438,6 +438,7 @@ def start_prep_task():
     _loop = asyncio.get_event_loop()
     for _ in range(MAX_CONCURRENT_CONVERSIONS):
         asyncio.create_task(_prep_worker())
+    asyncio.create_task(_schedule_loop())
 
 
 async def reset_stuck_jobs():
@@ -570,6 +571,74 @@ async def _run_autoprocess():
     await _enqueue_chain(valid, source, IPOD_DIR, cfg.get("downsample"), auto=True)
 
 
+# ── Scheduled audit ──────────────────────────────────────────────────────────
+#
+# The audit is the one step worth running on a clock: it's read-only, and every
+# other feature (playlists, genre tools, the stepper) reads the index it builds,
+# so a library that changed outside the app goes stale until someone re-runs it.
+# Intervals start at 6h — it walks the whole library, so there's no point in the
+# minute-scale options the YTM sync offers.
+
+_AUDIT_INTERVALS = (360, 1440, 10080)      # 6 hours · daily · weekly
+_DEFAULT_SCHEDULE_CFG = {"enabled": False, "interval_minutes": 1440, "last_run": None}
+
+
+def _schedule_config_path() -> str:
+    return os.path.join(os.path.dirname(_db_path) or ".", "prep_schedule.json")
+
+
+def _load_schedule_config() -> dict:
+    cfg = dict(_DEFAULT_SCHEDULE_CFG)
+    try:
+        with open(_schedule_config_path()) as f:
+            saved = json.load(f)
+        if isinstance(saved, dict):
+            if "enabled" in saved:
+                cfg["enabled"] = bool(saved["enabled"])
+            if saved.get("interval_minutes") in _AUDIT_INTERVALS:
+                cfg["interval_minutes"] = saved["interval_minutes"]
+            if isinstance(saved.get("last_run"), (int, float)):
+                cfg["last_run"] = saved["last_run"]
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    return cfg
+
+
+def _save_schedule_config(cfg: dict):
+    try:
+        with open(_schedule_config_path(), "w") as f:
+            json.dump(cfg, f)
+    except OSError as exc:
+        logger.warning("audit schedule: save failed: %s", exc)
+
+
+async def _schedule_loop():
+    """Tick once a minute; enqueue an audit when the interval has elapsed."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            cfg = _load_schedule_config()
+            if not cfg.get("enabled"):
+                continue
+            source = MUSIC_DIR
+            if not source or not Path(source).is_dir():
+                continue
+            last = cfg.get("last_run")
+            if last is not None and (time.time() - last) < cfg["interval_minutes"] * 60:
+                continue
+            # Don't stack onto in-flight prep work — retry on the next tick.
+            if await _prep_busy():
+                continue
+            logger.info("scheduled audit: starting on %s", source)
+            await _create_and_enqueue("audit", source, "", {"auto": True})
+            # Stamp on enqueue, not completion: otherwise a long audit stays "due"
+            # and every tick during it would try to queue another.
+            cfg["last_run"] = time.time()
+            _save_schedule_config(cfg)
+        except Exception as exc:   # a bad tick must never kill the loop
+            logger.warning("scheduled audit: tick failed: %s", exc)
+
+
 # ── REST API ────────────────────────────────────────────────────────────────
 
 @router.get("/config")
@@ -605,6 +674,37 @@ async def put_process_config(body: dict):
         cfg["downsample"] = bool(body["downsample"])
     _save_process_config(cfg)
     return cfg
+
+
+@router.get("/schedule")
+async def get_audit_schedule():
+    """Scheduled-audit config + when it last ran / is next due."""
+    cfg = _load_schedule_config()
+    last = cfg.get("last_run")
+    return {
+        **cfg,
+        "intervals": list(_AUDIT_INTERVALS),
+        "next_run": (last + cfg["interval_minutes"] * 60) if last else None,
+        "can_run": bool(MUSIC_DIR and Path(MUSIC_DIR).is_dir()),
+    }
+
+
+@router.put("/schedule")
+async def put_audit_schedule(body: dict):
+    cfg = _load_schedule_config()
+    if "enabled" in body:
+        cfg["enabled"] = bool(body["enabled"])
+    if "interval_minutes" in body:
+        try:
+            iv = int(body["interval_minutes"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "interval_minutes must be an integer")
+        if iv not in _AUDIT_INTERVALS:
+            raise HTTPException(
+                400, f"interval_minutes must be one of {', '.join(map(str, _AUDIT_INTERVALS))}")
+        cfg["interval_minutes"] = iv
+    _save_schedule_config(cfg)
+    return await get_audit_schedule()
 
 
 @router.post("/process")
