@@ -277,6 +277,119 @@ def set_dependencies(enqueue_fn, db_path: str):
     _db_path = db_path
 
 
+# ── Catalog search ───────────────────────────────────────────────────────────
+#
+# Deliberately its own UNAUTHENTICATED client, not `_ytm_client`. Catalog search
+# needs no credentials, and the authed path can't serve it anyway: a TV device
+# OAuth token is rejected (HTTP 400) under ytmusicapi's WEB_REMIX context, which
+# is the whole reason the library reads use hand-rolled TVHTML5 / Data-API calls.
+# No auth means no client-context conflict — and search keeps working even when
+# YouTube Music isn't connected.
+#
+# MUSIC-ONLY: `filter` is restricted to songs/albums here. "videos" is never
+# passed, so video content is excluded at the query rather than scrubbed out of
+# the results afterwards. The resultType check below is a second belt.
+
+_search_client = None
+_SEARCH_FILTERS = ("songs", "albums")
+
+
+def _get_search_client():
+    global _search_client
+    if _search_client is None:
+        from ytmusicapi import YTMusic
+        _search_client = YTMusic()   # no auth on purpose — see above
+    return _search_client
+
+
+def _thumb(r: dict) -> str:
+    thumbs = r.get("thumbnails") or []
+    return (thumbs[-1] or {}).get("url", "") if thumbs else ""
+
+
+def _artists(r: dict) -> str:
+    return ", ".join(a.get("name", "") for a in (r.get("artists") or []) if a.get("name"))
+
+
+@router.get("/search")
+async def ytm_search(q: str = "", type: str = "songs", limit: int = 20):
+    """Search the public YouTube Music catalog. Songs and albums only."""
+    q = (q or "").strip()
+    if type not in _SEARCH_FILTERS:
+        raise HTTPException(400, f"type must be one of {', '.join(_SEARCH_FILTERS)}")
+    if len(q) < 2:
+        return {"results": [], "type": type}
+
+    def _run():
+        return _get_search_client().search(q, filter=type, limit=limit)
+
+    try:
+        raw = await asyncio.get_running_loop().run_in_executor(None, _run)
+    except Exception as exc:
+        logger.warning("ytm search failed for %r: %s", q, exc)
+        raise HTTPException(502, f"YouTube Music search failed: {exc}")
+
+    want = "song" if type == "songs" else "album"
+    out = []
+    for r in raw:
+        if r.get("resultType") != want:
+            continue                      # belt for the filter= above
+        if want == "song":
+            vid = r.get("videoId")
+            if not vid:
+                continue                  # unplayable result — nothing to download
+            out.append({
+                "kind": "song", "id": vid, "title": r.get("title") or "",
+                "artist": _artists(r), "album": (r.get("album") or {}).get("name") or "",
+                "duration": r.get("duration") or "", "thumbnail": _thumb(r),
+            })
+        else:
+            bid = r.get("browseId")
+            if not bid:
+                continue
+            out.append({
+                "kind": "album", "id": bid, "title": r.get("title") or "",
+                "artist": _artists(r), "year": r.get("year") or "",
+                "thumbnail": _thumb(r),
+            })
+    return {"results": out, "type": type}
+
+
+@router.post("/search/download")
+async def ytm_search_download(body: dict):
+    """Enqueue a search result. Resolves to a URL and hands it to the SAME
+    download queue as everything else — no parallel yt-dlp path."""
+    kind = (body.get("kind") or "").strip()
+    ident = (body.get("id") or "").strip()
+    if not ident:
+        raise HTTPException(400, "id is required")
+    if not _enqueue_fn:
+        raise HTTPException(503, "Download queue is not available")
+
+    if kind == "song":
+        url = f"https://music.youtube.com/watch?v={ident}"
+    elif kind == "album":
+        # Album search gives a browseId; the downloadable thing is its playlist.
+        # Resolved on download, not per search result — that'd be N API calls
+        # to render one page of results.
+        def _resolve():
+            return _get_search_client().get_album(ident)
+        try:
+            album = await asyncio.get_running_loop().run_in_executor(None, _resolve)
+        except Exception as exc:
+            logger.warning("ytm album resolve failed for %s: %s", ident, exc)
+            raise HTTPException(502, f"Could not resolve album: {exc}")
+        pid = album.get("audioPlaylistId")
+        if not pid:
+            raise HTTPException(404, "That album has no playlist to download")
+        url = f"https://music.youtube.com/playlist?list={pid}"
+    else:
+        raise HTTPException(400, "kind must be 'song' or 'album'")
+
+    entry = await _enqueue_fn(url)
+    return {"ok": True, "url": url, "download": entry}
+
+
 def is_connected() -> bool:
     return _ytm_client is not None
 

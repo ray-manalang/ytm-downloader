@@ -131,11 +131,15 @@ Single-process FastAPI app. No test suite.
 
 | Method | Path | Purpose |
 |---|---|---|
+| GET | `/api/ytm/search` | **Catalog search** (`?q=`, `?type=songs\|albums`, `?limit=`) → normalized results. **Unauthenticated on purpose** — see below |
+| POST | `/api/ytm/search/download` | Enqueue a result (`{kind:"song"\|"album", id}`) → resolves a URL and hands it to the **same** download queue via `_enqueue_fn`. Songs → `watch?v=<videoId>`; albums → `get_album(browseId).audioPlaylistId` → `playlist?list=<id>` (resolved **on download**, not per search result — that would be N API calls to render one page) |
 | GET | `/api/ytm/library` | Playlists list + liked song count |
 | GET | `/api/ytm/playlist/{id}` | All tracks in a playlist |
 | GET | `/api/ytm/liked` | All liked songs (up to 2500) |
 
 Auto-generated YTM playlists ("Liked Music", "Episodes for Later", "New Episodes") are filtered out of the `/api/ytm/library` response.
+
+**Catalog search uses its own UNAUTHENTICATED client (`_get_search_client`) — not `_ytm_client`.** This is deliberate and load-bearing: catalog search needs no credentials, and the authed path *can't* serve it anyway, because a TV device OAuth token is rejected (HTTP 400) under ytmusicapi's `WEB_REMIX` context — the same constraint that forces the hand-rolled TVHTML5/Data-API calls for library reads. No auth ⇒ no client-context conflict, and **search keeps working while YouTube Music is disconnected**. The **music-only rule holds at the query**: `_SEARCH_FILTERS` is `("songs", "albums")` and `videos` is never a passable `type` (400), so video content is excluded *before* the request rather than scrubbed from results; the `resultType` check is a second belt. This exists so adding music never requires opening YouTube Music to copy a URL, like a track, or build a throwaway playlist.
 
 ### iPod-Prep (`prep.py`)
 
@@ -365,7 +369,7 @@ Single-file, no build step. **Left-sidebar app shell** (`.app` grid: `.sidebar` 
 
 **Activity page (`panel-activity`) — a process monitor:** consolidates *all* jobs/processes (the old Queue + History pages and the Optimize page's Jobs list are gone) into one **table** — columns Name · Kind (Download/Library) · Status · Progress · Updated · actions. `renderActivity()` reads the `downloads` + `prepJobs` state, filters/sorts (active rows first) via `_activityItems()`, and builds `<tr>`s (`_procDlRow`/`_procJobRow`) into `#procBody`. `renderAll()` and `renderPrepJobs()` both delegate to it, so every WS/init call site keeps working; in-place progress updates (`updateCardInPlace`/`updatePrepCardInPlace` → `_updateProcRow`) patch the row's `#pf-<id>`/`#pp-<id>`/`#pcf-<id>` without a full re-render (skip if the row's filtered out). A sticky toolbar has a **view segment** (`actView`: all/downloads/jobs — persisted) + **status segment** (`actStatus`: any/active/done/error), a **Refresh** button (`refreshActivity` re-fetches both endpoints), the `runningCount`, and **Remove all** (`removeAllActivity` deletes exactly the finished items matching the filter — never running ones). Active rows are Cancel-able; finished rows are Remove-able; tags/unify jobs also get Rollback. The nav `activityBadge` shows the active total. **Status pills (`.status-chip`) use a semantic per-state hue** (minset-style: vivid text on a same-hue 15%-alpha tint) — pending=amber (`--warn`), downloading/running=blue (`--info`), done=green (`--success`), error=red (`--danger`), cancelled/rolled_back=gray (`--muted`) — so states read distinctly instead of all landing on brand red. `--success` + the `*-soft` tint tokens live in `:root`.
 
-**Add music page (`panel-library`):** one page for both sources — a URL-paste box (`#urlInput` → `submitDownloads`) on top, then the **YouTube Music** section (Liked Songs + Playlists browsing when connected via `#libConnected`, else a compact "Connect in Setup →" banner). All *setup*-related bits live on the Setup page instead.
+**Add music page (`panel-library`):** **Search YouTube Music** (`#ytSearchQ` + a Songs/Albums `.act-seg` → `runYtSearch`/`setYtSearchType`, results via `_ytRenderResults`, `ytDownload(i)` → `POST /api/ytm/search/download`) is the primary way in; the URL-paste box (`#urlInput` → `submitDownloads`) sits **below** it as the fallback for a link you already have. Then the **YouTube Music** section (Liked Songs + Playlists browsing when connected via `#libConnected`, else a compact "Connect in Setup →" banner). Search is **explicit** (button/Enter), not search-as-you-type — every query is a real request to YouTube and per-keystroke firing invites rate-limiting — and `_ytSearchSeq` guards against a slow query overwriting a newer one's results. All *setup*-related bits live on the Setup page instead.
 
 **Setup page (`panel-setup`) — config only, three `.section-title` domains:**
 

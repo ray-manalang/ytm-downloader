@@ -380,6 +380,16 @@
 
   /* Activity — process-monitor table */
   .act-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; position: sticky; top: 56px; background: var(--bg); padding: 10px 0; z-index: 4; }
+  /* YouTube Music search (Add music) */
+  .yt-search-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .yt-res { display: flex; align-items: center; gap: 12px; padding: 9px 4px; border-top: 1px solid var(--border); }
+  .yt-res:first-child { border-top: none; }
+  /* Same disc placeholder the Files browser uses, so a result with no artwork
+     reads as "no cover" rather than as a dead box. */
+  .yt-res-art { width: 40px; height: 40px; flex-shrink: 0; border-radius: 4px; object-fit: cover; background: var(--surface2) url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='20'%20height='20'%20viewBox='0%200%2020%2020'%20fill='none'%20stroke='%23777'%20stroke-width='1.5'%3E%3Ccircle%20cx='10'%20cy='10'%20r='7'/%3E%3Ccircle%20cx='10'%20cy='10'%20r='1.7'/%3E%3C/svg%3E") center/20px no-repeat; }
+  .yt-res-main { flex: 1; min-width: 0; }
+  .yt-res-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .yt-res-sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .act-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
   .act-seg button { background: transparent; color: var(--muted); border: none; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 0; }
   .act-seg button.on { background: var(--accent-soft); color: var(--accent); }
@@ -700,9 +710,30 @@
 
   <!-- ADD MUSIC (unified: URLs + YouTube Music browsing) -->
   <div class="panel" id="panel-library">
-    <!-- Add by URL -->
+    <!-- Search — the primary way to add music. Unauthenticated catalog search
+         (see ytm._get_search_client), so it works even when YTM is disconnected.
+         Music-only holds at the query: `videos` is never a requestable type. -->
+    <div class="add-box" style="margin-bottom:18px">
+      <div class="card-title">Search YouTube Music</div>
+      <div class="card-sub">Find songs and albums and download them straight into your library — no need to open YouTube Music to copy a URL, like a track, or build a playlist first. Music only: video results are never requested.</div>
+      <div class="yt-search-row">
+        <input id="ytSearchQ" placeholder="Artist, song, or album…" autocomplete="off"
+          onkeydown="if (event.key === 'Enter') runYtSearch()"
+          style="flex:1;min-width:200px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none">
+        <span class="act-seg" id="ytSearchTypeSeg">
+          <button class="on" data-t="songs" onclick="setYtSearchType('songs')">Songs</button>
+          <button data-t="albums" onclick="setYtSearchType('albums')">Albums</button>
+        </span>
+        <button class="btn-primary" id="ytSearchBtn" onclick="runYtSearch()">Search</button>
+      </div>
+      <div id="ytSearchResults"></div>
+    </div>
+
+    <!-- Add by URL — still here for links and odd playlists, but no longer the
+         only way in, so it sits under search. -->
     <div class="add-box" style="margin-bottom:24px">
-      <label>Add by URL — one per line, playlists supported</label>
+      <div class="card-title">Add by URL</div>
+      <div class="card-sub">For a link you already have — one per line, playlists supported.</div>
       <textarea id="urlInput" placeholder="https://music.youtube.com/playlist?list=...&#10;https://music.youtube.com/playlist?list=..."></textarea>
       <div class="add-actions">
         <button class="btn-primary" id="downloadBtn" onclick="submitDownloads()">Download</button>
@@ -2171,6 +2202,88 @@ async function refreshYtm() {
   const data = await fetch('/api/ytm/status').then(r => r.json()).catch(() => ({}));
   applyYtmConnection(!!data.connected, data.auth_type);
   if (data.connected) await Promise.all([fetchLibraryData(), loadSyncConfig()]);
+}
+
+// ── YouTube Music catalog search ─────────────────────────────────────────────
+// Explicit search (button / Enter) rather than search-as-you-type: each query is
+// a real request to YouTube, and hammering it per keystroke is a good way to get
+// rate-limited. Seq-guarded anyway, since a slow query must not overwrite a
+// newer one's results.
+let ytSearchType = 'songs';
+let _ytSearchSeq = 0;
+
+function setYtSearchType(t) {
+  ytSearchType = t;
+  document.querySelectorAll('#ytSearchTypeSeg button').forEach(b =>
+    b.classList.toggle('on', b.dataset.t === t));
+  if ((document.getElementById('ytSearchQ').value || '').trim().length >= 2) runYtSearch();
+}
+
+async function runYtSearch() {
+  const q = (document.getElementById('ytSearchQ').value || '').trim();
+  const box = document.getElementById('ytSearchResults');
+  if (q.length < 2) { box.innerHTML = ''; return; }
+  const seq = ++_ytSearchSeq;
+  box.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px 4px">Searching…</div>';
+  try {
+    const res = await fetch(`/api/ytm/search?type=${ytSearchType}&q=${encodeURIComponent(q)}`);
+    const d = await res.json();
+    if (seq !== _ytSearchSeq) return;             // a newer search already answered
+    if (!res.ok) throw new Error(d.detail || 'Search failed');
+    _ytRenderResults(d.results || []);
+  } catch (e) {
+    if (seq === _ytSearchSeq)
+      box.innerHTML = `<div style="color:var(--danger);font-size:13px;padding:12px 4px">${escHtml(e.message || 'Search failed')}</div>`;
+  }
+}
+
+function _ytRenderResults(rows) {
+  const box = document.getElementById('ytSearchResults');
+  if (!rows.length) {
+    box.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px 4px">No matches.</div>';
+    return;
+  }
+  box.innerHTML = '<div style="margin-top:10px">' + rows.map((r, i) => {
+    const sub = r.kind === 'song'
+      ? [r.artist, r.album, r.duration].filter(Boolean).join(' · ')
+      : [r.artist, r.year].filter(Boolean).join(' · ');
+    const art = r.thumbnail
+      ? `<img class="yt-res-art" src="${escHtml(r.thumbnail)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+      : '<span class="yt-res-art"></span>';
+    return `<div class="yt-res" id="ytres-${i}">
+      ${art}
+      <div class="yt-res-main">
+        <div class="yt-res-title">${escHtml(r.title)}</div>
+        <div class="yt-res-sub">${escHtml(sub)}</div>
+      </div>
+      <button class="btn-primary btn-sm" id="ytdl-${i}" onclick="ytDownload(${i})">Download</button>
+    </div>`;
+  }).join('') + '</div>';
+  _ytResults = rows;
+}
+let _ytResults = [];
+
+async function ytDownload(i) {
+  const r = _ytResults[i];
+  if (!r) return;
+  const btn = document.getElementById('ytdl-' + i);
+  const label = btn.innerHTML;
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const res = await fetch('/api/ytm/search/download', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ kind: r.kind, id: r.id }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || 'Could not add');
+    // The download lands in the normal queue; Activity shows it via WS.
+    btn.textContent = r.kind === 'album' ? 'Album queued' : 'Queued';
+    btn.classList.remove('btn-primary'); btn.classList.add('btn-ghost');
+  } catch (e) {
+    btn.disabled = false; btn.innerHTML = label;
+    const sub = document.querySelector(`#ytres-${i} .yt-res-sub`);
+    if (sub) sub.innerHTML = `<span style="color:var(--danger)">${escHtml(e.message)}</span>`;
+  }
 }
 
 async function loadLibrary() { await refreshYtm(); }
