@@ -54,7 +54,7 @@ The **Dashboard** always shows which steps are done and what's next. After any s
 
 ## 5. Playlists
 
-- **Smart** — rules over genre / decade / year / artist / **BPM** / **energy** → Preview → Save. Write to **Library** (Sonos/Music Assistant) and/or **iPod**.
+- **Smart** — rules over genre / decade / year / artist / **BPM** / **energy** → Preview → Save. Write to **Library** (source files) and/or **iPod** (mirror files).
 - **Import from YouTube Music** — builds an `.m3u` from tracks you already have and **queues the rest** to download.
 - **AI** — describe a vibe (needs `ANTHROPIC_API_KEY`).
 - **Regenerate** after adding/converting music. Auto-refresh playlists also refresh nightly.

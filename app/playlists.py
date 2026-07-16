@@ -1,7 +1,7 @@
 """Playlist engines + REST router.
 
 P1: smart (rule-based) playlists over the ``library_tracks`` index, rendered to
-M3U for the library target (Sonos / Music Assistant). AI (P3) and YTM import (P2)
+M3U for the library target. AI (P3) and YTM import (P2)
 land later and reuse this module.
 
 Mirrors ``ytm.py``/``prep.py``: an ``APIRouter`` included by ``main.py`` and a

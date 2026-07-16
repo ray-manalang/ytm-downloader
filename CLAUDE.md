@@ -61,7 +61,7 @@ Single-process FastAPI app. No test suite.
 | `MAX_CONCURRENT_TRANSCODES` | *(CPU count)* | Parallel ffmpeg transcodes **within** one convert job (CPU-bound phase) |
 | `CONVERT_STAT_WORKERS` | *(min(32, 4×transcodes))* | Parallel workers for the resumable skip-decision stats within a convert job (network-latency-bound phase) |
 | `AAC_BITRATE` | `256k` | Conversion bitrate |
-| `PLAYLIST_DIR_LIBRARY` | `<MUSIC_DIR>/Playlists` | Smart-playlist `.m3u` output for Sonos / Music Assistant |
+| `PLAYLIST_DIR_LIBRARY` | `<MUSIC_DIR>/Playlists` | Smart-playlist `.m3u` output pointing at the **source** library files |
 | `PLAYLIST_DIR_IPOD` | `<IPOD_DIR>/Playlists` | iPod-target `.m3u` output (mirror paths) |
 | `ANTHROPIC_API_KEY` | *(empty)* | Enables the AI playlist engine. **Runtime env only — never commit.** AI degrades to smart-only if unset |
 | `ANTHROPIC_MODEL` | `claude-haiku-4-5` | Model for AI curation (cheap by design; overridable) |
@@ -211,7 +211,7 @@ WebSocket message types: `prep_added`, `prep_progress` (`done`/`total`/`current_
 | POST | `/api/playlists/regenerate-all` | Rewrite every `auto_refresh` playlist against the current index |
 | DELETE | `/api/playlists/{id}` | Delete the row and its `.m3u` file(s) |
 
-Smart playlists are **synchronous** (no queue/WS) — the rule engine filters the in-memory `library_tracks` rows. A smart `spec` is `{match: all|any, rules: [{field, op, value}], sort?, limit?}`; fields are `genre`/`artist`/`albumartist`/`album`/`year`/`decade` (`bpm`/`energy` exist for P4). **Sort** options: `diverse` (default for new playlists — round-robin interleave by artist via `_diversify_by_artist` so a prolific artist doesn't stack up, album order within each artist) · `""` album order · `artist` · `album` · `year` · `random`. Sort is applied in `_match_tracks`, so preview, save, and regenerate all reflect it. M3U uses `#EXTINF` + paths **relative to the playlist folder** so Music Assistant resolves them.
+Smart playlists are **synchronous** (no queue/WS) — the rule engine filters the in-memory `library_tracks` rows. A smart `spec` is `{match: all|any, rules: [{field, op, value}], sort?, limit?}`; fields are `genre`/`artist`/`albumartist`/`album`/`year`/`decade` (`bpm`/`energy` exist for P4). **Sort** options: `diverse` (default for new playlists — round-robin interleave by artist via `_diversify_by_artist` so a prolific artist doesn't stack up, album order within each artist) · `""` album order · `artist` · `album` · `year` · `random`. Sort is applied in `_match_tracks`, so preview, save, and regenerate all reflect it. M3U uses `#EXTINF` + paths **relative to the playlist folder**, so a player resolves them wherever the folder is mounted.
 
 **Targets (P2):** a playlist's `targets` is a subset of `["library", "ipod"]`. The **library** target writes source paths to `PLAYLIST_DIR_LIBRARY`; the **ipod** target maps each track to its mirror file via `converter.mirror_path()` (`.flac`→`.m4a`) using the `IPOD_DIR`/`MUSIC_DIR` **env vars** and writes to `PLAYLIST_DIR_IPOD` (`<IPOD_DIR>/Playlists`), **including only mirror files that already exist** (run Convert first — and `IPOD_DIR` must match where the mirror actually is). Renaming or dropping a target removes the stale `.m3u`. `_write_target` returns `{target, path, count, error?}` per target and **catches its own OSError** (e.g. a read-only iPod mount) so one target's failure never blocks the other or errors the save; the create UI surfaces each target's path + count and warns when the iPod playlist matched 0 mirror files.
 
