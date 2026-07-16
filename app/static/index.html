@@ -125,7 +125,10 @@
   .status-done     { background: var(--success-soft); color: var(--success); }
   .status-error    { background: var(--danger-soft); color: var(--danger); }
   .status-cancelled { background: rgba(136,136,136,.15); color: var(--muted); }
-  .speed-info { color: var(--muted); font-size: 12px; display: flex; gap: 12px; }
+  /* Summary chips (job counts / download speed). Wrap as whole chips rather than
+     letting each one squash and break its own text on a narrow Progress column. */
+  .speed-info { color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; gap: 2px 12px; }
+  .speed-info > span { white-space: nowrap; }
 
   /* Progress bar */
   .progress-wrap { margin-top: 10px; }
@@ -661,7 +664,7 @@
     <div class="proc-wrap">
       <table class="proc-table">
         <thead><tr>
-          <th style="width:26%">Name</th><th style="width:9%">Kind</th><th style="width:11%">Status</th><th style="width:25%">Progress</th><th style="width:12%">Updated</th><th style="width:17%"></th>
+          <th style="width:28%">Name</th><th style="width:9%">Kind</th><th style="width:11%">Status</th><th style="width:26%">Progress</th><th style="width:11%">Updated</th><th style="width:15%"></th>
         </tr></thead>
         <tbody id="procBody"></tbody>
       </table>
@@ -889,7 +892,7 @@
         <!-- Smart (rule-based) playlist -->
         <div class="pl-adv-section">
           <div class="pl-adv-title">Smart playlist</div>
-          <p class="pl-adv-desc">Build a rule over your library and Music Monster keeps a matching <code>.m3u</code> in sync for Sonos / Music Assistant.</p>
+          <p class="pl-adv-desc">Build a rule over your library and Music Monster keeps a matching <code>.m3u</code> in sync.</p>
           <input id="plName" type="text" placeholder="Playlist name — e.g. 80s Alternative"
             style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;margin-bottom:12px">
           <div style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;margin-bottom:10px">
@@ -916,7 +919,7 @@
           <div style="display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;margin-top:12px">
             Write to:
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-              <input type="checkbox" id="plTargetLibrary" checked style="accent-color:var(--accent)"> Library (Sonos/MA)</label>
+              <input type="checkbox" id="plTargetLibrary" checked style="accent-color:var(--accent)"> Library</label>
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
               <input type="checkbox" id="plTargetIpod" style="accent-color:var(--accent)"> iPod mirror</label>
           </div>
@@ -1002,6 +1005,10 @@ const tracksDone = {};   // id -> [track name, ...]
 let filesData = [];
 const albumOpen = {};    // album name -> bool
 let albumsList = [];     // ordered album names (for index→name lookup)
+
+// Trash icon for the Activity rows' Remove action (text label → icon keeps the
+// actions column narrow; the title/aria-label carry the meaning).
+const ICON_TRASH = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6"/></svg>`;
 
 // Equalizer brand mark (echoes logo.svg) — side bars inherit currentColor,
 // center bar is always the accent. Used wherever a music note used to sit.
@@ -1443,7 +1450,7 @@ function _procDlRow(d, active) {
   }
   const action = active
     ? `<button class="btn-danger btn-sm" onclick="cancelDownload('${d.id}','${d.status}')">Cancel</button>`
-    : `<button class="btn-danger btn-sm" onclick="removeDownload('${d.id}')">${d.status === 'cancelled' ? 'Dismiss' : 'Remove'}</button>`;
+    : `<button class="btn-danger btn-sm" title="${d.status === 'cancelled' ? 'Dismiss' : 'Remove'}" aria-label="${d.status === 'cancelled' ? 'Dismiss' : 'Remove'}" onclick="removeDownload('${d.id}')">${ICON_TRASH}</button>`;
   return `<tr id="proc-${d.id}" class="${active ? 'proc-active' : ''}">
     <td><div class="proc-name-main" title="${name}">${name}</div>${cf}</td>
     <td><span class="proc-kind kind-dl">Download</span></td>
@@ -1479,7 +1486,7 @@ function _procJobRow(j, active) {
     ? `<button class="btn-ghost btn-sm" onclick="rollbackClean('${j.id}')" title="Undo all tag changes">↺</button>` : '';
   const action = active
     ? `<button class="btn-danger btn-sm" onclick="removePrepJob('${j.id}','${j.status}')">Cancel</button>`
-    : `${rollback}<button class="btn-danger btn-sm" onclick="removePrepJob('${j.id}','${j.status}')">Remove</button>`;
+    : `${rollback}<button class="btn-danger btn-sm" title="Remove" aria-label="Remove" onclick="removePrepJob('${j.id}','${j.status}')">${ICON_TRASH}</button>`;
   return `<tr id="proc-${j.id}" class="${active ? 'proc-active' : ''}">
     <td><div class="proc-name-main">${name}</div>${cf}</td>
     <td><span class="proc-kind kind-lib">Library</span></td>
@@ -2413,7 +2420,7 @@ function renderAuditResults(s) {
   const fmts = Object.entries(s.formats || {})
     .map(([ext, f]) => `${escHtml(ext)} ${f.count} · ${fmtSize(f.bytes)}`).join('  ·  ');
   const unmapped = (s.unmapped_genres || []).length
-    ? `<div style="margin-top:12px"><div style="color:var(--warn);font-size:12px;font-weight:600;margin-bottom:4px">Unmapped genres (extend genres.json)</div>${
+    ? `<div style="margin-top:12px"><div style="color:var(--warn);font-size:12px;font-weight:600;margin-bottom:4px">Unmapped genres — assign them with <span class="aa-link" onclick="document.getElementById('unmappedBtn')?.scrollIntoView({block:'center'})">Map unmapped genres</span> below</div>${
         s.unmapped_genres.map(u => `<span style="display:inline-block;background:rgba(242,201,76,.12);border:1px solid rgba(242,201,76,.3);color:var(--warn);border-radius:4px;padding:2px 8px;margin:2px;font-size:12px">${escHtml(u.value)} <span style="opacity:.7">${u.count}</span></span>`).join('')
       }</div>` : '';
   el.innerHTML = `
@@ -2537,7 +2544,7 @@ async function loadDrmReport() {
     const res = await fetch('/api/prep/drm');
     const d = await res.json().catch(() => ({}));
     if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Scan failed.')}</span>`; return; }
-    if (!d.total) { el.innerHTML = '<span style="color:var(--accent);font-size:13px">✓ No DRM-protected (.m4p) files found.</span>'; return; }
+    if (!d.total) { el.innerHTML = '<span style="color:var(--success);font-size:13px">✓ No DRM-protected (.m4p) files found.</span>'; return; }
     const n = (d.artists || []).length;
     el.innerHTML = artistAlbumTreeHTML(d, `<strong style="color:var(--warn)">${d.total}</strong> DRM-protected file${d.total !== 1 ? 's' : ''} across ${n} artist${n !== 1 ? 's' : ''}`);
   } finally { btn.disabled = false; }
@@ -2555,7 +2562,7 @@ async function loadMirrorOrphans() {
     const res = await fetch('/api/prep/mirror/orphans?' + q);
     const d = await res.json().catch(() => ({}));
     if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Scan failed.')}</span>`; return; }
-    if (!d.total) { el.innerHTML = '<span style="color:var(--accent);font-size:13px">✓ Mirror is in sync — no orphaned files.</span>'; return; }
+    if (!d.total) { el.innerHTML = '<span style="color:var(--success);font-size:13px">✓ Mirror is in sync — no orphaned files.</span>'; return; }
     const n = (d.artists || []).length;
     const heading = `<strong style="color:var(--warn)">${d.total}</strong> orphaned mirror file${d.total !== 1 ? 's' : ''} · ${fmtSize(d.bytes || 0)} across ${n} artist${n !== 1 ? 's' : ''}`;
     el.innerHTML = artistAlbumTreeHTML(d, heading) +
@@ -2576,7 +2583,7 @@ async function pruneMirror(count, sizeStr) {
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Prune failed.')}</span>`; return; }
-    el.innerHTML = `<span style="color:var(--accent);font-size:13px">✓ Removed ${d.removed} file${d.removed !== 1 ? 's' : ''} · ${fmtSize(d.bytes || 0)}${d.errors ? ` · ${d.errors} errors` : ''}</span>`;
+    el.innerHTML = `<span style="color:var(--success);font-size:13px">✓ Removed ${d.removed} file${d.removed !== 1 ? 's' : ''} · ${fmtSize(d.bytes || 0)}${d.errors ? ` · ${d.errors} errors` : ''}</span>`;
   } catch { el.innerHTML = '<span style="color:var(--danger);font-size:13px">Prune failed.</span>'; }
 }
 
@@ -2587,7 +2594,7 @@ async function loadMissingAlbumArtist() {
     const res = await fetch('/api/prep/missing-albumartist');
     const d = await res.json().catch(() => ({}));
     if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Failed.')}</span>`; return; }
-    if (!d.total) { el.innerHTML = '<span style="color:var(--accent);font-size:13px">✓ No files are missing an album artist.</span>'; return; }
+    if (!d.total) { el.innerHTML = '<span style="color:var(--success);font-size:13px">✓ No files are missing an album artist.</span>'; return; }
     const n = (d.artists || []).length;
     el.innerHTML = artistAlbumTreeHTML(d,
       `<strong style="color:var(--warn)">${d.total}</strong> file${d.total !== 1 ? 's' : ''} missing an album artist across ${n} artist${n !== 1 ? 's' : ''} — <strong>Clean tags</strong> fills these from the track artist`);
@@ -2657,7 +2664,7 @@ async function applySuspectAlbumArtist() {
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { if (note) note.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'Apply failed.')}</span>`; return; }
       document.getElementById('suspectAAReport').innerHTML =
-        `<span style="color:var(--accent);font-size:13px">✓ Relabeling ${albums.length} album${albums.length !== 1 ? 's' : ''} — track it on the Activity page. Re-scan here once it finishes.</span>`;
+        `<span style="color:var(--success);font-size:13px">✓ Relabeling ${albums.length} album${albums.length !== 1 ? 's' : ''} — track it on the Activity page. Re-scan here once it finishes.</span>`;
       switchTab('activity');
     } catch { if (note) note.innerHTML = '<span style="color:var(--danger)">Apply failed.</span>'; }
   });
@@ -2672,7 +2679,7 @@ async function loadSuspectAlbumArtist() {
       const res = await fetch('/api/prep/suspect-albumartist');
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Scan failed — run an Audit first.')}</span>`; return; }
-      if (!d.total) { el.innerHTML = '<span style="color:var(--accent);font-size:13px">✓ No mislabeled album artists found — every album artist matches a track artist.</span>'; return; }
+      if (!d.total) { el.innerHTML = '<span style="color:var(--success);font-size:13px">✓ No mislabeled album artists found — every album artist matches a track artist.</span>'; return; }
       el.innerHTML = suspectAAHTML(d);
     } catch { el.innerHTML = '<span style="color:var(--danger);font-size:13px">Scan failed.</span>'; }
   });
@@ -2729,7 +2736,7 @@ async function loadUnmappedGenres() {
       const res = await fetch('/api/prep/audit/latest');
       const d = await res.json().catch(() => ({}));
       const unmapped = (d.audit && d.audit.summary && d.audit.summary.unmapped_genres) || [];
-      if (!unmapped.length) { el.innerHTML = '<span style="color:var(--accent);font-size:13px">✓ No unmapped genres — every genre string maps to the vocabulary. (Run an Audit first if you just changed files.)</span>'; return; }
+      if (!unmapped.length) { el.innerHTML = '<span style="color:var(--success);font-size:13px">✓ No unmapped genres — every genre string maps to the vocabulary. (Run an Audit first if you just changed files.)</span>'; return; }
       el.innerHTML = unmappedMapperHTML(unmapped);
     } catch { el.innerHTML = '<span style="color:var(--danger);font-size:13px">Failed to load.</span>'; }
   });
@@ -2757,7 +2764,7 @@ async function saveUnmappedGenres() {
       const cleanBtn = d.can_clean
         ? `<button class="btn-primary btn-sm" style="margin-top:10px" onclick="startClean()">Clean tags now →</button>` : '';
       document.getElementById('unmappedReport').innerHTML =
-        `<span style="color:var(--accent);font-size:13px">✓ Vocabulary updated — ${saved.added_exact || 0} mapped, ${saved.added_junk || 0} marked junk. Run <strong>Clean tags</strong> to apply to your library, then re-run Audit to refresh this list.</span>${persistWarn}<div>${cleanBtn}</div>`;
+        `<span style="color:var(--success);font-size:13px">✓ Vocabulary updated — ${saved.added_exact || 0} mapped, ${saved.added_junk || 0} marked junk. Run <strong>Clean tags</strong> to apply to your library, then re-run Audit to refresh this list.</span>${persistWarn}<div>${cleanBtn}</div>`;
     } catch { if (note) note.innerHTML = '<span style="color:var(--danger)">Save failed.</span>'; }
   });
 }
@@ -2810,7 +2817,7 @@ async function loadAlbumOutliers() {
       const res = await fetch('/api/prep/genres/album-outliers');
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Scan failed — run an Audit first.')}</span>`; return; }
-      if (!d.total) { el.innerHTML = '<span style="color:var(--accent);font-size:13px">✓ No album genre outliers — every album is internally consistent.</span>'; return; }
+      if (!d.total) { el.innerHTML = '<span style="color:var(--success);font-size:13px">✓ No album genre outliers — every album is internally consistent.</span>'; return; }
       el.innerHTML = albumOutliersHTML(d);
     } catch { el.innerHTML = '<span style="color:var(--danger);font-size:13px">Scan failed.</span>'; }
   });
@@ -2838,7 +2845,7 @@ async function applyAlbumOutliers() {
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { if (note) note.innerHTML = `<span style="color:var(--danger)">${escHtml(d.detail || 'Apply failed.')}</span>`; return; }
       document.getElementById('outlierReport').innerHTML =
-        `<span style="color:var(--accent);font-size:13px">✓ Aligning ${albums.length} album${albums.length !== 1 ? 's' : ''} — track it on the Activity page. Re-scan here once it finishes.</span>`;
+        `<span style="color:var(--success);font-size:13px">✓ Aligning ${albums.length} album${albums.length !== 1 ? 's' : ''} — track it on the Activity page. Re-scan here once it finishes.</span>`;
       switchTab('activity');
     } catch { if (note) note.innerHTML = '<span style="color:var(--danger)">Apply failed.</span>'; }
   });
@@ -3149,7 +3156,7 @@ async function applyCrosscheck() {
       // you chose differs from the cached external answer.
       try { await fetch('/api/prep/genres/cross-check/dismiss', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ keys: Object.keys(approved) }) }); } catch {}
       document.getElementById('crosscheckReport').innerHTML =
-        `<span style="color:var(--accent);font-size:13px">✓ Applying corrected genres to ${n} artist${n !== 1 ? 's' : ''} — track it on the Activity page.</span>`;
+        `<span style="color:var(--success);font-size:13px">✓ Applying corrected genres to ${n} artist${n !== 1 ? 's' : ''} — track it on the Activity page.</span>`;
       switchTab('activity');
     } catch { if (note) note.innerHTML = '<span style="color:var(--danger)">Apply failed.</span>'; }
   });
@@ -3412,7 +3419,7 @@ function writeResultHTML(name, data) {
   const written = data.written || [];
   const parts = written.map(w => `${w.target === 'ipod' ? 'iPod' : 'Library'}: <strong>${w.count}</strong> track${w.count !== 1 ? 's' : ''}`);
   let html = `<div style="border-top:1px solid var(--border);padding-top:12px">
-    <div style="color:var(--accent);font-size:13px">✓ Saved "${escHtml(name)}"${parts.length ? ' — ' + parts.join(' · ') : ''}</div>`;
+    <div style="color:var(--success);font-size:13px">✓ Saved "${escHtml(name)}"${parts.length ? ' — ' + parts.join(' · ') : ''}</div>`;
   for (const w of written) {
     html += `<div style="color:var(--muted);font-size:12px;margin-top:4px">${w.target === 'ipod' ? 'iPod' : 'Library'} .m3u → <code>${escHtml(w.path)}</code></div>`;
     if (w.error) html += `<div style="color:var(--danger);font-size:12px;margin-top:2px">✗ write failed: ${escHtml(w.error)} (is that mount writable?)</div>`;
