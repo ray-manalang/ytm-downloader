@@ -68,6 +68,19 @@
   .stat-label { color: var(--muted); font-size: 12px; margin-top: 6px; }
   .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 700; margin: 28px 0 12px; }
   /* Collapsible section header (reuses the Files page's chevron) */
+  /* Inline "how do I…" disclosure inside a card. Native <details>: this is
+     reference text you read once, not state worth persisting. */
+  .help { margin-bottom: 14px; }
+  .help summary { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; cursor: pointer; user-select: none; list-style: none; }
+  .help summary::-webkit-details-marker { display: none; }
+  .help summary::before { content: '▶'; font-size: 9px; transition: transform .18s; }
+  .help[open] summary::before { transform: rotate(90deg); }
+  .help summary:hover { color: var(--text); }
+  .help-body { color: var(--muted); font-size: 13px; line-height: 1.9; margin: 10px 0 0; padding-left: 18px; }
+  /* Micro-label above a single field (Client ID, Authorization URL, …).
+     The .add-box descendant selector is needed to out-specify the legacy
+     `.add-box label` rule below, which would otherwise win on <label>s. */
+  .field-label, .add-box .field-label { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
   .sec-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; width: fit-content; }
   .sec-toggle:hover { color: var(--text); }
   .sec-toggle .album-chevron { font-size: 10px; }
@@ -422,13 +435,21 @@
   .card-sub { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 2px 0 12px; }
   .cfg-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .cfg-row:last-child { margin-bottom: 0; }
-  .cfg-check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+  /* Option labels you read as a sentence — NOT the uppercase micro-label style.
+     The .add-box descendant selectors out-specify the legacy `.add-box label`
+     rule, which would otherwise force block/12px/uppercase on these and silently
+     kill the flex gap. (Uppercase belongs to .field-label, above.) */
+  .cfg-check, .add-box .cfg-check,
+  .process-steps label, .add-box .process-steps label {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 0;
+    font-size: 13px; text-transform: none; letter-spacing: normal;
+    color: var(--text); cursor: pointer;
+  }
   .cfg-check input { width: 15px; height: 15px; flex-shrink: 0; accent-color: var(--accent); cursor: pointer; }
   .cfg-note { color: var(--muted); font-size: 12px; }
   /* A card whose prerequisite isn't met (e.g. auto-sync with no YTM connection). */
   .cfg-blocked .cfg-row { opacity: .45; pointer-events: none; }
   .process-steps { display: flex; flex-wrap: wrap; gap: 8px 20px; }
-  .process-steps label { display: flex; align-items: center; gap: 7px; font-size: 13px; cursor: pointer; }
   .process-steps input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
   .process-steps label span { color: var(--muted); }
   .process-steps input:disabled + span, .process-steps input:disabled { opacity: .5; cursor: default; }
@@ -594,24 +615,24 @@
     <div id="libSetup">
       <!-- Step 1: enter credentials -->
       <div id="oauthStep1" class="add-box">
-        <label>Connect YouTube Music via OAuth</label>
-        <p style="color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.6">
-          OAuth auth is permanent — unlike browser headers, it never expires unless you revoke it.
-          You need a Google Cloud OAuth client (type: <strong style="color:var(--text)">TV and Limited Input devices</strong>):
-        </p>
-        <ol style="color:var(--muted);font-size:13px;line-height:2;margin-bottom:14px;padding-left:20px">
-          <li>Go to <strong style="color:var(--text)">console.cloud.google.com</strong> → APIs &amp; Services → Library → enable <strong style="color:var(--text)">YouTube Data API v3</strong></li>
-          <li>Go to Credentials → Create Credentials → OAuth client ID → type: <strong style="color:var(--text)">TV and Limited Input devices</strong></li>
-          <li>Copy the Client ID and Client Secret below</li>
-        </ol>
+        <div class="card-title">Connect YouTube Music</div>
+        <div class="card-sub">Paste a Google Cloud OAuth client of type <strong style="color:var(--text)">TV and Limited Input devices</strong>. OAuth never expires unless you revoke it.</div>
+        <details class="help">
+          <summary>How do I get a client ID?</summary>
+          <ol class="help-body">
+            <li>Go to <strong style="color:var(--text)">console.cloud.google.com</strong> → APIs &amp; Services → Library → enable <strong style="color:var(--text)">YouTube Data API v3</strong></li>
+            <li>Go to Credentials → Create Credentials → OAuth client ID → type: <strong style="color:var(--text)">TV and Limited Input devices</strong></li>
+            <li>Copy the Client ID and Client Secret below</li>
+          </ol>
+        </details>
         <div style="display:flex;flex-direction:column;gap:10px">
           <div>
-            <label style="display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Client ID</label>
+            <label class="field-label" for="oauthClientId">Client ID</label>
             <input id="oauthClientId" type="text" placeholder="…apps.googleusercontent.com"
               style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
           </div>
           <div>
-            <label style="display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Client Secret</label>
+            <label class="field-label" for="oauthClientSecret">Client Secret</label>
             <input id="oauthClientSecret" type="password" placeholder="Client secret"
               style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
           </div>
@@ -629,18 +650,16 @@
 
       <!-- Step 2: authorize at Google -->
       <div id="oauthStep2" class="add-box" style="display:none">
-        <label>Authorize at Google</label>
-        <p style="color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.6">
-          Open the link below, sign in to your Google account, and enter the code shown.
-        </p>
+        <div class="card-title">Authorize at Google</div>
+        <div class="card-sub">Open the link below, sign in to your Google account, and enter the code shown.</div>
         <div style="display:flex;flex-direction:column;gap:12px">
           <div>
-            <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Authorization URL</div>
+            <div class="field-label">Authorization URL</div>
             <a id="oauthUrl" href="#" target="_blank" rel="noopener"
               style="color:var(--info);font-size:13px;word-break:break-all"></a>
           </div>
           <div>
-            <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Enter this code</div>
+            <div class="field-label">Enter this code</div>
             <div id="oauthUserCode" style="font-size:24px;font-weight:700;letter-spacing:4px;color:var(--text);font-family:monospace"></div>
           </div>
         </div>
@@ -653,13 +672,16 @@
 
       <!-- Browser headers fallback -->
       <div id="browserAuthBox" class="add-box" style="display:none">
-        <label>Connect with Browser Headers</label>
-        <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.5">
-          Open <strong style="color:var(--text)">music.youtube.com</strong> in Chrome while logged in →
-          DevTools (F12) → Network tab → click any request to music.youtube.com →
-          right-click it → <strong style="color:var(--text)">Copy → Copy request headers</strong>.
-          Paste the headers below.
-        </p>
+        <div class="card-title">Connect with browser headers</div>
+        <div class="card-sub">Paste the request headers from a logged-in YouTube Music tab. This expires whenever Google invalidates the cookies — OAuth doesn't.</div>
+        <details class="help">
+          <summary>How do I copy my request headers?</summary>
+          <ol class="help-body">
+            <li>Open <strong style="color:var(--text)">music.youtube.com</strong> in Chrome, logged in</li>
+            <li>DevTools (F12) → <strong style="color:var(--text)">Network</strong> tab → click any request to music.youtube.com</li>
+            <li>Right-click it → <strong style="color:var(--text)">Copy → Copy request headers</strong>, and paste below</li>
+          </ol>
+        </details>
         <textarea id="ytmHeaders" placeholder="Paste request headers here..." style="min-height:140px;font-size:12px;font-family:monospace"></textarea>
         <div class="add-actions">
           <button class="btn-primary" id="ytmConnectBtn" onclick="connectYTM()">Connect</button>
