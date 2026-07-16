@@ -79,7 +79,7 @@
   .step { display: flex; gap: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 12px; }
   /* Flash the step you were sent to from the Dashboard (back to --surface, which
      is .step's own background — not transparent). */
-  .step.flash { animation: stepflash 1.2s ease; }
+  .step.flash, .add-box.flash { animation: stepflash 1.2s ease; }
   @keyframes stepflash { 0%, 40% { background: var(--accent-soft); } 100% { background: var(--surface); } }
   .step-num { width: 26px; height: 26px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0; color: var(--muted); }
 
@@ -756,6 +756,25 @@
       <div id="suspectAAReport" style="margin-top:12px"></div>
     </div>
 
+    <!-- Complete genres — lives with the other genre tools, not on Optimize -->
+    <div class="add-box" id="genresCard" style="margin-top:20px">
+      <div style="font-weight:600;font-size:15px">Complete genres <span id="stepGenresStatus" style="color:var(--muted);font-weight:400;font-size:12px"></span></div>
+      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Give every artist one consistent genre. Proposes a genre per artist from the curated map, then the majority of existing tags, then optionally MusicBrainz/Claude. Review and edit before applying; a sole <strong style="color:var(--text)">Holiday</strong> tag is preserved.</div>
+      <div class="step-actions">
+        <button class="btn-ghost btn-sm" id="reviewBtn" onclick="startReview()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></svg>Review genres</button>
+        <label style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
+          <input type="checkbox" id="reviewOnline" style="width:15px;height:15px;accent-color:var(--accent)">
+          Look up unknown artists online (MusicBrainz — slower)
+        </label>
+        <label id="reviewLLMLabel" style="display:none;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
+          <input type="checkbox" id="reviewLLM" style="width:15px;height:15px;accent-color:var(--accent)">
+          Use Claude for still-unknown artists (one batched call)
+        </label>
+      </div>
+      <div id="reviewError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+      <div id="reviewResult"></div>
+    </div>
+
     <div class="add-box" style="margin-top:20px">
       <div style="font-weight:600;font-size:15px">Unmapped genres</div>
       <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Raw genre strings in your files that map to nothing in the controlled vocabulary — so they get dropped. Assign each to a controlled genre (or mark as junk) to <strong>teach the vocabulary</strong>; future Audit/Clean runs will normalize them automatically.</div>
@@ -785,7 +804,7 @@
     </div>
   </div>
 
-  <!-- PREPARE (guided pipeline: Audit → Clean → Genres → Enrich → Convert) -->
+  <!-- OPTIMIZE — the jobs that change your library/mirror. Inspect + fix lives on Audit. -->
   <div class="panel" id="panel-convert">
     <div class="add-box" style="margin-bottom:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
       <div style="flex:1;min-width:200px">
@@ -796,55 +815,20 @@
     </div>
     <div id="prepError" style="color:var(--danger);font-size:13px;margin:-8px 0 12px"></div>
 
-    <!-- Step 1: Audit -->
-    <div class="step" id="step-audit">
-      <div class="step-num">1</div>
-      <div class="step-body">
-        <div class="step-title">Audit library</div>
-        <div class="step-status" id="stepAuditStatus">Not run yet.</div>
-        <div class="step-desc">A read-only scan that indexes tags, genres, and file sizes. Everything below builds on this — run it first, and after adding music. Run it and see the details on the <strong>Audit</strong> page.</div>
-        <div class="step-actions"><button class="btn-primary" onclick="switchTab('audit')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Open Audit →</button></div>
-      </div>
-    </div>
-
-    <!-- Step 2: Clean tags -->
+    <!-- Step 1: Clean tags -->
     <div class="step" id="step-clean">
-      <div class="step-num">2</div>
+      <div class="step-num">1</div>
       <div class="step-body">
         <div class="step-title">Clean tags</div>
         <div class="step-status" id="stepCleanStatus">Normalize genres &amp; fill album artists.</div>
-        <div class="step-desc">Maps genres to a controlled vocabulary and fills missing album artists, in place. One-click reversible from the Jobs list.</div>
+        <div class="step-desc">Maps genres to a controlled vocabulary and fills missing album artists, in place. One-click reversible from the <a href="#" onclick="switchTab('activity'); return false" style="color:var(--accent)">Activity</a> page. Needs an <a href="#" onclick="switchTab('audit'); return false" style="color:var(--accent)">Audit</a> first.</div>
         <div class="step-actions"><button class="btn-primary" id="cleanBtn" onclick="startClean()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Clean tags</button></div>
-        <div class="step-desc" style="margin-top:8px">Album-artist looks wrong on some albums? Fix mislabeled album artists on the <a href="#" onclick="switchTab('audit'); return false" style="color:var(--accent)">Audit</a> page.</div>
       </div>
     </div>
 
-    <!-- Step 3: Complete genres -->
-    <div class="step" id="step-genres">
-      <div class="step-num">3</div>
-      <div class="step-body">
-        <div class="step-title">Complete genres</div>
-        <div class="step-status" id="stepGenresStatus">Give every artist one consistent genre.</div>
-        <div class="step-desc">Proposes a genre per artist from the curated map, the majority of existing tags, then optionally MusicBrainz. Review and edit before applying; a sole <strong style="color:var(--text)">Holiday</strong> tag is preserved.</div>
-        <div class="step-actions">
-          <button class="btn-ghost" id="reviewBtn" onclick="startReview()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></svg>Review genres</button>
-          <label style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
-            <input type="checkbox" id="reviewOnline" style="width:15px;height:15px;accent-color:var(--accent)">
-            Look up unknown artists online (MusicBrainz — slower)
-          </label>
-          <label id="reviewLLMLabel" style="display:none;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
-            <input type="checkbox" id="reviewLLM" style="width:15px;height:15px;accent-color:var(--accent)">
-            Use Claude for still-unknown artists (one batched call)
-          </label>
-        </div>
-        <div id="reviewError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
-        <div class="step-extra" id="reviewResult"></div>
-      </div>
-    </div>
-
-    <!-- Step 4: Analyze BPM & energy -->
+    <!-- Step 2: Analyze BPM & energy -->
     <div class="step" id="step-enrich">
-      <div class="step-num">4</div>
+      <div class="step-num">2</div>
       <div class="step-body">
         <div class="step-title">Analyze BPM &amp; energy</div>
         <div class="step-status" id="stepEnrichStatus">Enables tempo/energy playlist rules.</div>
@@ -853,19 +837,14 @@
       </div>
     </div>
 
-    <!-- Step 5: Convert → iPod -->
+    <!-- Step 3: Convert → iPod -->
     <div class="step" id="step-convert">
-      <div class="step-num">5</div>
+      <div class="step-num">3</div>
       <div class="step-body">
         <div class="step-title">Convert → iPod</div>
         <div class="step-status" id="stepConvertStatus">Build the AAC mirror for iPod/iTunes.</div>
-        <div class="step-desc">Transcodes FLAC to a 256k AAC mirror; MP3/AAC copied as-is, DRM skipped. Source is never modified and re-runs only convert what's missing.</div>
+        <div class="step-desc">Transcodes FLAC from your music library to a 256k AAC mirror; MP3/AAC copied as-is, DRM skipped. The library is never modified, and re-runs only convert what's missing or changed.</div>
         <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px">
-          <div>
-            <label style="display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Source (read-only)</label>
-            <input id="convSource" type="text" placeholder="/music"
-              style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:9px 12px;font-size:13px;outline:none;font-family:monospace">
-          </div>
           <div>
             <label style="display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Output mirror</label>
             <input id="convOutput" type="text" placeholder="/ipod"
@@ -881,20 +860,24 @@
           <span id="convBitrateNote" style="color:var(--muted);font-size:12px"></span>
         </div>
         <div id="convError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
-        <div class="step-extra">
-          <button class="btn-ghost btn-sm" id="drmBtn" onclick="loadDrmReport()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>List DRM-protected files</button>
-          <span style="color:var(--muted);font-size:12px;margin-left:6px">.m4p files can't be transcoded — they're skipped by Convert.</span>
-          <div id="drmReport" style="margin-top:12px"></div>
-          <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
-            <button class="btn-ghost btn-sm" id="orphanBtn" onclick="loadMirrorOrphans()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6"/></svg>Find orphaned mirror files</button>
-            <span style="color:var(--muted);font-size:12px;margin-left:6px">Mirror files whose source is gone (Convert only adds; it never removes).</span>
-            <div id="orphanReport" style="margin-top:12px"></div>
-          </div>
-        </div>
       </div>
     </div>
 
-    <p style="color:var(--muted);font-size:12px;margin-top:6px">Running jobs and history live on the <a href="#" onclick="switchTab('activity'); return false" style="color:var(--accent)">Activity</a> page.</p>
+    <!-- Mirror maintenance — recurring housekeeping, not a pipeline step -->
+    <div class="section-title">Mirror maintenance</div>
+    <div class="add-box">
+      <div style="color:var(--muted);font-size:13px;margin-bottom:12px">Read-only checks on the AAC mirror. Convert only ever <em>adds</em> — these find what it can't.</div>
+      <button class="btn-ghost btn-sm" id="drmBtn" onclick="loadDrmReport()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>List DRM-protected files</button>
+      <span style="color:var(--muted);font-size:12px;margin-left:6px">.m4p files can't be transcoded — they're skipped by Convert.</span>
+      <div id="drmReport" style="margin-top:12px"></div>
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+        <button class="btn-ghost btn-sm" id="orphanBtn" onclick="loadMirrorOrphans()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6"/></svg>Find orphaned mirror files</button>
+        <span style="color:var(--muted);font-size:12px;margin-left:6px">Mirror files whose source is gone.</span>
+        <div id="orphanReport" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <p style="color:var(--muted);font-size:12px;margin-top:14px">Running jobs and history live on the <a href="#" onclick="switchTab('activity'); return false" style="color:var(--accent)">Activity</a> page.</p>
   </div>
 
   <!-- PLAYLISTS -->
@@ -1074,17 +1057,22 @@ function switchTab(name) {
 async function loadActivity() { loadPrepJobs(); renderActivity(); }
 const navigate = switchTab;
 
-// Dashboard "Optimize your library" rows → jump straight to that step's controls.
-// Audit has its own page; the rest live as steps on the Optimize stepper.
+// Dashboard "Optimize your library" rows → jump straight to that task's controls.
+// Inspect/fix work (audit + all genre tools) lives on the Audit page; the jobs
+// that change your library/mirror are steps on Optimize.
+const STEP_HOME = { audit: ['audit', null], genres: ['audit', 'genresCard'] };
+
 function gotoStep(key) {
-  if (key === 'audit') { switchTab('audit'); return; }
-  switchTab('convert');
-  setTimeout(() => {
-    const el = document.getElementById('step-' + key);
-    if (!el) return;
-    el.scrollIntoView({ block: 'center' });
-    el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
-  }, 80);
+  const [tab, id] = STEP_HOME[key] || ['convert', 'step-' + key];
+  switchTab(tab);
+  if (id) setTimeout(() => _flashInto(id), 80);
+}
+
+function _flashInto(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({ block: 'center' });
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
 }
 
 // Run an async action from a button click with a "working" spinner on the button.
@@ -1145,7 +1133,7 @@ function renderDashboard(ytm, pipe, dls, pls) {
        <div class="stat-num ${cls || ''}">${num}</div><div class="stat-label">${label}</div></div>`;
 
   const stats = `<div class="stat-grid">
-    ${stat(total.toLocaleString(), 'Tracks indexed', '', 'convert')}
+    ${stat(total.toLocaleString(), 'Tracks indexed', '', 'audit')}
     ${stat(active, 'In queue', active ? '' : '', 'activity')}
     ${stat(nPlaylists, 'Playlists', '', 'playlists')}
     ${errs ? stat(errs, 'Failed downloads', 'warn', 'activity') : ''}
@@ -1167,8 +1155,8 @@ function renderDashboard(ytm, pipe, dls, pls) {
        <span class="dash-step-go">→</span></div>`).join('');
 
   const prepBox = total === 0
-    ? `<div class="add-box"><p style="color:var(--muted);font-size:13px;margin-bottom:12px">Your library isn't indexed yet. Point Prepare at your music and run an audit to unlock cleanup, analysis, conversion, and playlists.</p>
-         <button class="btn-primary" onclick="switchTab('convert')">Open Optimize →</button></div>`
+    ? `<div class="add-box"><p style="color:var(--muted);font-size:13px;margin-bottom:12px">Your library isn't indexed yet. Set your music folder in Setup, then run an audit to unlock cleanup, analysis, conversion, and playlists.</p>
+         <button class="btn-primary" onclick="switchTab('audit')">Open Audit →</button></div>`
     : `<div class="add-box"><div style="margin-bottom:4px">${stepRows}</div>
          <div style="margin-top:14px"><button class="btn-primary" onclick="switchTab('convert')">Continue in Optimize →</button></div></div>`;
 
@@ -2037,7 +2025,7 @@ async function loadAuditPage() {
   // Ensure the library folder is populated (Prepare loads it lazily too).
   if (!prepConfigLoaded) await loadConvert();
   onLibDirChange();
-  await Promise.all([loadLatestAudit(), loadCrosscheck(), updatePrepSteps()]);
+  await Promise.all([loadLatestAudit(), loadLatestReview(), loadCrosscheck(), updatePrepSteps()]);
 }
 
 async function fetchLibraryData() {
@@ -2336,8 +2324,6 @@ async function loadConvert() {
     try {
       const res = await fetch('/api/prep/config');
       const cfg = await res.json();
-      if (cfg.music_dir && !document.getElementById('convSource').value)
-        document.getElementById('convSource').value = cfg.music_dir;
       if (cfg.ipod_dir && !document.getElementById('convOutput').value)
         document.getElementById('convOutput').value = cfg.ipod_dir;
       if (cfg.music_dir && !document.getElementById('libDir').value)
@@ -2353,8 +2339,9 @@ async function loadConvert() {
       prepConfigLoaded = true;
     } catch {}
   }
-  onLibDirChange();  // reflect the Setup-page library folder in the Prepare header
-  await Promise.all([loadPrepJobs(), loadLatestAudit(), loadLatestReview(), updatePrepSteps()]);
+  onLibDirChange();  // reflect the Setup-page library folder in the Optimize header
+  // The audit + genre-review tables render on the Audit page, which loads them itself.
+  await Promise.all([loadPrepJobs(), updatePrepSteps()]);
 }
 
 async function loadProcessConfig() {
@@ -2431,14 +2418,12 @@ async function updatePrepSteps() {
     if (st) { st.innerHTML = status; st.classList.toggle('warn', !!warn); }
   };
 
-  set('audit', total > 0,
-    total > 0 ? `${total.toLocaleString()} tracks indexed${a.needs_normalization ? ` · <span style="color:var(--warn)">${a.needs_normalization} need a genre fix</span>` : ''}` : 'Not run yet — start here.',
-    total === 0);
+  // No 'audit' step — auditing lives on the Audit page, which renders its own summary.
   set('clean', !!p.clean,
     p.clean ? `Last run changed ${(p.clean.summary && p.clean.summary.changed) || 0} tracks.` : (a.needs_normalization ? `${a.needs_normalization} tracks could be cleaned.` : 'Normalize genres & fill album artists.'),
     !p.clean && a.needs_normalization);
   set('genres', !!p.genres && !unresolved,
-    p.genres ? (unresolved ? `${unresolved} artists still unresolved.` : 'All artists resolved.') : 'Give every artist one consistent genre.',
+    p.genres ? (unresolved ? `· ${unresolved} artists still unresolved` : '· all artists resolved') : '· not reviewed yet',
     unresolved > 0);
   set('enrich', total > 0 && enrichPending === 0,
     total > 0 ? `${enriched.toLocaleString()}/${total.toLocaleString()} tracks analyzed${enrichErrors ? ` · <span style="color:var(--warn)">${enrichErrors} couldn't be analyzed</span>` : ''}.` : 'Enables tempo/energy playlist rules.',
@@ -2600,7 +2585,7 @@ async function loadDrmReport() {
 async function loadMirrorOrphans() {
   const el = document.getElementById('orphanReport');
   const btn = document.getElementById('orphanBtn');
-  const source_dir = document.getElementById('convSource').value.trim();
+  const source_dir = document.getElementById('libDir').value.trim();   // one library path for the whole app
   const output_dir = document.getElementById('convOutput').value.trim();
   btn.disabled = true;
   el.innerHTML = '<span style="color:var(--muted);font-size:13px">Comparing mirror against the library…</span>';
@@ -2620,7 +2605,7 @@ async function loadMirrorOrphans() {
 async function pruneMirror(count, sizeStr) {
   if (!confirm(`Delete ${count} orphaned mirror file${count !== 1 ? 's' : ''} (${sizeStr}) from the iPod mirror? The source library is untouched.`)) return;
   const el = document.getElementById('orphanReport');
-  const source_dir = document.getElementById('convSource').value.trim();
+  const source_dir = document.getElementById('libDir').value.trim();   // one library path for the whole app
   const output_dir = document.getElementById('convOutput').value.trim();
   el.innerHTML = '<span style="color:var(--muted);font-size:13px">Removing…</span>';
   try {
@@ -2899,7 +2884,7 @@ async function applyAlbumOutliers() {
 }
 
 async function startConvert() {
-  const source_dir = document.getElementById('convSource').value.trim();
+  const source_dir = document.getElementById('libDir').value.trim();   // one library path for the whole app
   const output_dir = document.getElementById('convOutput').value.trim();
   const downsample_hires = document.getElementById('convDownsample').checked;
   const errEl = document.getElementById('convError');
