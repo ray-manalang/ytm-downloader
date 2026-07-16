@@ -639,7 +639,85 @@ async def _schedule_loop():
             logger.warning("scheduled audit: tick failed: %s", exc)
 
 
+# ── Library folder probe ─────────────────────────────────────────────────────
+#
+# `#libDir` is the load-bearing input for the whole app, and it was mute: you
+# typed a path and found out it was wrong when a job failed. This answers "did I
+# point it at the right place, and can the write steps run?" while you type.
+#
+# Doubly bounded (same reasoning as the review's online lookups): it runs on each
+# keystroke over a network mount, so it stops at the first handful of audio files
+# or a wall-clock budget — enough to say "yes, this is a music library" without
+# walking 50k tracks to do it.
+
+_PROBE_FILE_CAP = 25
+_PROBE_BUDGET_S = 2.0
+
+
+def _probe_library(path: str) -> dict:
+    out = {"exists": False, "is_dir": False, "readable": False,
+           "writable": False, "audio": 0, "capped": False, "timed_out": False}
+    p = Path(path)
+    try:
+        if not p.exists():
+            return out
+        out["exists"] = True
+        if not p.is_dir():
+            return out
+        out["is_dir"] = True
+    except OSError:      # permission denied on the parent, bad mount, …
+        return out
+    out["readable"] = os.access(path, os.R_OK | os.X_OK)
+    # Load-bearing: _valid_chain silently drops Clean on a read-only mount, so a
+    # user with one gets no tag cleaning and no explanation. Now they get one.
+    out["writable"] = os.access(path, os.W_OK)
+    if not out["readable"]:
+        return out
+
+    deadline = time.monotonic() + _PROBE_BUDGET_S
+    n = 0
+    for root, _dirnames, filenames in os.walk(path):
+        for f in filenames:
+            if tagtools.is_audio_file(f):
+                n += 1
+                if n >= _PROBE_FILE_CAP:
+                    out["audio"], out["capped"] = n, True
+                    return out
+        if time.monotonic() > deadline:
+            out["timed_out"] = True
+            break
+    out["audio"] = n
+    return out
+
+
+async def _indexed_under(path: str) -> int:
+    """How many indexed tracks live under this folder — free, and it tells the
+    user whether the path they typed is the one their audit actually ran on."""
+    try:
+        prefix = str(Path(path).resolve()).rstrip(os.sep) + os.sep
+    except OSError:
+        return 0
+    # substr(), not LIKE: a path containing '_' or '%' would be a LIKE wildcard.
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM library_tracks WHERE substr(path,1,?)=?",
+            (len(prefix), prefix),
+        ) as cur:
+            (n,) = await cur.fetchone()
+    return n
+
+
 # ── REST API ────────────────────────────────────────────────────────────────
+
+@router.get("/library/check")
+async def check_library(path: str = ""):
+    path = (path or "").strip()
+    if not path:
+        return {"path": "", "empty": True}
+    probe = await asyncio.get_running_loop().run_in_executor(None, _probe_library, path)
+    indexed = await _indexed_under(path) if probe["is_dir"] else 0
+    return {"path": path, "empty": False, "indexed": indexed, **probe}
+
 
 @router.get("/config")
 async def prep_config():

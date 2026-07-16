@@ -511,6 +511,7 @@
       </div>
       <input id="libDir" type="text" placeholder="/music" oninput="onLibDirChange()"
         style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none;font-family:monospace">
+      <div id="libDirStatus" style="font-size:12px;margin-top:8px;min-height:15px"></div>
     </div>
 
     <!-- Which steps a Process run includes. The trigger lives on Optimize — that's
@@ -2193,6 +2194,58 @@ function onLibDirChange() {
     const disp = document.getElementById(id);
     if (disp) disp.textContent = val;
   }
+  scheduleLibDirCheck();
+}
+
+// ── Library folder validation ────────────────────────────────────────────────
+// Debounced because each check walks a (possibly networked) mount, and seq-
+// guarded because those walks can finish out of order — a slow probe for a
+// half-typed path must never overwrite the verdict for what's in the box now.
+let _libCheckTimer = null, _libCheckSeq = 0;
+
+function scheduleLibDirCheck() {
+  const status = document.getElementById('libDirStatus');
+  if (!status) return;
+  clearTimeout(_libCheckTimer);
+  // Bump the sequence on every edit, not just when we start a fetch: a probe
+  // already in flight has to be invalidated here, or clearing the box would let
+  // it land afterwards and re-post a verdict for a path that's no longer typed.
+  _libCheckSeq++;
+  const path = (document.getElementById('libDir').value || '').trim();
+  if (!path) { status.innerHTML = ''; return; }
+  status.innerHTML = '<span style="color:var(--muted)">Checking…</span>';
+  _libCheckTimer = setTimeout(() => checkLibDir(path), 450);
+}
+
+async function checkLibDir(path) {
+  const status = document.getElementById('libDirStatus');
+  const seq = _libCheckSeq;   // claimed by scheduleLibDirCheck for this edit
+  try {
+    const d = await (await fetch('/api/prep/library/check?path=' + encodeURIComponent(path))).json();
+    if (seq !== _libCheckSeq) return;   // a newer check already answered
+    status.innerHTML = _libDirStatusHTML(d);
+  } catch {
+    if (seq === _libCheckSeq) status.innerHTML = '';
+  }
+}
+
+function _libDirStatusHTML(d) {
+  if (!d || d.empty) return '';
+  const bad = t => `<span style="color:var(--danger)">✗ ${t}</span>`;
+  if (!d.exists) return bad('No folder at that path');
+  if (!d.is_dir) return bad("That's a file, not a folder");
+  if (!d.readable) return bad("The app can't read that folder — check the mount");
+
+  const bits = [];
+  bits.push(d.audio
+    ? `<span style="color:var(--success)">✓ ${d.capped ? 'Audio files found' : `${d.audio} audio file${d.audio !== 1 ? 's' : ''}`}</span>`
+    : `<span style="color:var(--warn)">⚠ No audio files ${d.timed_out ? 'found before the scan timed out' : 'here — is this the right folder?'}</span>`);
+  if (d.indexed) bits.push(`${d.indexed.toLocaleString()} tracks indexed`);
+  // The one that actually bites: _valid_chain drops Clean on a read-only mount.
+  bits.push(d.writable
+    ? '<span style="color:var(--muted)">writable</span>'
+    : `<span style="color:var(--warn)">read-only — Clean tags and Complete genres can't run</span>`);
+  return bits.join('<span style="color:var(--muted)"> · </span>');
 }
 
 async function loadAuditPage() {
