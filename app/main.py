@@ -694,30 +694,54 @@ async def files_by_genre(genre: str):
 
 @app.delete("/api/files")
 async def delete_file(body: dict):
-    rel = body.get("path", "")
+    """Delete one file/folder (`path`) or several (`paths`).
+
+    Batching matters: the cascade below rewrites every auto-refresh playlist, so
+    deleting N folders one call at a time would regenerate them N times. Collect
+    everything first, delete, then cascade once.
+    """
+    rels = body.get("paths")
+    if rels is None:
+        rels = [body["path"]] if body.get("path") else []
+    if not isinstance(rels, list) or not rels:
+        raise HTTPException(400, "No path given")
+
     root = _files_root()
     base = Path(root).resolve()
-    target = (base / rel).resolve()
-    if not str(target).startswith(str(base)):
-        raise HTTPException(400, "Invalid path")
-    if not target.exists():
-        return {"ok": True}
 
-    # Collect library paths being removed (for de-indexing + mirror cleanup).
+    targets = []
+    for rel in rels:
+        target = (base / str(rel)).resolve()
+        if not target.is_relative_to(base):
+            raise HTTPException(400, f"Invalid path: {rel}")
+        if target.exists():
+            targets.append(target)
+    if not targets:
+        return {"ok": True, "deleted": 0}
+
+    # Collect library paths being removed (for de-indexing + mirror cleanup)
+    # BEFORE deleting, since rglob can't see a tree that's already gone.
     is_lib = _promotion_active() and base == Path(prep_module.MUSIC_DIR).resolve()
-    removed_files = (
-        [target] if target.is_file()
-        else [p for p in target.rglob("*") if p.is_file()]
-    )
+    removed_files = []
+    for target in targets:
+        removed_files.extend(
+            [target] if target.is_file()
+            else [p for p in target.rglob("*") if p.is_file()]
+        )
+    # Selecting a folder and something inside it would otherwise count twice.
+    removed_files = list(dict.fromkeys(removed_files))
 
-    if target.is_dir():
-        shutil.rmtree(target)
-    else:
-        target.unlink()
-    parent = target.parent
-    while parent != base and parent.exists() and not any(parent.iterdir()):
-        parent.rmdir()
-        parent = parent.parent
+    for target in targets:
+        if not target.exists():
+            continue  # an ancestor earlier in the batch already took it
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        parent = target.parent
+        while parent != base and parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
+            parent = parent.parent
 
     if is_lib:
         # Cascade: remove iPod mirror copies, de-index, refresh playlists.
@@ -747,7 +771,7 @@ async def delete_file(body: dict):
             logger.warning("delete: playlist refresh failed: %s", exc)
 
     filecache.invalidate()  # listing changed — drop the cache
-    return {"ok": True}
+    return {"ok": True, "deleted": len(removed_files)}
 
 
 # ── WebSocket ────────────────────────────────────────────────────────────────
