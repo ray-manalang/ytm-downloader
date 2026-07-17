@@ -184,7 +184,7 @@
   /* Completed tracks list within a queue card */
   .track-done-list { margin-top: 8px; display: flex; flex-direction: column; gap: 1px; }
   .track-done-item { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 2px; }
-  .track-done-item::before { content: '✓ '; color: var(--accent); font-weight: 700; }
+  .track-done-item::before { content: '✓ '; color: var(--success); font-weight: 700; }
 
   /* Error */
   .error-msg { color: var(--danger); font-size: 12px; margin-top: 6px; word-break: break-all; }
@@ -1351,7 +1351,7 @@ function renderDashboard(ytm, pipe, dls, pls) {
   ];
   const stepRows = steps.map(s =>
     `<div class="dash-step" onclick="gotoStep('${s.key}')" title="Open ${escHtml(s.label)}">
-       <span style="color:${s.done ? 'var(--accent)' : 'var(--muted)'};font-weight:700">${s.done ? '✓' : '○'}</span>
+       <span style="color:${s.done ? 'var(--success)' : 'var(--muted)'};font-weight:700">${s.done ? '✓' : '○'}</span>
        <span class="dash-step-label" style="flex:1">${s.label}</span>
        <span style="color:var(--muted);font-size:12px">${s.note}</span>
        <span class="dash-step-go">→</span></div>`).join('');
@@ -2648,7 +2648,26 @@ async function loadAuditPage() {
   // Ensure the library folder is populated (Prepare loads it lazily too).
   if (!prepConfigLoaded) await loadConvert();
   onLibDirChange();
-  await Promise.all([loadLatestAudit(), loadLatestReview(), loadCrosscheck(), updatePrepSteps()]);
+  // loadLatestAudit first — it sets the indexed/lock state the scan-done check reads.
+  await loadLatestAudit();
+  await Promise.all([loadLatestReview(), loadCrosscheck(), updatePrepSteps(), _refreshScanStepsDone()]);
+}
+
+// Steps 4 (outliers) and 6 (mislabeled album-artist) are on-demand scans with no
+// stored result. Rather than persist a "done" flag that goes stale when the
+// library changes, recompute it on load — both are cheap local DB reads (unlike
+// the cross-check's network lookups), so their green is always current, not a
+// remembered guess. Skips the fetch while the steps are locked (no audit yet).
+async function _refreshScanStepsDone() {
+  if (document.getElementById('astep-outliers')?.classList.contains('locked')) return;
+  try {
+    const [o, a] = await Promise.all([
+      fetch('/api/prep/genres/album-outliers').then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/prep/suspect-albumartist').then(r => r.ok ? r.json() : null).catch(() => null),
+    ]);
+    if (o) document.getElementById('astep-outliers')?.classList.toggle('done', !o.total);
+    if (a) document.getElementById('astep-albumartist')?.classList.toggle('done', !a.total);
+  } catch {}
 }
 
 async function fetchLibraryData() {
@@ -2674,7 +2693,7 @@ function renderLikedTracks(tracks) {
         ${t.artist ? `<div class="lib-track-artist">${escHtml(t.artist)}</div>` : ''}
       </div>
       <div class="lib-track-dur">${escHtml(t.duration || '')}</div>
-      ${t.synced ? `<span style="color:var(--accent);font-size:11px;font-weight:700;padding:0 4px" title="Already synced">✓</span>` : ''}
+      ${t.synced ? `<span style="color:var(--success);font-size:11px;font-weight:700;padding:0 4px" title="Already synced">✓</span>` : ''}
       <button class="btn-ghost btn-sm" onclick="downloadTrack('${t.videoId}')" title="Download now">↓</button>
       ${t.synced ? `<button class="btn-ghost btn-sm" onclick="resetTrackSync('${t.videoId}')" title="Reset sync — will re-download on next sync">↺</button>` : ''}
     </div>`).join('');
