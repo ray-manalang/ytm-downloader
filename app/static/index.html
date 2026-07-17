@@ -9,28 +9,37 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg:       #0f0f0f;
-    --surface:  #181818;
-    --surface2: #212121;
-    --border:   #303030;
-    --text:     #f1f1f1;
-    --muted:    #aaaaaa;
+    /* Look borrowed from minset: pure-black surfaces, hairline (white-alpha)
+       borders, soft radii, SF Pro with tight display tracking, Apple ease.
+       The RED accent stays — that's Music Monster's brand. */
+    --bg:       #000000;
+    --surface:  #0e0e0f;
+    --surface2: #1a1a1c;
+    --border:   rgba(255, 255, 255, 0.12);
+    --border-soft: rgba(255, 255, 255, 0.07);
+    --text:     #ffffff;
+    --muted:    #9a9a9e;
     --accent:   #ff0033;
     --accent2:  #d9002b;
     --accent-soft: rgba(255, 0, 51, 0.15);
-    --danger:   #ff4e45;
+    --danger:   #ff453a;
     --warn:     #f2c94c;
-    --info:     #3ea6ff;
-    --success:  #30d158;
+    --info:     #5ea2ff;
+    --success:  #34c759;
     /* Semantic state tints (minset-style: vivid text on a 15%-alpha same-hue bg) */
-    --danger-soft:  rgba(255, 78, 69, 0.15);
+    --danger-soft:  rgba(255, 69, 58, 0.15);
     --warn-soft:    rgba(242, 201, 76, 0.15);
-    --info-soft:    rgba(62, 166, 255, 0.15);
-    --success-soft: rgba(48, 209, 88, 0.15);
-    --radius:   8px;
+    --info-soft:    rgba(94, 162, 255, 0.15);
+    --success-soft: rgba(52, 199, 89, 0.15);
+    --radius:   16px;
+    --ease:     cubic-bezier(0.16, 1, 0.3, 1);
+    --font:     -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
   }
 
-  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; min-height: 100vh; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; min-height: 100vh; letter-spacing: 0.01em; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  /* Tight display tracking on large titles (minset). NOT on uppercase micro-labels,
+     which need their own positive tracking — those set it themselves. */
+  .card-title, .step-title, .pl-creator-title, .stat-num, .sidebar-brand h1, .topbar h2, .dash-num { letter-spacing: -0.02em; }
 
   .ws-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background .3s; flex-shrink: 0; }
   .ws-dot.connected { background: var(--accent); }
@@ -43,7 +52,7 @@
   .sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 10px; }
   .sidebar-brand h1 { font-size: 16px; font-weight: 800; letter-spacing: -0.3px; }
   .nav-group-label { font-size: 10px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); padding: 16px 10px 6px; font-weight: 700; }
-  .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 7px; cursor: pointer; color: var(--muted); font-weight: 500; font-size: 13.5px; user-select: none; transition: background .12s, color .12s; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 9px; cursor: pointer; color: var(--muted); font-weight: 500; font-size: 13.5px; user-select: none; transition: background .18s var(--ease), color .18s var(--ease); }
   .nav-item:hover { background: var(--surface2); color: var(--text); }
   .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .nav-item .nav-ico { width: 18px; text-align: center; font-size: 14px; flex-shrink: 0; }
@@ -135,7 +144,7 @@
   textarea { width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 12px; font-size: 14px; resize: vertical; min-height: 120px; outline: none; font-family: monospace; }
   textarea:focus { border-color: var(--accent); }
   .add-actions { display: flex; gap: 10px; margin-top: 12px; }
-  button { padding: 9px 18px; border-radius: 6px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; transition: all .15s, transform .07s ease; }
+  button { padding: 9px 18px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; transition: all .18s var(--ease), transform .07s ease; }
   /* Tactile press feedback on every button so a click reads as "doing something" */
   button:active:not(:disabled) { transform: scale(.95); }
   /* Async "working" state: prepend a spinner + lock the button while a request is in flight */
