@@ -770,8 +770,12 @@ async def update_playlist(pid: str, body: dict):
     name = (body.get("name") or row["name"]).strip()
     spec = body.get("spec") if body.get("spec") is not None else pub["spec"]
     targets = _clean_targets(body.get("targets") if body.get("targets") is not None else pub["targets"])
-    if row["type"] == "smart" and not spec.get("rules"):
-        raise HTTPException(400, "Add at least one rule")
+    # Same guard as create: a playlist needs SOME way to resolve tracks. Editing a
+    # rules playlist by hand freezes it (rules → ai_paths), so accepting a frozen
+    # spec here is required, not just tidiness — the old `type=='smart' and not
+    # rules` check rejected exactly that edit.
+    if not (spec.get("rules") or spec.get("ai_paths") or spec.get("enumerated")):
+        raise HTTPException(400, "Playlist needs at least one rule or track")
 
     # Remove stale files if renamed or a target was dropped.
     if name != row["name"]:
@@ -802,6 +806,9 @@ async def playlist_tracks(pid: str):
     tracks = await _all_tracks()
     matched = _matched_for_spec(pub["spec"], tracks)
     out = [{
+        # path is the track's identity — the edit flow freezes on it, so it must
+        # be here, not just the display fields.
+        "path": t.get("path"),
         "title": _display_title(t.get("path", "")),
         "artist": t.get("artist"),
         "album": t.get("album"),
