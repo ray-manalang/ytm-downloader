@@ -62,9 +62,13 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
             "%(playlist_uploader,uploader)s:%(meta_album_artist)s",
             "%(playlist_uploader,uploader)s:%(meta_artist)s",
         ],
+        # `playlist_index&{:02d} |` — emit "01 " ONLY when there is an index.
+        # A single-track grab has none, and plain %(playlist_index)02d renders the
+        # literal string "NA", so every individually-added song landed as
+        # "NA Title.m4a". Album tracks are unchanged.
         "outtmpl": os.path.join(
             DOWNLOADS_DIR,
-            "%(album,playlist_title)s/%(playlist_index)02d %(title)s.%(ext)s",
+            "%(album,playlist_title)s/%(playlist_index&{:02d} |)s%(title)s.%(ext)s",
         ),
         "progress_hooks": [progress_hook],
         "remote_components": ["ejs:github"],

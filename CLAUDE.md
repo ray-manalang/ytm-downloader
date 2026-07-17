@@ -359,7 +359,7 @@ With `downsample_hires` and a source >16-bit/>48 kHz, `-ar 44100` is added. **No
 
 **Docker system deps:** the image installs `ffmpeg` (yt-dlp + converter), Deno (JS challenge), and `libsndfile1` (librosa's soundfile backend for enrichment). librosa also pulls numba/scipy — a few hundred MB.
 - **Never add `extractor_args` with a custom `player_client` list** — it restricts the format list and causes lower-bitrate streams to be selected
-- `outtmpl`: `%(album,playlist_title)s/%(playlist_index)02d %(title)s.%(ext)s`
+- `outtmpl`: `%(album,playlist_title)s/%(playlist_index&{:02d} |)s%(title)s.%(ext)s` — the `&{:02d} |` conditional emits `01 ` **only when there is a playlist index**. A single-track grab has none, and a plain `%(playlist_index)02d` renders the literal string **`NA`**, so every individually-added song landed as `NA Title.m4a` (harmless tags, junk filename — and now the common path, since search makes adding one song easy). Album tracks render identically to before
 
 ## Cover art (`_apply_album_cover` → else `_resize_cover`)
 
