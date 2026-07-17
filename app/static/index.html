@@ -56,7 +56,7 @@
   .nav-item:hover { background: var(--surface2); color: var(--text); }
   /* Selected = red-tinted highlight, but the label stays muted grey (not red) so
      it isn't red-on-red. Same pattern on the segmented toggles + the Type pills. */
-  .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .nav-item.active { background: var(--surface2); color: var(--text); font-weight: 600; }
   .nav-item .nav-ico { width: 18px; text-align: center; font-size: 14px; flex-shrink: 0; }
   .nav-item .badge { margin-left: auto; }
 
@@ -294,7 +294,7 @@
   .src-picker { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 14px; flex-wrap: wrap; }
   .src-picker button { background: transparent; color: var(--muted); border: none; padding: 8px 15px; font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 0; display: flex; align-items: center; gap: 7px; }
   .src-picker button:hover { color: var(--text); background: var(--surface2); }
-  .src-picker button.on { background: var(--accent-soft); color: var(--accent); }
+  .src-picker button.on { background: var(--surface2); color: var(--text); }
   .pl-src { min-height: 40px; }
 
   .pl-advanced { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 4px; }
@@ -312,7 +312,7 @@
   .genre-head { display: flex; align-items: center; justify-content: space-between; }
   .genre-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; text-transform: none; letter-spacing: 0; }
   .genre-toggle button { background: transparent; color: var(--muted); border: none; padding: 4px 11px; font-size: 11px; font-weight: 600; cursor: pointer; border-radius: 0; }
-  .genre-toggle button.on { background: var(--accent-soft); color: var(--accent); }
+  .genre-toggle button.on { background: var(--surface2); color: var(--text); }
   .genre-list { display: flex; flex-direction: column; }
   .genre-row { display: flex; align-items: center; gap: 10px; padding: 4px 8px; border-radius: 6px; cursor: pointer; transition: background .12s, transform .07s ease; }
   .genre-row:hover { background: var(--surface2); }
@@ -432,7 +432,7 @@
   .yt-res-sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .act-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
   .act-seg button { background: transparent; color: var(--muted); border: none; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 0; }
-  .act-seg button.on { background: var(--accent-soft); color: var(--accent); }
+  .act-seg button.on { background: var(--surface2); color: var(--text); }
   .proc-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
   /* Fixed layout: column widths follow the <th> widths and stay put regardless of
      cell content, so a changing audited-filename can't re-flow the columns. */
