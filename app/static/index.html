@@ -21,7 +21,7 @@
     --muted:    #9a9a9e;
     --accent:   #ff0033;
     --accent2:  #d9002b;
-    --accent-soft: rgba(255, 0, 51, 0.15);
+    --accent-soft: rgba(255, 0, 51, 0.15);   /* subtle red tint (pairs with --accent text) */
     --danger:   #ff453a;
     --warn:     #f2c94c;
     --info:     #5ea2ff;
@@ -56,7 +56,7 @@
   .nav-item:hover { background: var(--surface2); color: var(--text); }
   /* Selected = red-tinted highlight, but the label stays muted grey (not red) so
      it isn't red-on-red. Same pattern on the segmented toggles + the Type pills. */
-  .nav-item.active { background: var(--accent-soft); color: var(--muted); font-weight: 600; }
+  .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .nav-item .nav-ico { width: 18px; text-align: center; font-size: 14px; flex-shrink: 0; }
   .nav-item .badge { margin-left: auto; }
 
@@ -294,7 +294,7 @@
   .src-picker { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 14px; flex-wrap: wrap; }
   .src-picker button { background: transparent; color: var(--muted); border: none; padding: 8px 15px; font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 0; display: flex; align-items: center; gap: 7px; }
   .src-picker button:hover { color: var(--text); background: var(--surface2); }
-  .src-picker button.on { background: var(--accent-soft); color: var(--muted); }
+  .src-picker button.on { background: var(--accent-soft); color: var(--accent); }
   .pl-src { min-height: 40px; }
 
   .pl-advanced { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 4px; }
@@ -312,7 +312,7 @@
   .genre-head { display: flex; align-items: center; justify-content: space-between; }
   .genre-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; text-transform: none; letter-spacing: 0; }
   .genre-toggle button { background: transparent; color: var(--muted); border: none; padding: 4px 11px; font-size: 11px; font-weight: 600; cursor: pointer; border-radius: 0; }
-  .genre-toggle button.on { background: var(--accent-soft); color: var(--muted); }
+  .genre-toggle button.on { background: var(--accent-soft); color: var(--accent); }
   .genre-list { display: flex; flex-direction: column; }
   .genre-row { display: flex; align-items: center; gap: 10px; padding: 4px 8px; border-radius: 6px; cursor: pointer; transition: background .12s, transform .07s ease; }
   .genre-row:hover { background: var(--surface2); }
@@ -432,7 +432,7 @@
   .yt-res-sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .act-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
   .act-seg button { background: transparent; color: var(--muted); border: none; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 0; }
-  .act-seg button.on { background: var(--accent-soft); color: var(--muted); }
+  .act-seg button.on { background: var(--accent-soft); color: var(--accent); }
   .proc-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
   /* Fixed layout: column widths follow the <th> widths and stay put regardless of
      cell content, so a changing audited-filename can't re-flow the columns. */
@@ -455,8 +455,8 @@
   .proc-kind { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
   /* Same pattern as the selected states: the tint carries the stream (blue
      download vs red library), the text stays muted grey — not tint-on-tint. */
-  .proc-kind.kind-dl { background: rgba(62,166,255,.14); color: var(--muted); }
-  .proc-kind.kind-lib { background: var(--accent-soft); color: var(--muted); }
+  .proc-kind.kind-dl { background: rgba(62,166,255,.14); color: var(--info); }
+  .proc-kind.kind-lib { background: rgba(255,0,51,.14); color: var(--accent); }
   .proc-progress { color: var(--muted); font-size: 12px; }
   .proc-bar { height: 5px; background: var(--surface2); border-radius: 3px; overflow: hidden; min-width: 80px; margin-bottom: 3px; }
   .proc-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .4s ease; }
