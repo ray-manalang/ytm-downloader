@@ -108,6 +108,11 @@
   .dash-step-go { color: var(--muted); font-size: 12px; opacity: 0; transition: opacity .12s; flex-shrink: 0; }
   .dash-step:hover .dash-step-go { opacity: 1; }
   .step.done .step-num { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  /* Steps gated on the Audit having run — dimmed, controls disabled. */
+  .step.locked { opacity: .5; }
+  .step.locked .step-actions button:not(.audit-jump), .step.locked .step-actions input { pointer-events: none; }
+  .step-lock { font-size: 12px; color: var(--warn); margin-top: 8px; display: none; }
+  .step.locked .step-lock { display: block; }
   .step-body { flex: 1; min-width: 0; }
   .step-title { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .step-status { font-size: 12px; color: var(--muted); margin-top: 3px; }
@@ -845,71 +850,107 @@
       <button class="btn-ghost btn-sm" onclick="switchTab('setup')">Change in Setup →</button>
     </div>
 
-    <div class="add-box" style="margin-bottom:20px">
-      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-        <div style="flex:1;min-width:220px">
-          <div style="font-weight:600;font-size:15px">Audit library</div>
-          <div style="color:var(--muted);font-size:13px;margin-top:2px">A read-only scan that indexes tags, genres, and file sizes. Everything in Optimize builds on this — run it first, and after adding music.</div>
+    <p style="color:var(--muted);font-size:13px;margin:0 0 16px;line-height:1.6">
+      Run <strong style="color:var(--text)">step 1</strong> first — everything below reads the index it builds. Then work down: each step tells you if it found anything, and you can fix it or move on. Nothing changes your files until you hit <strong style="color:var(--text)">Apply</strong> in a step, and every change is reversible from <a href="#" onclick="switchTab('activity'); return false" style="color:var(--accent)">Activity</a>.
+    </p>
+
+    <!-- Step 1 · Audit (the gate — everything else reads library_tracks) -->
+    <div class="step" id="astep-audit">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <div class="step-title">Audit library <span id="auditStepStatus" class="step-status" style="margin:0"></span></div>
+        <div class="step-desc">A read-only scan that indexes every file's tags, genres, and sizes. <strong>Do this first, and again after adding music</strong> — the checks below all read what it builds.</div>
+        <div class="step-actions">
+          <button class="btn-primary" id="auditBtn" onclick="startAudit()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Run audit</button>
         </div>
-        <button class="btn-primary" id="auditBtn" onclick="startAudit()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Run audit</button>
+        <div id="auditError" style="color:var(--danger);font-size:13px;margin-top:10px"></div>
+        <div id="auditResults"></div>
+        <div id="missingAAReport"></div>
       </div>
-      <div id="auditError" style="color:var(--danger);font-size:13px;margin-top:10px"></div>
-      <div id="auditResults"></div>
-      <div id="missingAAReport"></div>
     </div>
 
-    <div class="add-box">
-      <div style="font-weight:600;font-size:15px">Mislabeled album artists</div>
-      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Albums whose album-artist matches no track artist — usually a record label or wrong name in the tag (e.g. Dido albums filed under the label “Disky”). This is why <strong>Complete genres</strong> fragments those artists. Review, uncheck any false positives (producer/DJ &amp; classical albums), then apply — every change is reversible.</div>
-      <button class="btn-ghost btn-sm" id="suspectAABtn" onclick="loadSuspectAlbumArtist()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V4.8A2 2 0 0 1 4.8 2.8H12a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Scan for mislabeled album artists</button>
-      <div id="suspectAAReport" style="margin-top:12px"></div>
-    </div>
-
-    <!-- Complete genres — lives with the other genre tools, not on Optimize -->
-    <div class="add-box" id="genresCard" style="margin-top:20px">
-      <div style="font-weight:600;font-size:15px">Complete genres <span id="stepGenresStatus" style="color:var(--muted);font-weight:400;font-size:12px"></span></div>
-      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Give every artist one consistent genre. Proposes a genre per artist from the curated map, then the majority of existing tags, then optionally MusicBrainz/Claude. Review and edit before applying; a sole <strong style="color:var(--text)">Holiday</strong> tag is preserved.</div>
-      <div class="step-actions">
-        <button class="btn-ghost btn-sm" id="reviewBtn" onclick="startReview()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></svg>Review genres</button>
-        <label style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
-          <input type="checkbox" id="reviewOnline" style="width:15px;height:15px;accent-color:var(--accent)">
-          Look up unknown artists online (MusicBrainz — slower)
-        </label>
-        <label id="reviewLLMLabel" style="display:none;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
-          <input type="checkbox" id="reviewLLM" style="width:15px;height:15px;accent-color:var(--accent)">
-          Use Claude for still-unknown artists (one batched call)
-        </label>
+    <!-- Step 2 · Complete genres (id genresCard kept — gotoStep flashes it) -->
+    <div class="step" id="genresCard">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <div class="step-title">Complete genres <span id="stepGenresStatus" class="step-status" style="margin:0"></span></div>
+        <div class="step-desc">Give every artist one consistent genre. Proposes one per artist from the curated map, then the majority of existing tags, then optionally MusicBrainz/Claude. Review and edit before applying; a sole <strong style="color:var(--text)">Holiday</strong> tag is preserved.</div>
+        <div class="step-actions">
+          <button class="btn-ghost btn-sm" id="reviewBtn" onclick="startReview()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></svg>Review genres</button>
+          <label style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
+            <input type="checkbox" id="reviewOnline" style="width:15px;height:15px;accent-color:var(--accent)">
+            Look up unknown artists online (MusicBrainz — slower)
+          </label>
+          <label id="reviewLLMLabel" style="display:none;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
+            <input type="checkbox" id="reviewLLM" style="width:15px;height:15px;accent-color:var(--accent)">
+            Use Claude for still-unknown artists (one batched call)
+          </label>
+        </div>
+        <div class="step-lock">Run the Audit (step 1) first.</div>
+        <div id="reviewError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
+        <div id="reviewResult"></div>
       </div>
-      <div id="reviewError" style="color:var(--danger);font-size:13px;margin-top:8px"></div>
-      <div id="reviewResult"></div>
     </div>
 
-    <div class="add-box" style="margin-top:20px">
-      <div style="font-weight:600;font-size:15px">Unmapped genres</div>
-      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Raw genre strings in your files that map to nothing in the controlled vocabulary — so they get dropped. Assign each to a controlled genre (or mark as junk) to <strong>teach the vocabulary</strong>; future Audit/Clean runs will normalize them automatically.</div>
-      <button class="btn-ghost btn-sm" id="unmappedBtn" onclick="loadUnmappedGenres()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m15 15 2.5 2.5L22 13"/></svg>Map unmapped genres</button>
-      <div id="unmappedReport" style="margin-top:12px"></div>
-    </div>
-
-    <div class="add-box" style="margin-top:20px">
-      <div style="font-weight:600;font-size:15px">Album genre outliers</div>
-      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Single-artist albums where most tracks share a genre but a few differ or are untagged — usually per-track tagging slips. Set the odd tracks to the album's genre (the rest stay as-is). Compilations are skipped since they're legitimately multi-genre.</div>
-      <button class="btn-ghost btn-sm" id="outlierBtn" onclick="loadAlbumOutliers()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>Scan for album genre outliers</button>
-      <div id="outlierReport" style="margin-top:12px"></div>
-    </div>
-
-    <div class="add-box" style="margin-top:20px">
-      <div style="font-weight:600;font-size:15px">Genre cross-check <span style="color:var(--muted);font-weight:400;font-size:12px">· MusicBrainz / Claude</span></div>
-      <div style="color:var(--muted);font-size:13px;margin:2px 0 12px">Catches <strong>consistently-wrong</strong> genres — an artist whose every track agrees on a genre that an external source contradicts (which majority-vote can never fix). Looks up each locally-consistent artist online and flags disagreements. Genre is subjective, so review before applying. Bounded per run (~150 artists) but <strong>remembers what it checked</strong> — run it repeatedly to cover your whole library; disagreements accumulate below.</div>
-      <div class="step-actions" style="margin-bottom:8px">
-        <button class="btn-ghost btn-sm" id="crosscheckBtn" onclick="startCrosscheck()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>Run genre cross-check</button>
-        <label id="crosscheckLLMLabel" style="display:none;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
-          <input type="checkbox" id="crosscheckLLM" style="width:15px;height:15px;accent-color:var(--accent)">
-          Also use Claude for artists MusicBrainz doesn't cover
-        </label>
+    <!-- Step 3 · Unmapped genres -->
+    <div class="step" id="astep-unmapped">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <div class="step-title">Map unmapped genres <span id="unmappedStepStatus" class="step-status" style="margin:0"></span></div>
+        <div class="step-desc">Raw genre strings in your files that match nothing in the controlled vocabulary, so they get dropped. Assign each to a controlled genre (or mark it junk) to <strong>teach the vocabulary</strong> — then re-Clean on Optimize and future runs normalize them automatically.</div>
+        <div class="step-actions">
+          <button class="btn-ghost btn-sm" id="unmappedBtn" onclick="loadUnmappedGenres()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m15 15 2.5 2.5L22 13"/></svg>Map unmapped genres</button>
+        </div>
+        <div class="step-lock">Run the Audit (step 1) first.</div>
+        <div id="unmappedReport" style="margin-top:12px"></div>
       </div>
-      <div id="crosscheckError" style="color:var(--danger);font-size:13px"></div>
-      <div id="crosscheckReport" style="margin-top:8px"></div>
+    </div>
+
+    <!-- Step 4 · Album genre outliers -->
+    <div class="step" id="astep-outliers">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <div class="step-title">Album genre outliers</div>
+        <div class="step-desc">Single-artist albums where most tracks share a genre but a few differ or are untagged — usually per-track slips. Sets the odd tracks to the album's genre (the rest stay as-is). Compilations are skipped, since they're legitimately multi-genre.</div>
+        <div class="step-actions">
+          <button class="btn-ghost btn-sm" id="outlierBtn" onclick="loadAlbumOutliers()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>Scan for album genre outliers</button>
+        </div>
+        <div class="step-lock">Run the Audit (step 1) first.</div>
+        <div id="outlierReport" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <!-- Step 5 · Genre cross-check -->
+    <div class="step" id="astep-crosscheck">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <div class="step-title">Genre cross-check <span class="step-status" style="margin:0">· MusicBrainz / Claude · optional</span></div>
+        <div class="step-desc">Catches <strong>consistently-wrong</strong> genres — an artist whose every track agrees on a genre that an external source contradicts (majority-vote can never fix this). Slow, and genre is subjective, so review before applying. Bounded per run (~150 artists) but <strong>remembers what it checked</strong> — run it repeatedly to cover the library; disagreements accumulate below.</div>
+        <div class="step-actions">
+          <button class="btn-ghost btn-sm" id="crosscheckBtn" onclick="startCrosscheck()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>Run genre cross-check</button>
+          <label id="crosscheckLLMLabel" style="display:none;align-items:center;gap:8px;color:var(--muted);font-size:13px;cursor:pointer">
+            <input type="checkbox" id="crosscheckLLM" style="width:15px;height:15px;accent-color:var(--accent)">
+            Also use Claude for artists MusicBrainz doesn't cover
+          </label>
+        </div>
+        <div class="step-lock">Run the Audit (step 1) first.</div>
+        <div id="crosscheckError" style="color:var(--danger);font-size:13px"></div>
+        <div id="crosscheckReport" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- Step 6 · Mislabeled album artists (a different axis — album-artist, not genre) -->
+    <div class="step" id="astep-albumartist">
+      <div class="step-num">6</div>
+      <div class="step-body">
+        <div class="step-title">Mislabeled album artists <span class="step-status" style="margin:0">· a different fix from genres</span></div>
+        <div class="step-desc">Albums whose album-artist matches no track artist — usually a record label or wrong name (e.g. Dido albums filed under the label “Disky”). This is what makes step 2 fragment an artist. Review, uncheck false positives (producer/DJ &amp; classical), then apply — reversible.</div>
+        <div class="step-actions">
+          <button class="btn-ghost btn-sm" id="suspectAABtn" onclick="loadSuspectAlbumArtist()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V4.8A2 2 0 0 1 4.8 2.8H12a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>Scan for mislabeled album artists</button>
+        </div>
+        <div class="step-lock">Run the Audit (step 1) first.</div>
+        <div id="suspectAAReport" style="margin-top:12px"></div>
+      </div>
     </div>
   </div>
 
@@ -3090,8 +3131,36 @@ async function loadLatestAudit() {
   try {
     const res = await fetch('/api/prep/audit/latest');
     const data = await res.json();
-    renderAuditResults(data.audit && data.audit.summary);
-  } catch {}
+    const summary = data.audit && data.audit.summary;
+    renderAuditResults(summary);
+    _applyAuditStepStates(summary);
+  } catch { _applyAuditStepStates(null); }
+}
+
+// Drive the numbered stepper: lock steps 2–6 until an audit exists, mark step 1
+// done, and fill the cheap status lines the audit summary already knows.
+function _applyAuditStepStates(s) {
+  const indexed = !!(s && s.total_tracks);
+  // Step 1 status + done state.
+  const st1 = document.getElementById('auditStepStatus');
+  const s1 = document.getElementById('astep-audit');
+  if (s1) s1.classList.toggle('done', indexed);
+  if (st1) st1.innerHTML = indexed
+    ? `${s.total_tracks.toLocaleString()} tracks indexed`
+      + (s.needs_normalization ? ` · <span style="color:var(--warn)">${s.needs_normalization} need a genre fix</span>` : '')
+      + (s.missing_albumartist ? ` · ${s.missing_albumartist} missing album-artist` : '')
+    : 'Not run yet — start here.';
+
+  // Steps 2–6 are useless without the index → lock them until it exists.
+  ['genresCard', 'astep-unmapped', 'astep-outliers', 'astep-crosscheck', 'astep-albumartist']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('locked', !indexed); });
+
+  // Step 3 has a cheap count the audit already computed.
+  const st3 = document.getElementById('unmappedStepStatus');
+  if (st3) {
+    const n = indexed && Array.isArray(s.unmapped_genres) ? s.unmapped_genres.length : 0;
+    st3.innerHTML = n ? `<span style="color:var(--warn)">${n} to map</span>` : (indexed ? '· none — good' : '');
+  }
 }
 
 function renderAuditResults(s) {
