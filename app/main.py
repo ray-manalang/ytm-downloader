@@ -320,11 +320,42 @@ def _resolve_artist(existing: dict, primary: str) -> str:
     return name
 
 
-def _fill_missing_tags(path, primary_artist: str, genre_by_artist: dict):
+# A new download by an artist you've never had resolves neither from the curated
+# map nor from your library, so its genre stayed empty and you had to run the
+# genre tools by hand. MusicBrainz is the same resolver the review step uses —
+# consulted here only as a last resort, and only for artists nothing local knows.
+PROMOTE_GENRE_LOOKUP = os.environ.get("PROMOTE_GENRE_LOOKUP", "1") not in ("0", "false", "False")
+_PROMOTE_MB_CAP = 25          # bound the network per promoted batch
+_MB_GENRE_LIMIT = 2           # MB returns up to 7; 2 is a tag, more is noise
+
+
+def _lookup_genre_online(primary_artist: str, cache: dict, budget: list):
+    """MusicBrainz genre for an artist nothing local could resolve. Cached per
+    batch (a 14-track album is ONE lookup) and capped, since each call costs ~2s
+    and MusicBrainz asks for <=1 req/sec."""
+    key = primary_artist.strip().lower()
+    if key in cache:
+        return cache[key]
+    if budget[0] <= 0:
+        return None
+    budget[0] -= 1
+    try:
+        g = tagtools.musicbrainz_genres(primary_artist)[:_MB_GENRE_LIMIT] or None
+    except Exception:
+        g = None
+    cache[key] = g
+    if g:
+        logger.info("promote: genre for %r from MusicBrainz -> %s", primary_artist, g)
+    return g
+
+
+def _fill_missing_tags(path, primary_artist: str, genre_by_artist: dict,
+                       mb_cache: dict = None, mb_budget: list = None):
     """YouTube provides no album-artist or genre — fill them in place so new grabs
     land usable. Album-artist ← the primary artist; genre ← the curated map, else
-    the dominant genre of that artist's existing library tracks. Leaves whatever's
-    already set alone; unknown-artist genre stays empty for the Complete-genres step."""
+    the dominant genre of that artist's existing library tracks, else MusicBrainz.
+    Leaves whatever's already set alone; a genre nothing can resolve stays empty
+    for the Complete-genres step."""
     try:
         tags = tagtools.read_tags(path)
     except Exception:
@@ -335,6 +366,8 @@ def _fill_missing_tags(path, primary_artist: str, genre_by_artist: dict):
     if not tagtools.normalize_genre(tagtools._genre_list(tags.get("genre"))):
         g = (tagtools.ARTIST_GENRES.get(primary_artist.strip().lower())
              or genre_by_artist.get(_normalize_artist(primary_artist)))
+        if not g and PROMOTE_GENRE_LOOKUP and primary_artist and mb_cache is not None:
+            g = _lookup_genre_online(primary_artist, mb_cache, mb_budget)
         if g:
             new_genre = g if isinstance(g, list) else [g]
 
@@ -354,6 +387,10 @@ def _promote_files_sync(files: list, genre_by_artist: dict = None) -> list:
     ipod_root = Path(ipod).resolve() if ipod else None
     do_ipod = ipod_root is not None and ipod_root != music_root
     genre_by_artist = genre_by_artist or {}
+    # Shared across the whole batch: an album by one new artist costs ONE
+    # MusicBrainz lookup, not one per track.
+    mb_cache: dict = {}
+    mb_budget = [_PROMOTE_MB_CAP]
 
     # Map existing artist folders (loose key → actual name) so downloads merge
     # into the user's structure instead of creating near-duplicate folders.
@@ -395,7 +432,7 @@ def _promote_files_sync(files: list, genre_by_artist: dict = None) -> list:
                 shutil.move(str(src), str(lib_dst))  # copy+unlink across filesystems/SMB
 
             # Fill album-artist + genre before mirroring, so the iPod copy has them too.
-            _fill_missing_tags(lib_dst, primary, genre_by_artist)
+            _fill_missing_tags(lib_dst, primary, genre_by_artist, mb_cache, mb_budget)
 
             if do_ipod:
                 ipod_dst = ipod_root / rel
