@@ -777,13 +777,16 @@ async def delete_file(body: dict):
             parent.rmdir()
             parent = parent.parent
 
+    swept = {"removed": 0}
     if is_lib:
         # Cascade: remove iPod mirror copies, de-index, refresh playlists.
         music_dir, ipod_dir = prep_module.MUSIC_DIR, prep_module.IPOD_DIR
+        touched_mirror_dirs = set()
         for p in removed_files:
             try:
                 if ipod_dir and Path(ipod_dir).resolve() != base:
                     mp = Path(converter.mirror_path(p, music_dir, ipod_dir))
+                    touched_mirror_dirs.add(mp.parent)
                     if mp.exists():
                         mp.unlink()
                         mparent = mp.parent
@@ -793,6 +796,20 @@ async def delete_file(body: dict):
                             mparent = mparent.parent
             except Exception as exc:
                 logger.warning("delete: mirror cleanup failed for %s: %s", p, exc)
+        # The twin-mapping above only finds the mirror file this source would
+        # produce TODAY. A mirror that has drifted — an album re-added in another
+        # format, so the old .m4a sits beside the new .mp3 — keeps a stale file
+        # the mapping can't see, and deleting the source strands it forever.
+        # Sweep the folders this delete touched: O(deleted), not a full-library
+        # orphan scan, and it only removes files with no source at all.
+        if ipod_dir and touched_mirror_dirs and Path(ipod_dir).resolve() != base:
+            try:
+                swept = prep_module.sweep_mirror_dirs(music_dir, ipod_dir, touched_mirror_dirs)
+                if swept["removed"]:
+                    logger.info("delete: swept %d orphaned mirror file(s) from %d folder(s)",
+                                swept["removed"], len(touched_mirror_dirs))
+            except Exception as exc:
+                logger.warning("delete: mirror sweep failed: %s", exc)
         async with aiosqlite.connect(DB_PATH) as db:
             await db.executemany(
                 "DELETE FROM library_tracks WHERE path=?",
@@ -805,7 +822,8 @@ async def delete_file(body: dict):
             logger.warning("delete: playlist refresh failed: %s", exc)
 
     filecache.invalidate()  # listing changed — drop the cache
-    return {"ok": True, "deleted": len(removed_files)}
+    return {"ok": True, "deleted": len(removed_files),
+            "mirror_orphans_removed": swept.get("removed", 0)}
 
 
 # ── WebSocket ────────────────────────────────────────────────────────────────

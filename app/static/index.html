@@ -1957,8 +1957,23 @@ async function _deletePaths(paths) {
     await loadFiles(true);  // our local view may now be wrong — re-sync for real
     return false;
   }
+  const d = await res.json().catch(() => ({}));
   _dropFromFilesData(paths);
+  // The mirror sweep is silent when there's nothing stale, which is the normal
+  // case — only say something when it actually cleaned up.
+  if (d.mirror_orphans_removed) _flashFileNote(
+    `Also removed ${d.mirror_orphans_removed} stale mirror file${d.mirror_orphans_removed !== 1 ? 's' : ''} from the iPod copy.`);
   return true;
+}
+
+function _flashFileNote(msg) {
+  const el = document.getElementById('fileCount');
+  if (!el) return;
+  const note = document.createElement('span');
+  note.style.cssText = 'color:var(--success);margin-left:10px';
+  note.textContent = '· ' + msg;
+  el.appendChild(note);
+  setTimeout(() => note.remove(), 6000);
 }
 
 async function deleteFile(path) {

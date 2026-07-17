@@ -1398,6 +1398,59 @@ def _scan_mirror_orphans(source_dir: str, output_dir: str, fresh: bool = False) 
     return orphans
 
 
+def mirror_has_source(rel: Path, src_root: Path) -> bool:
+    """Does this mirror file still have a source? Same keep-rule as
+    `_scan_mirror_orphans`, but for one file — so a delete can sweep the folders
+    it touched without walking the whole library."""
+    from .converter import _TRANSCODE_EXTS
+    if (src_root / rel).exists():
+        return True                       # copied as-is (mp3/m4a/…)
+    if rel.suffix.lower() == ".m4a":
+        for ext in _TRANSCODE_EXTS:       # transcoded from a lossless source
+            if (src_root / rel.with_suffix(ext)).exists():
+                return True
+    return False
+
+
+def sweep_mirror_dirs(source_dir: str, output_dir: str, mirror_dirs) -> dict:
+    """Remove orphaned mirror files from just these folders, plus any now-empty
+    parents. Scoped on purpose: a full orphan scan walks both roots (O(library))
+    and would surface orphans unrelated to what was deleted."""
+    from .converter import _COPY_EXTS
+    src_root, out_root = Path(source_dir).resolve(), Path(output_dir).resolve()
+    mirror_exts = _COPY_EXTS | {".m4a"}
+    removed, freed = 0, 0
+    for d in mirror_dirs:
+        d = Path(d)
+        if not d.is_dir() or out_root not in d.parents and d != out_root:
+            continue
+        for p in list(d.iterdir()):
+            if not p.is_file() or p.suffix.lower() not in mirror_exts:
+                continue
+            try:
+                rel = p.relative_to(out_root)
+            except ValueError:
+                continue
+            if mirror_has_source(rel, src_root):
+                continue
+            try:
+                freed += p.stat().st_size
+                p.unlink()
+                removed += 1
+            except OSError:
+                pass
+    # Tidy up folders the sweep emptied.
+    for d in mirror_dirs:
+        parent = Path(d)
+        while parent != out_root and parent.is_dir() and not any(parent.iterdir()):
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+            parent = parent.parent
+    return {"removed": removed, "bytes": freed}
+
+
 def _prune_mirror(source_dir: str, output_dir: str) -> dict:
     """Delete orphaned mirror files (fresh scan) and any now-empty dirs."""
     out_root = Path(output_dir).resolve()
