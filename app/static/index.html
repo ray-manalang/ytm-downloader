@@ -54,7 +54,9 @@
   .nav-group-label { font-size: 10px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); padding: 16px 10px 6px; font-weight: 700; }
   .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 9px; cursor: pointer; color: var(--muted); font-weight: 500; font-size: 13.5px; user-select: none; transition: background .18s var(--ease), color .18s var(--ease); }
   .nav-item:hover { background: var(--surface2); color: var(--text); }
-  .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  /* Selected = red-tinted highlight, but the label keeps its normal (non-red)
+     color so it isn't red-on-red. Same pattern on the segmented toggles below. */
+  .nav-item.active { background: var(--accent-soft); color: var(--text); font-weight: 600; }
   .nav-item .nav-ico { width: 18px; text-align: center; font-size: 14px; flex-shrink: 0; }
   .nav-item .badge { margin-left: auto; }
 
@@ -292,7 +294,7 @@
   .src-picker { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 14px; flex-wrap: wrap; }
   .src-picker button { background: transparent; color: var(--muted); border: none; padding: 8px 15px; font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 0; display: flex; align-items: center; gap: 7px; }
   .src-picker button:hover { color: var(--text); background: var(--surface2); }
-  .src-picker button.on { background: var(--accent-soft); color: var(--accent); }
+  .src-picker button.on { background: var(--accent-soft); color: var(--text); }
   .pl-src { min-height: 40px; }
 
   .pl-advanced { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 4px; }
@@ -310,7 +312,7 @@
   .genre-head { display: flex; align-items: center; justify-content: space-between; }
   .genre-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; text-transform: none; letter-spacing: 0; }
   .genre-toggle button { background: transparent; color: var(--muted); border: none; padding: 4px 11px; font-size: 11px; font-weight: 600; cursor: pointer; border-radius: 0; }
-  .genre-toggle button.on { background: var(--accent-soft); color: var(--accent); }
+  .genre-toggle button.on { background: var(--accent-soft); color: var(--text); }
   .genre-list { display: flex; flex-direction: column; }
   .genre-row { display: flex; align-items: center; gap: 10px; padding: 4px 8px; border-radius: 6px; cursor: pointer; transition: background .12s, transform .07s ease; }
   .genre-row:hover { background: var(--surface2); }
@@ -430,7 +432,7 @@
   .yt-res-sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .act-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
   .act-seg button { background: transparent; color: var(--muted); border: none; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 0; }
-  .act-seg button.on { background: var(--accent-soft); color: var(--accent); }
+  .act-seg button.on { background: var(--accent-soft); color: var(--text); }
   .proc-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
   /* Fixed layout: column widths follow the <th> widths and stay put regardless of
      cell content, so a changing audited-filename can't re-flow the columns. */
