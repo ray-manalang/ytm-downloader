@@ -1788,7 +1788,7 @@ function _procJobRow(j, active) {
     : `${rollback}<button class="btn-danger btn-sm" title="Remove" aria-label="Remove" onclick="removePrepJob('${j.id}','${j.status}')">${ICON_TRASH}</button>`;
   return `<tr id="proc-${j.id}" class="${active ? 'proc-active' : ''}">
     <td><div class="proc-name-main">${name}</div>${cf}</td>
-    <td><span class="proc-kind kind-lib">Library</span></td>
+    <td><span class="proc-kind kind-lib">${TYPE_CATEGORY[type] || 'Library'}</span></td>
     <td>${statusIcon(stChip, stLabel)}</td>
     <td class="proc-progress">${progress}</td>
     <td class="proc-time" title="${fmtDate(j.created_at)}">${fmtAgo(j.created_at)}</td>
@@ -3270,10 +3270,21 @@ async function loadPrepJobs() {
 function renderPrepJobs() { renderActivity(); }
 
 const PREP_TITLES = {
-  convert: 'Convert → AAC 256k', audit: 'Library Audit', tags: 'Clean Tags',
+  convert: 'Convert → iPod', audit: 'Library Audit', tags: 'Clean Tags',
   review: 'Genre Review', unify: 'Unify Genres', enrich: 'Analyze BPM & Energy',
   relabel: 'Fix Album Artists', genrealign: 'Align Album Genres',
   crosscheck: 'Genre Cross-Check',
+};
+
+// The Name says the specific job; the Type column says its CATEGORY, so the nine
+// prep job types collapse into a few meaningful buckets instead of all reading
+// "Library". Colored by stream (blue download vs red library work); the category
+// is the text.
+const TYPE_CATEGORY = {
+  audit: 'Audit',                                              // read-only index scan
+  tags: 'Tags', unify: 'Tags', relabel: 'Tags', genrealign: 'Tags',   // write file tags
+  review: 'Analyze', crosscheck: 'Analyze', enrich: 'Analyze',        // compute / propose
+  convert: 'Convert',                                          // build the AAC mirror
 };
 
 function prepSummaryChips(type, s, jobId) {
