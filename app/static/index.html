@@ -442,6 +442,10 @@
   .proc-table tbody tr:first-child { border-top: none; }
   .proc-table tbody tr.proc-active { background: var(--accent-soft); }
   .proc-table td { padding: 9px 14px; vertical-align: middle; }
+  /* Center the Type (2), Status (3) and Updated (5) columns — header + cells. */
+  .proc-table th:nth-child(2), .proc-table td:nth-child(2),
+  .proc-table th:nth-child(3), .proc-table td:nth-child(3),
+  .proc-table th:nth-child(5), .proc-table td:nth-child(5) { text-align: center; }
   .proc-name-main { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
   /* Reserve one line's height so the row doesn't grow when the first filename
      arrives; max-width:100% keeps a long name inside the fixed Name column. */
