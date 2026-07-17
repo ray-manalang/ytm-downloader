@@ -107,7 +107,9 @@
   .dash-step:hover .dash-step-label { color: var(--accent); }
   .dash-step-go { color: var(--muted); font-size: 12px; opacity: 0; transition: opacity .12s; flex-shrink: 0; }
   .dash-step:hover .dash-step-go { opacity: 1; }
-  .step.done .step-num { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  /* Done = green, matching the Activity "done" chip. (It was --accent red, which
+     read as an error rather than a completion.) */
+  .step.done .step-num { background: var(--success-soft); color: var(--success); border-color: var(--success); }
   /* Steps gated on the Audit having run — dimmed, controls disabled. */
   .step.locked { opacity: .5; }
   .step.locked .step-actions button:not(.audit-jump), .step.locked .step-actions input { pointer-events: none; }
@@ -3119,6 +3121,9 @@ async function updatePrepSteps() {
   set('genres', !!p.genres && !unresolved,
     p.genres ? (unresolved ? `· ${unresolved} artists still unresolved` : '· all artists resolved') : '· not reviewed yet',
     unresolved > 0);
+  // Audit page: step 2 IS the #genresCard step (not `step-genres`), so mark its
+  // number done here — reviewed with nothing left unresolved. No-op on Optimize.
+  document.getElementById('genresCard')?.classList.toggle('done', !!p.genres && !unresolved);
   set('enrich', total > 0 && enrichPending === 0,
     total > 0 ? `${enriched.toLocaleString()}/${total.toLocaleString()} tracks analyzed${enrichErrors ? ` · <span style="color:var(--warn)">${enrichErrors} couldn't be analyzed</span>` : ''}.` : 'Enables tempo/energy playlist rules.',
     total > 0 && enrichPending > 0);
@@ -3155,12 +3160,11 @@ function _applyAuditStepStates(s) {
   ['genresCard', 'astep-unmapped', 'astep-outliers', 'astep-crosscheck', 'astep-albumartist']
     .forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('locked', !indexed); });
 
-  // Step 3 has a cheap count the audit already computed.
+  // Step 3 has a cheap count the audit already computed → done when there's none.
   const st3 = document.getElementById('unmappedStepStatus');
-  if (st3) {
-    const n = indexed && Array.isArray(s.unmapped_genres) ? s.unmapped_genres.length : 0;
-    st3.innerHTML = n ? `<span style="color:var(--warn)">${n} to map</span>` : (indexed ? '· none — good' : '');
-  }
+  const n3 = indexed && Array.isArray(s.unmapped_genres) ? s.unmapped_genres.length : 0;
+  if (st3) st3.innerHTML = n3 ? `<span style="color:var(--warn)">${n3} to map</span>` : (indexed ? '· none — good' : '');
+  document.getElementById('astep-unmapped')?.classList.toggle('done', indexed && n3 === 0);
 }
 
 function renderAuditResults(s) {
@@ -3477,6 +3481,8 @@ async function loadSuspectAlbumArtist() {
       const res = await fetch('/api/prep/suspect-albumartist');
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Scan failed — run an Audit first.')}</span>`; return; }
+      // Scan-based step: done once it comes back clean, un-done while it has rows.
+      document.getElementById('astep-albumartist')?.classList.toggle('done', !d.total);
       if (!d.total) {
         // Dismissing every row lands here, so the restore link has to live in the
         // empty state too — otherwise hiding them all is irreversible from the UI.
@@ -3652,6 +3658,7 @@ async function loadAlbumOutliers() {
       const res = await fetch('/api/prep/genres/album-outliers');
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Scan failed — run an Audit first.')}</span>`; return; }
+      document.getElementById('astep-outliers')?.classList.toggle('done', !d.total);
       if (!d.total) {
         // Same trap as the album-artist report: dismissing every row lands here,
         // so the restore link must be reachable from the empty state.
@@ -3914,6 +3921,9 @@ async function loadCrosscheck() {
     const oc = await ocRes.json().catch(() => null);
     const last = ((await lastRes.json().catch(() => ({}))).crosscheck || {}).summary || null;
     renderCrosscheckTable(oc, last);
+    // Step 5 done = every consistent artist has been checked and nothing's left.
+    document.getElementById('astep-crosscheck')?.classList.toggle('done',
+      !!oc && oc.checked > 0 && (oc.remaining || 0) === 0);
   } catch {}
 }
 
