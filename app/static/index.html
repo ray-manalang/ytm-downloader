@@ -175,6 +175,12 @@
   .status-done     { background: var(--success-soft); color: var(--success); }
   .status-error    { background: var(--danger-soft); color: var(--danger); }
   .status-cancelled { background: rgba(136,136,136,.15); color: var(--muted); }
+  /* Icon status badge (Activity rows). Reuses the .status-* color classes for the
+     hue tint; this just fixes the shape. .status-chip (text) is unchanged, so the
+     Playlists "N tracks" chip keeps its pill. */
+  .status-ico { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; }
+  .status-ico svg { width: 14px; height: 14px; }
+  .status-ico.spin svg { animation: btnspin .8s linear infinite; }
   /* Summary chips (job counts / download speed). Wrap as whole chips rather than
      letting each one squash and break its own text on a narrow Progress column. */
   .speed-info { color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; gap: 2px 12px; }
@@ -841,7 +847,7 @@
                px, not %: a % column is wrong at some viewport by definition, and at 11%
                the Status cell was 50px against a 111px "DOWNLOADING" chip, which spilled
                60px over the Progress column. Name + Progress take the slack. -->
-          <th style="width:30%">Name</th><th style="width:100px">Kind</th><th style="width:140px">Status</th><th>Progress</th><th style="width:88px">Updated</th><th style="width:110px"></th>
+          <th style="width:30%">Name</th><th style="width:100px">Type</th><th style="width:70px">Status</th><th>Progress</th><th style="width:88px">Updated</th><th style="width:110px"></th>
         </tr></thead>
         <tbody id="procBody"></tbody>
       </table>
@@ -1696,6 +1702,27 @@ function _procProgressCell(id, pct, pos) {
   return `<div class="proc-bar"><i id="pf-${id}" style="width:${pct}%"></i></div><span class="proc-pos" id="pp-${id}">${pos}</span>`;
 }
 
+// Status as a hue-coded icon badge instead of a text pill. The word still rides
+// along as a title/aria-label so it stays scannable and accessible. Active states
+// (downloading/running) spin.
+const _SVG = {
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  spinner: '<path d="M12 3a9 9 0 1 0 9 9"/>',           // open ring → reads as "working"
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  alert: '<path d="M12 8v5"/><circle cx="12" cy="16.5" r=".6" fill="currentColor" stroke="none"/><path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
+  slash: '<circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/>',
+};
+function statusIcon(status, label) {
+  const map = {
+    pending: 'clock', downloading: 'spinner', running: 'spinner',
+    done: 'check', error: 'alert', cancelled: 'slash', rolled_back: 'slash',
+  };
+  const paths = _SVG[map[status] || 'slash'];
+  const spin = (status === 'downloading' || status === 'running') ? ' spin' : '';
+  const txt = label || status;
+  return `<span class="status-ico status-${status}${spin}" title="${escHtml(txt)}" aria-label="${escHtml(txt)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg></span>`;
+}
+
 function _procDlRow(d, active) {
   const name = escHtml(d.title || 'Download');
   // Always render the container for active rows so live progress updates have a
@@ -1722,7 +1749,7 @@ function _procDlRow(d, active) {
   return `<tr id="proc-${d.id}" class="${active ? 'proc-active' : ''}">
     <td><div class="proc-name-main" title="${name}">${name}</div>${cf}</td>
     <td><span class="proc-kind kind-dl">Download</span></td>
-    <td><span class="status-chip status-${d.status}">${d.status}</span></td>
+    <td>${statusIcon(d.status, d.status)}</td>
     <td class="proc-progress">${progress}</td>
     <td class="proc-time" title="${fmtDate(d.created_at)}">${fmtAgo(d.created_at)}</td>
     <td class="proc-actions">${action}</td>
@@ -1758,7 +1785,7 @@ function _procJobRow(j, active) {
   return `<tr id="proc-${j.id}" class="${active ? 'proc-active' : ''}">
     <td><div class="proc-name-main">${name}</div>${cf}</td>
     <td><span class="proc-kind kind-lib">Library</span></td>
-    <td><span class="status-chip status-${stChip}">${stLabel}</span></td>
+    <td>${statusIcon(stChip, stLabel)}</td>
     <td class="proc-progress">${progress}</td>
     <td class="proc-time" title="${fmtDate(j.created_at)}">${fmtAgo(j.created_at)}</td>
     <td class="proc-actions">${action}</td>
