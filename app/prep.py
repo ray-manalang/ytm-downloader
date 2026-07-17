@@ -1197,8 +1197,11 @@ async def album_genre_outliers():
             "outliers": [{"title": Path(p).stem, "current": g or "(none)"} for p, g in outliers][:12],
         })
 
+    hidden = await _fetch_dismissed("genrealign")
+    n_before = len(out)
+    out = [a for a in out if a["folder"] not in hidden]
     out.sort(key=lambda a: (-a["outlier_count"], a["artist"].lower(), a["album"].lower()))
-    return {"total": len(out), "albums": out}
+    return {"total": len(out), "albums": out, "dismissed": n_before - len(out)}
 
 
 @router.post("/genres/align")
@@ -1493,6 +1496,53 @@ def _artist_primary_key(name) -> str:
     return s.strip()
 
 
+# ── Review dismissals ────────────────────────────────────────────────────────
+# The album-artist and outlier reports re-derive from library_tracks on every
+# scan, so a false positive (classical, producer/DJ) comes back every single
+# time unless it's remembered. Unchecking a row only excludes it from THAT
+# apply. Same problem the genre cross-check solved with crosscheck_state.dismissed.
+
+_DISMISS_KINDS = ("albumartist", "genrealign")
+
+
+async def _fetch_dismissed(kind: str) -> set:
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute(
+            "SELECT key FROM review_dismissed WHERE kind=?", (kind,)) as cur:
+            return {r[0] for r in await cur.fetchall()}
+
+
+@router.post("/review/dismiss")
+async def dismiss_review_rows(body: dict):
+    """Stop a report offering these rows. Doesn't touch tags — it's a judgement
+    about the *suggestion*, not the music."""
+    kind = str(body.get("kind") or "").strip()
+    if kind not in _DISMISS_KINDS:
+        raise HTTPException(400, f"kind must be one of {', '.join(_DISMISS_KINDS)}")
+    keys = [str(k).strip() for k in (body.get("keys") or []) if str(k).strip()]
+    if not keys:
+        raise HTTPException(400, "No rows to dismiss")
+    now = time.time()
+    async with aiosqlite.connect(_db_path) as db:
+        await db.executemany(
+            "INSERT OR REPLACE INTO review_dismissed (kind,key,dismissed_at) VALUES (?,?,?)",
+            [(kind, k, now) for k in keys])
+        await db.commit()
+    return {"dismissed": len(keys), "kind": kind}
+
+
+@router.delete("/review/dismiss")
+async def undismiss_review_rows(kind: str = ""):
+    """Forget dismissals for a report, so its hidden rows come back."""
+    kind = (kind or "").strip()
+    if kind not in _DISMISS_KINDS:
+        raise HTTPException(400, f"kind must be one of {', '.join(_DISMISS_KINDS)}")
+    async with aiosqlite.connect(_db_path) as db:
+        cur = await db.execute("DELETE FROM review_dismissed WHERE kind=?", (kind,))
+        await db.commit()
+        return {"restored": cur.rowcount, "kind": kind}
+
+
 @router.get("/suspect-albumartist")
 async def suspect_albumartist_report():
     """Albums whose album-artist matches NONE of the album's own track artists — a
@@ -1552,8 +1602,14 @@ async def suspect_albumartist_report():
             "track_artists": sorted(set(primaries.values()))[:6],
         })
 
+    # Drop what's already been judged a false positive — the whole point is not
+    # re-litigating the same classical/DJ albums on every scan.
+    hidden = await _fetch_dismissed("albumartist")
+    n_before = len(suspects)
+    suspects = [s for s in suspects if s["folder"] not in hidden]
     suspects.sort(key=lambda s: (s["kind"] != "single", s["current"].lower(), s["album"].lower()))
-    return {"total": len(suspects), "suspects": suspects}
+    return {"total": len(suspects), "suspects": suspects,
+            "dismissed": n_before - len(suspects)}
 
 
 @router.post("/albumartist/apply")

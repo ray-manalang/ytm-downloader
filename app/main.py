@@ -155,6 +155,20 @@ async def db_init():
                 dismissed  INTEGER DEFAULT 0           -- user reviewed & hid it (e.g. external was a wrong match)
             )
         """)
+        # Rows a review has been told to stop offering — a false positive you've
+        # judged once and shouldn't have to judge again. Generic on purpose: the
+        # album-artist and album-genre-outlier reports both re-derive from
+        # library_tracks on every scan, so without this they resurface the same
+        # classical/DJ albums forever. `kind` namespaces the report; `key` is that
+        # report's own row key (the album folder for both of today's users).
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS review_dismissed (
+                kind         TEXT,          -- albumartist | genrealign
+                key          TEXT,          -- the report's row key (album folder)
+                dismissed_at REAL,
+                PRIMARY KEY (kind, key)
+            )
+        """)
         # Migrate crosscheck_state tables created before the `dismissed` column.
         async with db.execute("PRAGMA table_info(crosscheck_state)") as cur:
             cc_cols = [r[1] for r in await cur.fetchall()]

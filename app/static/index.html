@@ -3277,16 +3277,47 @@ function suspectAAHTML(d) {
         <span class="suspect-old" title="current: ${escHtml(s.current)}">${escHtml(s.current)}</span>
         <span style="color:var(--muted)">→</span>
         <input class="suspect-input" data-i="${i}" value="${escHtml(s.proposed)}" spellcheck="false" aria-label="New album artist">
+        <button class="btn-ghost btn-sm" style="padding:3px 7px" title="Not a mistake — hide this album from future scans (doesn't change tags)" onclick="dismissSuspectRow(${i})">✕</button>
       </div>
     </div>`;
   }).join('');
-  const heading = `<strong style="color:var(--warn)">${d.total}</strong> album${d.total !== 1 ? 's' : ''} where the album artist matches no track artist — likely a record label or wrong name in the tag. <strong>Uncheck any false positives</strong> (producer/DJ &amp; classical albums), edit a proposed name if needed, then apply. Every change is reversible from Activity.`;
+  // Unchecking only excludes a row from THIS apply; ✕ is what makes it stay gone.
+  const heading = `<strong style="color:var(--warn)">${d.total}</strong> album${d.total !== 1 ? 's' : ''} where the album artist matches no track artist — likely a record label or wrong name in the tag. Edit a proposed name if needed, then apply. <strong>✕ hides a false positive for good</strong> (producer/DJ &amp; classical albums); unchecking only skips it this once. Every change is reversible from Activity.`;
+  const hiddenNote = d.dismissed
+    ? `<span style="color:var(--muted);font-size:12px">${d.dismissed} hidden · <a href="#" onclick="restoreSuspectDismissed(); return false" style="color:var(--accent)">show them again</a></span>`
+    : '';
   return `<div style="font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.5">${heading}</div>
     <div class="suspect-list">${rows}</div>
     <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap">
       <button class="btn-primary btn-sm" id="suspectApplyBtn" onclick="applySuspectAlbumArtist()">Apply <span id="suspectApplyN">${d.total}</span> selected</button>
       <span id="suspectApplyNote" style="color:var(--muted);font-size:12px">Writes album-artist in place; the source library must be writable.</span>
+      ${hiddenNote}
     </div>`;
+}
+
+// ✕ on a row: "this isn't a mistake, stop showing it". Tags are untouched — it's
+// a judgement about the suggestion. Same shape as the cross-check's dismiss.
+async function dismissSuspectRow(i) {
+  const s = _suspectAA[i];
+  if (!s) return;
+  const row = document.getElementById('suspect-' + i);
+  if (row) row.style.opacity = '.4';
+  try {
+    const res = await fetch('/api/prep/review/dismiss', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ kind: 'albumartist', keys: [s.folder] }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+  } catch {
+    if (row) row.style.opacity = '';
+    return;
+  }
+  loadSuspectAlbumArtist();
+}
+
+async function restoreSuspectDismissed() {
+  try { await fetch('/api/prep/review/dismiss?kind=albumartist', { method: 'DELETE' }); } catch {}
+  loadSuspectAlbumArtist();
 }
 
 function onSuspectToggle(i) {
@@ -3337,7 +3368,15 @@ async function loadSuspectAlbumArtist() {
       const res = await fetch('/api/prep/suspect-albumartist');
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Scan failed — run an Audit first.')}</span>`; return; }
-      if (!d.total) { el.innerHTML = '<span style="color:var(--success);font-size:13px">✓ No mislabeled album artists found — every album artist matches a track artist.</span>'; return; }
+      if (!d.total) {
+        // Dismissing every row lands here, so the restore link has to live in the
+        // empty state too — otherwise hiding them all is irreversible from the UI.
+        const restore = d.dismissed
+          ? ` <span style="color:var(--muted)">${d.dismissed} hidden · <a href="#" onclick="restoreSuspectDismissed(); return false" style="color:var(--accent)">show them again</a></span>`
+          : '';
+        el.innerHTML = `<span style="color:var(--success);font-size:13px">✓ No mislabeled album artists found — every album artist matches a track artist.</span>${restore}`;
+        return;
+      }
       el.innerHTML = suspectAAHTML(d);
     } catch { el.innerHTML = '<span style="color:var(--danger);font-size:13px">Scan failed.</span>'; }
   });
@@ -3443,16 +3482,45 @@ function albumOutliersHTML(d) {
       <div class="suspect-edit">
         <span style="color:var(--muted)">set →</span>
         <input class="outlier-input" data-i="${i}" value="${escHtml(a.dominant)}" spellcheck="false" aria-label="Album genre">
+        <button class="btn-ghost btn-sm" style="padding:3px 7px" title="Deliberate — hide this album from future scans (doesn't change tags)" onclick="dismissOutlierRow(${i})">✕</button>
       </div>
     </div>`;
   }).join('');
-  const heading = `<strong style="color:var(--warn)">${d.total}</strong> album${d.total !== 1 ? 's' : ''} with off-genre or untagged tracks vs a clear album majority. Applying sets each album's odd tracks to its genre — the rest are untouched. Uncheck any to leave; every change is reversible from Activity.`;
+  // Unchecking only skips a row on THIS apply; ✕ is what makes it stay gone.
+  const heading = `<strong style="color:var(--warn)">${d.total}</strong> album${d.total !== 1 ? 's' : ''} with off-genre or untagged tracks vs a clear album majority. Applying sets each album's odd tracks to its genre — the rest are untouched. <strong>✕ hides one for good</strong> if the mix is deliberate; unchecking only skips it this once. Every change is reversible from Activity.`;
+  const hiddenNote = d.dismissed
+    ? `<span style="color:var(--muted);font-size:12px">${d.dismissed} hidden · <a href="#" onclick="restoreOutlierDismissed(); return false" style="color:var(--accent)">show them again</a></span>`
+    : '';
   return `<div style="font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.5">${heading}</div>
     <div class="suspect-list">${rows}</div>
     <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap">
       <button class="btn-primary btn-sm" id="outlierApplyBtn" onclick="applyAlbumOutliers()">Apply <span id="outlierApplyN">${d.total}</span> selected</button>
       <span id="outlierNote" style="color:var(--muted);font-size:12px">Writes genre in place; the source library must be writable.</span>
+      ${hiddenNote}
     </div>`;
+}
+
+async function dismissOutlierRow(i) {
+  const a = _albumOutliers[i];
+  if (!a) return;
+  const row = document.getElementById('outlier-' + i);
+  if (row) row.style.opacity = '.4';
+  try {
+    const res = await fetch('/api/prep/review/dismiss', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ kind: 'genrealign', keys: [a.folder] }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+  } catch {
+    if (row) row.style.opacity = '';
+    return;
+  }
+  loadAlbumOutliers();
+}
+
+async function restoreOutlierDismissed() {
+  try { await fetch('/api/prep/review/dismiss?kind=genrealign', { method: 'DELETE' }); } catch {}
+  loadAlbumOutliers();
 }
 
 function onOutlierToggle(i) {
@@ -3475,7 +3543,15 @@ async function loadAlbumOutliers() {
       const res = await fetch('/api/prep/genres/album-outliers');
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { el.innerHTML = `<span style="color:var(--danger);font-size:13px">${escHtml(d.detail || 'Scan failed — run an Audit first.')}</span>`; return; }
-      if (!d.total) { el.innerHTML = '<span style="color:var(--success);font-size:13px">✓ No album genre outliers — every album is internally consistent.</span>'; return; }
+      if (!d.total) {
+        // Same trap as the album-artist report: dismissing every row lands here,
+        // so the restore link must be reachable from the empty state.
+        const restore = d.dismissed
+          ? ` <span style="color:var(--muted)">${d.dismissed} hidden · <a href="#" onclick="restoreOutlierDismissed(); return false" style="color:var(--accent)">show them again</a></span>`
+          : '';
+        el.innerHTML = `<span style="color:var(--success);font-size:13px">✓ No album genre outliers — every album is internally consistent.</span>${restore}`;
+        return;
+      }
       el.innerHTML = albumOutliersHTML(d);
     } catch { el.innerHTML = '<span style="color:var(--danger);font-size:13px">Scan failed.</span>'; }
   });
