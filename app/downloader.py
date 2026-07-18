@@ -21,6 +21,13 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
         if should_cancel():
             raise yt_dlp.utils.DownloadCancelled()
         idict = d.get("info_dict", {})
+        # Record the folder(s) THIS download writes to, so the post-download
+        # file count can be scoped to them. Without this, concurrent downloads
+        # inflate each other's track_count (a global rglob over DOWNLOADS_DIR
+        # sees both jobs' new files — an 11-track album reported 22).
+        fn = d.get("filename") or idict.get("filepath")
+        if fn:
+            info.setdefault("_dirs", set()).add(os.path.dirname(str(fn)))
         if d.get("status") == "downloading":
             album = idict.get("playlist_title") or idict.get("album")
             track = idict.get("title") or idict.get("track")
@@ -86,7 +93,18 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
     # Cover art + normalize genre tags in every newly created m4a. YTM albums come
     # with a proper full-size cover in a sibling "Album - <album>" folder; prefer
     # that over the (often wrong-size) embedded per-track thumbnail, then remove it.
-    files_after = set(base.rglob("*.m4a")) if base.exists() else set()
+    # Scope the after-scan to the folder(s) this job wrote to (from the progress
+    # hook) so a concurrent download's files aren't miscounted as ours. Fall back
+    # to the global scan only if the hook captured nothing (e.g. an odd extractor).
+    out_dirs = info.get("_dirs") or set()
+    if out_dirs:
+        files_after = set()
+        for d in out_dirs:
+            dp = Path(d)
+            if dp.is_dir():
+                files_after |= set(dp.rglob("*.m4a"))
+    else:
+        files_after = set(base.rglob("*.m4a")) if base.exists() else set()
     new_files = files_after - files_before
     cover_leftovers = set()
     for path in new_files:
