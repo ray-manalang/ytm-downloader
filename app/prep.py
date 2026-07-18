@@ -147,22 +147,41 @@ async def _upsert_tracks(tracks: list):
     now = time.time()
     rows = [
         (t["path"], t.get("artist"), t.get("albumartist"), t.get("album"),
-         t.get("genre"), t.get("year"), t.get("duration"), now, t.get("needs_clean"))
+         t.get("genre"), t.get("year"), t.get("duration"), now, t.get("needs_clean"),
+         t.get("mtime"), t.get("size"), t.get("raw_genre"))
         for t in tracks
     ]
     async with aiosqlite.connect(_db_path) as db:
         await db.executemany(
             "INSERT INTO library_tracks "
-            "(path,artist,albumartist,album,genre,year,duration,added_at,needs_clean) "
-            "VALUES (?,?,?,?,?,?,?,?,?) "
+            "(path,artist,albumartist,album,genre,year,duration,added_at,needs_clean,"
+            "mtime,size,raw_genre) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(path) DO UPDATE SET "
             "artist=excluded.artist, albumartist=excluded.albumartist, "
             "album=excluded.album, genre=excluded.genre, year=excluded.year, "
             "duration=excluded.duration, added_at=excluded.added_at, "
-            "needs_clean=excluded.needs_clean",
+            "needs_clean=excluded.needs_clean, mtime=excluded.mtime, "
+            "size=excluded.size, raw_genre=excluded.raw_genre",
             rows,
         )
         await db.commit()
+
+
+async def _fetch_audit_prior() -> dict:
+    """Prior audit state per file for the incremental audit: ``{path: {...}}`` with
+    the mtime/size (change detection) + the fields run_audit reuses when unchanged.
+    A single local query — cheap next to re-reading 12k files' tags over a mount."""
+    out = {}
+    async with aiosqlite.connect(_db_path) as db:
+        async with db.execute(
+            "SELECT path, mtime, size, raw_genre, artist, albumartist, album, year, duration "
+            "FROM library_tracks") as cur:
+            async for r in cur:
+                out[r[0]] = {"mtime": r[1], "size": r[2], "raw_genre": r[3],
+                             "artist": r[4], "albumartist": r[5], "album": r[6],
+                             "year": r[7], "duration": r[8]}
+    return out
 
 
 async def _reconcile_tracks(source_dir: str, scanned_paths) -> int:
@@ -320,9 +339,10 @@ async def _prep_worker():
                         None, lambda: run_conversion(job_spec, progress_cb, cancel_ev.is_set)
                     )
                 elif jtype == "audit":
+                    prior = await _fetch_audit_prior()   # incremental: skip unchanged files
                     result = await _loop.run_in_executor(
                         None, lambda: tagtools.run_audit(
-                            job_spec["source_dir"], progress_cb, cancel_ev.is_set)
+                            job_spec["source_dir"], progress_cb, cancel_ev.is_set, prior=prior)
                     )
                     await _upsert_tracks(result["tracks"])
                     # Reconcile the index with disk — but only on a complete scan;

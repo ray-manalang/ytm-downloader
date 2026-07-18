@@ -3291,7 +3291,7 @@ function renderAuditResults(s) {
   el.innerHTML = `
     <div style="border-top:1px solid var(--border);padding-top:14px">
       <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;margin-bottom:10px">
-        <span><strong>${s.total_tracks || 0}</strong> <span style="color:var(--muted)">tracks · ${fmtSize(s.total_bytes || 0)}</span></span>
+        <span><strong>${s.total_tracks || 0}</strong> <span style="color:var(--muted)">tracks · ${fmtSize(s.total_bytes || 0)}${s.rescanned != null ? ` · ${s.rescanned.toLocaleString()} re-read` : ''}</span></span>
         <span><strong style="color:var(--warn)">${s.needs_normalization || 0}</strong> <span style="color:var(--muted)">need genre fix</span></span>
         ${s.missing_albumartist
           ? `<span class="aa-link" onclick="loadMissingAlbumArtist()" title="List these files"><strong style="color:var(--warn)">${s.missing_albumartist}</strong> <span style="color:var(--muted)">missing album artist ▸</span></span>`

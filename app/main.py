@@ -189,6 +189,13 @@ async def db_init():
             lt_cols = [r[1] for r in await cur.fetchall()]
         if "needs_clean" not in lt_cols:
             await db.execute("ALTER TABLE library_tracks ADD COLUMN needs_clean INTEGER")
+        # Incremental-audit columns: the file's mtime+size let the audit skip
+        # re-reading tags for unchanged files, and raw_genre lets it re-normalise
+        # (genre dist / needs_clean) from the stored value without a file read.
+        # NULL on pre-existing rows → the next audit re-reads them once to backfill.
+        for _col, _decl in (("mtime", "REAL"), ("size", "INTEGER"), ("raw_genre", "TEXT")):
+            if _col not in lt_cols:
+                await db.execute(f"ALTER TABLE library_tracks ADD COLUMN {_col} {_decl}")
         await db.commit()
 
 

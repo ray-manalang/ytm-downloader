@@ -351,6 +351,32 @@ def _iter_audio(source_dir: Union[str, Path]):
             yield p
 
 
+def _walk_audio_stat(source_dir: Union[str, Path]):
+    """Yield ``(abs_path, mtime, size)`` for every audio file under ``source_dir``.
+
+    Uses os.scandir (one directory read + one stat per file; ``is_dir``/``is_file``
+    come from d_type without a stat, and on readdirplus mounts ``e.stat()`` can be
+    free). Feeds the incremental audit's change detection — cheap next to a full
+    mutagen tag read per file, which is what makes a stable-library audit fast.
+    """
+    stack = [str(Path(source_dir).resolve())]
+    while stack:
+        d = stack.pop()
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            stack.append(e.path)
+                        elif e.is_file(follow_symlinks=False) and is_audio_file(e.name):
+                            st = e.stat()
+                            yield e.path, st.st_mtime, st.st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+
+
 def clean_plan(tags: dict, path) -> dict:
     """Exactly what `run_clean` would do to this file — and nothing else decides it.
 
@@ -373,17 +399,28 @@ def clean_plan(tags: dict, path) -> dict:
             "needs_clean": do_genre or do_aa}
 
 
-def run_audit(source_dir: Union[str, Path], progress_cb, should_cancel) -> dict:
+def run_audit(source_dir: Union[str, Path], progress_cb, should_cancel, prior=None) -> dict:
     """Scan the library read-only. Returns {'tracks': [...], 'summary': {...}}.
 
-    ``tracks`` are upserted into ``library_tracks`` by the caller. The summary
-    reports normalized-genre distribution, how many tracks need normalization,
-    missing album-artist count, per-format counts/sizes, and a sample of raw
-    genre strings that map to nothing (so the vocabulary can be extended).
+    **Incremental.** ``prior`` is ``{abs_path: {mtime,size,raw_genre,artist,
+    albumartist,album,year,duration}}`` from the caller's ``library_tracks``. A
+    file whose mtime AND size match its prior row is *unchanged*: its tags aren't
+    re-read — the stored fields are reused and only the derived values (normalized
+    genre, needs_clean) are recomputed in memory, which is why re-running is cheap
+    even over a slow mount. Everything else (new file, mtime/size changed, or a row
+    with no stored raw_genre — e.g. first run after the migration) is re-read with
+    mutagen. Re-normalising from the stored raw genre also means a vocabulary edit
+    (`genres.json`) is picked up on the next audit without a file re-read.
+
+    ``tracks`` (all files, reused + re-read) are upserted by the caller. The
+    summary reports normalized-genre distribution, needs-normalization count,
+    missing album-artist count, per-format counts/sizes, a sample of unmapped raw
+    genres, and ``rescanned``/``reused`` so the UI can say how much actually changed.
     """
     maybe_reload()  # pick up any edits to a mounted genres.json
     base = Path(source_dir).resolve()
-    files = list(_iter_audio(base))
+    prior = prior or {}
+    files = list(_walk_audio_stat(base))     # [(abs_path, mtime, size)]
     total = len(files)
 
     tracks = []
@@ -394,22 +431,37 @@ def run_audit(source_dir: Union[str, Path], progress_cb, should_cancel) -> dict:
     unmapped: dict = {}          # raw genre string -> count
     total_bytes = 0
     errors = 0
-    done = 0
+    done = reused = rescanned = 0
 
-    for path in files:
+    for path_str, mtime, size in files:
         if should_cancel():
             break
-        rel = str(path.relative_to(base))
+        path = Path(path_str)
         try:
-            tags = read_tags(path)
-            size = path.stat().st_size
+            rel = str(path.relative_to(base))
+        except ValueError:
+            rel = path.name
+        try:
+            pr = prior.get(path_str)
+            unchanged = (pr is not None and pr.get("raw_genre") is not None
+                         and pr.get("mtime") == mtime and pr.get("size") == size)
+            if unchanged:
+                raw_genres = json.loads(pr["raw_genre"]) if pr["raw_genre"] else []
+                tags = {"genre": raw_genres, "albumartist": pr.get("albumartist"),
+                        "artist": pr.get("artist"), "album": pr.get("album"),
+                        "year": pr.get("year"), "duration": pr.get("duration")}
+                reused += 1
+            else:
+                tags = read_tags(path)
+                raw_genres = tags.get("genre") or []
+                rescanned += 1
+
             total_bytes += size
             ext = path.suffix.lower()
             fmt = formats.setdefault(ext, {"count": 0, "bytes": 0})
             fmt["count"] += 1
             fmt["bytes"] += size
 
-            raw_genres = tags.get("genre") or []
             norm = normalize_genre(raw_genres)
             if not norm:
                 genre_dist["(none)"] = genre_dist.get("(none)", 0) + 1
@@ -430,7 +482,7 @@ def run_audit(source_dir: Union[str, Path], progress_cb, should_cancel) -> dict:
             # flagged set instead of re-reading every file to discover (often)
             # that nothing needs doing. Same function Clean itself uses.
             tracks.append({
-                "path": str(path),
+                "path": path_str,
                 "artist": tags.get("artist"),
                 "albumartist": tags.get("albumartist"),
                 "album": tags.get("album"),
@@ -438,6 +490,9 @@ def run_audit(source_dir: Union[str, Path], progress_cb, should_cancel) -> dict:
                 "year": tags.get("year"),
                 "duration": tags.get("duration"),
                 "needs_clean": 1 if clean_plan(tags, path)["needs_clean"] else 0,
+                "mtime": mtime,
+                "size": size,
+                "raw_genre": json.dumps([str(x) for x in raw_genres]),
             })
         except Exception:
             errors += 1
@@ -455,6 +510,8 @@ def run_audit(source_dir: Union[str, Path], progress_cb, should_cancel) -> dict:
         "formats": formats,
         "unmapped_genres": [{"value": v, "count": c} for v, c in top_unmapped],
         "errors": errors,
+        "rescanned": rescanned,
+        "reused": reused,
         "cancelled": bool(should_cancel()),
     }
     return {"tracks": tracks, "summary": summary}
