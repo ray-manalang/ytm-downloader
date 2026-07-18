@@ -974,11 +974,29 @@ async def start_genre_review(body: dict):
 @router.get("/genres/latest")
 async def latest_review():
     """Most recent completed genre-review proposal (durable — survives removing
-    the review job card)."""
+    the review job card).
+
+    Dismissed artists (``review_dismissed`` kind=``review``) are filtered out here,
+    exactly like the album-outlier / suspect-album-artist reports. The review is a
+    stored snapshot rather than a live re-derive, so without this a proposal you
+    deliberately rejected would come back every time you re-run the review. The
+    shown counts are recomputed from the kept rows so the header stays accurate.
+    """
     st = await _latest_summary("review")
     if not st:
         return {"review": None}
-    return {"review": {"summary": st["summary"], "created_at": st["when"]}}
+    summary = dict(st["summary"] or {})
+    hidden = await _fetch_dismissed("review")
+    arts = summary.get("artists") or []
+    if hidden and arts:
+        kept = [a for a in arts if (a.get("key") or "") not in hidden]
+        summary["dismissed"] = len(arts) - len(kept)
+        summary["artists"] = kept
+        summary["total_changes"] = sum(a.get("changes", 0) for a in kept)
+        summary["unresolved"] = sum(1 for a in kept if a.get("source") == "unresolved")
+    else:
+        summary["dismissed"] = 0
+    return {"review": {"summary": summary, "created_at": st["when"]}}
 
 
 @router.post("/genres/cross-check")
@@ -1555,7 +1573,7 @@ def _artist_primary_key(name) -> str:
 # time unless it's remembered. Unchecking a row only excludes it from THAT
 # apply. Same problem the genre cross-check solved with crosscheck_state.dismissed.
 
-_DISMISS_KINDS = ("albumartist", "genrealign")
+_DISMISS_KINDS = ("albumartist", "genrealign", "review")
 
 
 async def _fetch_dismissed(kind: str) -> set:

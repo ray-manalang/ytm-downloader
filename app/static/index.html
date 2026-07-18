@@ -3877,16 +3877,21 @@ async function loadLatestReview() {
   } catch {}
 }
 
+let _lastReview = [];
 function renderReviewTable(s) {
   const el = document.getElementById('reviewResult');
-  if (!s) { el.innerHTML = ''; return; }
+  if (!s) { el.innerHTML = ''; _lastReview = []; return; }
   const artists = s.artists || [];
+  _lastReview = artists;
   if (!artists.length) {
     const holidayBit = s.holiday_only
       ? ` (${s.holiday_only} holiday-only artist${s.holiday_only === 1 ? '' : 's'} kept as-is — their only tracks are Christmas songs, deliberately preserved)`
       : '';
+    const hiddenBit = s.dismissed
+      ? ` · ${s.dismissed} hidden (<a href="#" onclick="restoreReviewDismissed();return false" style="color:var(--accent)">show again</a>)`
+      : '';
     el.innerHTML = `<div style="border-top:1px solid var(--border);padding-top:14px;color:var(--muted);font-size:13px">
-      Reviewed ${s.total_artists || 0} artists — nothing to change. Everything is already consistent 🎉${holidayBit}</div>`;
+      Reviewed ${s.total_artists || 0} artists — nothing to change. Everything is already consistent 🎉${holidayBit}${hiddenBit}</div>`;
     return;
   }
   const onlineNote = s.used_online
@@ -3915,6 +3920,8 @@ function renderReviewTable(s) {
                  placeholder="${unresolved ? 'type genre(s)…' : ''}"
                  style="width:100%;min-width:160px;background:var(--surface2);border:1px solid ${unresolved ? 'var(--warn)' : 'var(--border)'};border-radius:5px;color:var(--text);padding:5px 8px;font-size:12px;outline:none"></td>
         <td style="padding:8px 6px;vertical-align:top;text-align:right;color:${a.changes ? 'var(--accent)' : 'var(--muted)'};font-size:12px;font-weight:600">${a.changes || 0}</td>
+        <td style="padding:8px 6px;vertical-align:top;text-align:center">
+          <button class="btn-ghost btn-sm" style="padding:3px 7px" title="Leave this artist's genre alone — hide from future reviews (doesn't change tags)" onclick="dismissReviewRow(${i})">✕</button></td>
       </tr>`;
   }).join('');
 
@@ -3922,6 +3929,7 @@ function renderReviewTable(s) {
     <div style="border-top:1px solid var(--border);padding-top:14px">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
         <span style="font-size:13px"><strong>${artists.length}</strong> <span style="color:var(--muted)">artists to review · ${s.total_changes || 0} track changes · ${s.unresolved || 0} unresolved${onlineNote}${llmNote}${holidayNote}</span></span>
+        ${s.dismissed ? `<span style="color:var(--muted);font-size:12px">${s.dismissed} hidden · <a href="#" onclick="restoreReviewDismissed();return false" style="color:var(--accent)">show again</a></span>` : ''}
         <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;cursor:pointer;margin-left:auto">
           <input type="checkbox" id="revSelectAll" checked onchange="revToggleAll(this.checked)" style="accent-color:var(--accent)"> all</label>
         <button class="btn-primary btn-sm" onclick="applyGenres()">Apply Selected</button>
@@ -3935,6 +3943,7 @@ function renderReviewTable(s) {
             <th style="padding:8px 6px">Current</th>
             <th style="padding:8px 6px">Proposed genre(s)</th>
             <th style="padding:8px 6px;text-align:right">Δ</th>
+            <th style="padding:8px 6px;width:28px"></th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -3944,6 +3953,27 @@ function renderReviewTable(s) {
 
 function revToggleAll(checked) {
   document.querySelectorAll('.rev-inc').forEach(cb => { cb.checked = checked; });
+}
+
+// ✕ — permanently exclude an artist from genre-review proposals (persists across
+// re-runs via review_dismissed kind='review'; writes no tags). Mirrors the
+// outlier / album-artist / cross-check dismiss.
+async function dismissReviewRow(i) {
+  const a = _lastReview[i];
+  if (!a) return;
+  try {
+    const res = await fetch('/api/prep/review/dismiss', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ kind: 'review', keys: [a.key] }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+  } catch { return; }
+  loadLatestReview();
+}
+
+async function restoreReviewDismissed() {
+  try { await fetch('/api/prep/review/dismiss?kind=review', { method: 'DELETE' }); } catch {}
+  loadLatestReview();
 }
 
 async function applyGenres() {
