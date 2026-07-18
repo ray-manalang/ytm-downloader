@@ -93,19 +93,25 @@ def run_download(url: str, progress_callback: Callable, should_cancel: Callable)
     # Cover art + normalize genre tags in every newly created m4a. YTM albums come
     # with a proper full-size cover in a sibling "Album - <album>" folder; prefer
     # that over the (often wrong-size) embedded per-track thumbnail, then remove it.
-    # Scope the after-scan to the folder(s) this job wrote to (from the progress
-    # hook) so a concurrent download's files aren't miscounted as ours. Fall back
-    # to the global scan only if the hook captured nothing (e.g. an odd extractor).
-    out_dirs = info.get("_dirs") or set()
-    if out_dirs:
-        files_after = set()
-        for d in out_dirs:
-            dp = Path(d)
-            if dp.is_dir():
-                files_after |= set(dp.rglob("*.m4a"))
+    # Which .m4a files this download owns, scoped to the folder(s) it wrote to
+    # (captured in the progress hook). A global rglob over DOWNLOADS_DIR is
+    # unreliable under concurrency: it sees other jobs' fresh files (an 11-track
+    # album counted 22), or once files move/pre-exist it misses its own (counted 2).
+    out_dirs = [Path(d) for d in (info.get("_dirs") or set())]
+    folder_m4a = set()
+    for dp in out_dirs:
+        if dp.is_dir():
+            folder_m4a |= set(dp.rglob("*.m4a"))
+    if "list=" in url and folder_m4a:
+        # Album/playlist: its own folder holds exactly this album's tracks — count
+        # them ALL (correct regardless of concurrency or a partial re-download).
+        new_files = folder_m4a
+    elif out_dirs:
+        # Single track: only what this run added to a (possibly shared) folder.
+        new_files = folder_m4a - files_before
     else:
-        files_after = set(base.rglob("*.m4a")) if base.exists() else set()
-    new_files = files_after - files_before
+        # Fallback — the hook captured nothing: original global diff.
+        new_files = (set(base.rglob("*.m4a")) if base.exists() else set()) - files_before
     cover_leftovers = set()
     for path in new_files:
         used = _apply_album_cover(path)
