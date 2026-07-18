@@ -2226,6 +2226,7 @@ function handleWS(msg) {
       downloads[id].current_file = msg.current_file;
       downloads[id].playlist_index = msg.playlist_index;
       downloads[id].playlist_count = msg.playlist_count;
+      _updateYtDlBtn(id);
       updateCardInPlace(id);
       return;
     }
@@ -2281,6 +2282,7 @@ function handleWS(msg) {
     return;
   }
 
+  if (id && downloads[id]) _updateYtDlBtn(id);   // keep any Add-music result button in sync
   renderAll();
 }
 
@@ -2434,7 +2436,10 @@ function _ytRenderResults(rows) {
       : '<div style="color:var(--muted);font-size:13px;padding:12px 4px">No matches.</div>';
     return;
   }
-  box.innerHTML = '<div style="margin-top:10px">' + rows.map((r, i) => {
+  const _head = `<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;color:var(--muted);font-size:12px">
+    <span>${rows.length} result${rows.length !== 1 ? 's' : ''}</span>
+    <button class="btn-ghost btn-sm" onclick="clearYtSearch()">Clear results</button></div>`;
+  box.innerHTML = _head + '<div style="margin-top:6px">' + rows.map((r, i) => {
     const sub = r.kind === 'song'
       ? [r.artist, r.album, r.duration].filter(Boolean).join(' · ')
       : r.kind === 'playlist'
@@ -2463,6 +2468,16 @@ function _ytRenderResults(rows) {
 }
 let _ytResults = [];
 const _ytAlbumTracks = {};   // browseId -> tracks[] (one fetch per album)
+
+// Clear the search results + query. Bumps the sequence so a slow in-flight
+// response can't repaint after you've cleared.
+function clearYtSearch() {
+  const q = document.getElementById('ytSearchQ'); if (q) q.value = '';
+  const a = document.getElementById('ytSearchArtist'); if (a) a.value = '';
+  document.getElementById('ytSearchResults').innerHTML = '';
+  _ytResults = [];
+  _ytSearchSeq++;
+}
 
 // Expand an album result to its tracklist. Cached by browseId, so collapsing
 // and re-opening doesn't refetch — and a new search reuses it too.
@@ -2551,15 +2566,43 @@ async function ytDownload(i) {
     const d = await res.json();
     if (!res.ok) throw new Error(d.detail || 'Could not add');
     // Everything lands in the normal queue; Activity shows it via WS.
-    btn.textContent = r.kind === 'playlist'
-      ? `Queued ${d.queued} song${d.queued !== 1 ? 's' : ''}`
-      : (r.kind === 'album' ? 'Album queued' : 'Queued');
     btn.classList.remove('btn-primary'); btn.classList.add('btn-ghost');
+    if (r.kind === 'playlist') {
+      // N separate downloads — no single id to track; Activity shows each.
+      btn.textContent = `Queued ${d.queued} song${d.queued !== 1 ? 's' : ''}`;
+    } else if (d.download && d.download.id) {
+      // Song/album resolve to ONE queue entry — track it live so the button
+      // reflects queued → downloading → done as WS events arrive.
+      btn.dataset.dlid = d.download.id;
+      _updateYtDlBtn(d.download.id);
+    } else {
+      btn.textContent = r.kind === 'album' ? 'Album queued' : 'Queued';
+    }
   } catch (e) {
     btn.disabled = false; btn.innerHTML = label;
     const sub = document.querySelector(`#ytres-${i} .yt-res-sub`);
     if (sub) sub.innerHTML = `<span style="color:var(--danger)">${escHtml(e.message)}</span>`;
   }
+}
+
+// Live status for a search-result download button, driven by the same WS events
+// the Activity monitor uses. Matched by data-dlid (the queue id); a no-op if the
+// button was cleared or the results re-rendered.
+function _updateYtDlBtn(id) {
+  const btn = document.querySelector(`[data-dlid="${id}"]`);
+  if (!btn) return;
+  const dl = downloads[id];
+  let text = 'Queued', color = 'var(--muted)';
+  if (dl) {
+    const p = Math.round(dl.progress || 0);
+    if (dl.status === 'done')        { text = dl.track_count > 1 ? `Downloaded · ${dl.track_count} tracks` : 'Downloaded ✓'; color = 'var(--success)'; }
+    else if (dl.status === 'error')  { text = 'Failed'; color = 'var(--danger)'; }
+    else if (dl.status === 'cancelled') { text = 'Cancelled'; color = 'var(--muted)'; }
+    else if (dl.status === 'downloading' || p > 0) { text = `Downloading ${p}%`; color = 'var(--info)'; }
+  }
+  btn.textContent = text;
+  btn.style.color = color;
+  btn.disabled = true;
 }
 
 async function loadLibrary() {
