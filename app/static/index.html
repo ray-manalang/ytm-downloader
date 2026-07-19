@@ -1217,6 +1217,7 @@
         <option value=".wav">WAV</option>
         <option value=".opus">Opus</option>
       </select>
+      <button class="btn-ghost btn-sm" id="fileClearBtn" style="display:none" onclick="clearFileFilters()">Clear results</button>
       <button class="btn-ghost btn-sm" onclick="runBusy(this, () => loadFiles(true))">↻ Refresh</button>
     </div>
     <div id="fileAlpha" class="file-alpha"></div>
@@ -1891,6 +1892,14 @@ async function filterFilesByGenre(genre) {
 }
 
 function clearFileGenre() { fileGenre = ''; _fileGenrePaths = null; renderFiles(); }
+
+// Reset every Files filter at once — search, format, and the genre drilldown.
+function clearFileFilters() {
+  fileSearch = ''; fileFormat = ''; fileGenre = ''; _fileGenrePaths = null;
+  const s = document.getElementById('fileSearch'); if (s) s.value = '';
+  const f = document.getElementById('fileFormat'); if (f) f.value = '';
+  renderFiles();
+}
 let _fileSearchTimer = null;
 
 function onFileSearch() {
@@ -1933,6 +1942,9 @@ function renderFiles() {
   const empty = document.getElementById('filesEmpty');
   const fmtSel = document.getElementById('fileFormat');
   fileFormat = fmtSel ? fmtSel.value : '';
+  // Clear-results only appears when a filter is actually narrowing the list.
+  const clearBtn = document.getElementById('fileClearBtn');
+  if (clearBtn) clearBtn.style.display = (fileSearch || fileFormat || fileGenre) ? '' : 'none';
 
   // Apply format + text filters, then group by directory (Artist/Album).
   const albums = {};
