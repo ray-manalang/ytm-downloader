@@ -1,36 +1,39 @@
 # Music Monster
 
-A self-hosted music-library tool. It started as a YouTube Music downloader and is growing into a full pipeline: download high-quality m4a files with embedded artwork and metadata, then clean tags, unify genres, and mirror the library to an iPod-ready AAC copy.
+A self-hosted music-library tool. It started as a YouTube Music downloader and grew into a full pipeline: download high-quality m4a with embedded artwork and metadata, auto-organize into your library, clean tags and unify genres, mirror to an iPod-ready AAC copy, and build smart/AI playlists on top.
 
-![Dark mode UI with queue, history, and file browser](https://img.shields.io/badge/UI-dark%20mode-ff0033?style=flat-square) ![Multi-arch](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-blue?style=flat-square)
+![Dark mode UI](https://img.shields.io/badge/UI-dark%20mode-ff0033?style=flat-square) ![Multi-arch](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-blue?style=flat-square)
 
 > **Running it day to day?** See [RUNBOOK.md](RUNBOOK.md) for the operator workflow (deploy → download → prepare → playlists, in order).
 
 ## Features
 
-- Paste one or many YouTube Music URLs (playlists and single tracks)
-- Real-time download progress — current track, position in playlist, speed, ETA
-- Queue management — cancel pending or active downloads
-- Download history with error reporting
-- File browser grouped by album — delete individual tracks or entire folders
-- **YouTube Music library** — browse and download your playlists and liked songs directly from the app
-- **OAuth authentication** — connect once via Google OAuth; never re-authenticate unless you explicitly revoke access
-- **Auto-sync** — automatically download new liked songs on a configurable schedule
-- **iPod AAC mirror** — transcode a FLAC library to a 256k AAC mirror for iPod/iTunes; source is never modified, and re-runs only convert what's missing
-- **Tag cleanup** — audit your library, normalize genres to a controlled vocabulary, and fill missing album artists; every change is one-click reversible, and new downloads land normalized
-- **Smart playlists** — build genre/decade/year/artist rules and Music Monster keeps a matching `.m3u` in sync for your library, the iPod mirror, or both; also import YouTube Music playlists (missing tracks are queued to download)
-- **AI playlists** — describe a vibe and Claude builds it from your library (optional; set `ANTHROPIC_API_KEY`)
-- **BPM & energy analysis** — analyze your library so smart playlists can filter by tempo and energy; playlists auto-refresh nightly and after library changes
-- Dark mode UI, no build step, no external JS dependencies
+- **Add music without leaving the app** — search YouTube Music (songs / albums / playlists) and download straight into your library, or paste a URL. Downloads track live (Queued → Downloading N% → Done). Music only: video results are never requested.
+- **Liked Songs inbox** — see what you've liked that you *don't already have* (already-in-library tracks — including ones downloaded on another machine — drop off automatically), download per-track with live progress, or **Sync New Songs** on a schedule.
+- **Auto-promote** — a finished download is organized into `MUSIC_DIR/<Artist>/<Album>/`, copied to the iPod mirror, indexed, and — when YouTube omits them — has its album-artist and genre filled (curated map → your library → MusicBrainz).
+- **Activity monitor** — one place for every download and library job: status, progress, and per-file cost.
+- **Files browser** — grouped by album with cover thumbnails, an A–Z index, search + format filters, and multi-folder delete that cascades to the mirror and auto-refresh playlists.
+- **OAuth authentication** — connect once via Google OAuth; the refresh token never expires unless you revoke it.
+- **Library audit** — a read-only scan reporting genre distribution, tags needing a fix, missing album-artists, per-format sizes, and *unmapped genres*. **Incremental** — after the first pass it only re-reads files whose mtime/size changed, so a re-audit of a large library on a network mount is seconds, not minutes.
+- **Tag & genre tools** (all one-click reversible) — normalize genres to a controlled vocabulary, fill album-artists, complete/unify one genre per artist (curated map → majority vote → optional MusicBrainz/Claude), a **genre cross-check** against MusicBrainz, **album genre-outlier** and **mislabeled album-artist** reviews, and a **vocabulary mapper** for unmapped genres.
+- **iPod AAC mirror** — transcode a FLAC library to a 256k AAC copy; the source is never modified; re-runs only convert what's missing; an **orphan prune** removes mirror files whose source is gone. Plus an **Apple Music** helper that generates an AppleScript to add/refresh/prune entries (Music Monster can't touch Apple Music directly — same files, a private local app).
+- **Process new additions** — chain Audit → Clean → Analyze → Convert over the library, optionally auto-running after a download batch settles, plus a **scheduled audit**.
+- **Smart / YouTube-Music-import / AI playlists** — rule-based (genre/decade/year/artist/album/BPM/energy), imported from a YTM playlist (missing tracks queued to download), or AI-curated from a natural-language vibe (optional). Hand-curate manually, edit any playlist in place, and re-target to library and/or iPod. Music Monster keeps the `.m3u` in sync.
+- **BPM & energy analysis** (librosa) so smart playlists can filter by tempo and energy.
+- Dark-mode single-file UI, no build step, no external JS dependencies.
+
+## App layout
+
+A left-sidebar app: **Dashboard** (overview + genre analytic) · **Activity** (all jobs) · **Add music** (Search / Paste a URL / Liked Songs) · **Audit** (inspect & fix tags — a guided stepper) · **Optimize** (the jobs that change your library — Clean → Analyze → Convert, plus mirror maintenance) · **Playlists** · **Files** · **Setup** (library folder, automation, YouTube Music connection).
 
 ## Output format
 
 Each download produces:
 
-- **Format**: M4A (AAC), best available quality
-- **Thumbnail**: embedded, cropped to square, 600×600 px
-- **Metadata**: track number, total tracks, album artist, artist — sourced from playlist info
-- **File path**: `<Album or Playlist Title>/01 Track Title.m4a`
+- **Format**: M4A (AAC), best available quality (no codec restriction).
+- **Cover**: the full-size album cover, embedded at **native resolution** (center-cropped to a square).
+- **Metadata**: track number, album-artist, artist, and genre — album-artist/genre are filled at promote time when YouTube omits them.
+- **File path** (with `AUTO_PROMOTE`): `MUSIC_DIR/<Artist>/<Album>/01 Track Title.m4a` (a track features a guest → still filed under the primary artist).
 
 ## Quick start (Docker)
 
@@ -85,7 +88,7 @@ services:
       - "8503:8080"
     volumes:
       - /mnt/data/supervisor/share:/share
-      - /mnt/data/supervisor/share/Music:/music        # FLAC library (read-write: Clean edits tags in place)
+      - /mnt/data/supervisor/share/Music:/music        # library (read-write: Clean/genre tools + promote write here)
       - /mnt/data/supervisor/share/iPod:/ipod          # AAC mirror output
       - /mnt/data/supervisor/share/cookies.txt:/cookies.txt
       - ytm_data:/data
@@ -104,111 +107,105 @@ volumes:
   ytm_data:
 ```
 
-This maps the native HAOS `/share` directory into the container so downloaded files are accessible from other HA add-ons and the Samba share. `Music` and `iPod` are subfolders of that share, so the AAC mirror is reachable from your Mac over Samba for import into Music/iTunes.
+This maps the native HAOS `/share` directory into the container so downloaded files are reachable from other add-ons and the Samba share. `Music` and `iPod` are subfolders of that share, so the AAC mirror is reachable from your Mac over Samba for import into Music/iTunes.
+
+> **After any image change**, Portainer must **force re-pull** `raymanalang/music-monster:latest` before redeploying — a plain stack restart uses the cached layer.
 
 ## Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `DOWNLOADS_DIR` | `./downloads` | Staging for downloads (keep local/fast) |
-| `AUTO_PROMOTE` | `1` (on) | Auto-move finished downloads into `MUSIC_DIR` + copy to `IPOD_DIR` + index them (set `0` to keep files in staging only) |
-| `DB_PATH` | `./data/downloads.db` | SQLite database path |
-| `YTM_AUTH_PATH` | `./data/ytm_auth.json` | YouTube Music credentials (written by the app on first auth) |
-| `MAX_CONCURRENT_DOWNLOADS` | `2` | Parallel download workers |
-| `COOKIES_FILE` | _(unset)_ | Path to a Netscape-format cookies.txt for age-restricted or authenticated downloads |
-| `MUSIC_DIR` | _(unset)_ | Source library root for the Convert tab; mount **read-only** |
-| `IPOD_DIR` | `./ipod` | AAC mirror output root |
-| `MAX_CONCURRENT_CONVERSIONS` | `2` | Parallel transcode workers |
-| `AAC_BITRATE` | `256k` | Conversion bitrate |
-| `PLAYLIST_DIR_LIBRARY` | `<MUSIC_DIR>/Playlists` | Where smart-playlist `.m3u` files are written |
+| `DOWNLOADS_DIR` | `./downloads` | Staging for downloads (keep local/fast). Finished files are promoted to `MUSIC_DIR`+`IPOD_DIR` unless `AUTO_PROMOTE=0`. |
+| `AUTO_PROMOTE` | `1` (on) | Move a finished download into `MUSIC_DIR/<Artist>/<Album>/`, copy to `IPOD_DIR`, index it, and refresh playlists. No-op if `MUSIC_DIR` is unset. |
+| `DB_PATH` | `./data/downloads.db` | SQLite database path. |
+| `YTM_AUTH_PATH` | `./data/ytm_auth.json` | YouTube Music credentials (written by the app on first auth). |
+| `MAX_CONCURRENT_DOWNLOADS` | `2` | Parallel download workers. |
+| `COOKIES_FILE` | _(unset)_ | Netscape-format cookies.txt for age-restricted videos. Mount **without `:ro`** — yt-dlp writes back to refresh token expiry. |
+| `MUSIC_DIR` | _(unset)_ | Library root. **Mount read-write** — Clean/genre tools edit tags in place and downloads are promoted here (the converter itself only reads it). |
+| `IPOD_DIR` | `./ipod` | AAC mirror output root (read-write). |
+| `MAX_CONCURRENT_CONVERSIONS` | `2` | Parallel convert-*job* workers. |
+| `MAX_CONCURRENT_TRANSCODES` | _(CPU count)_ | Parallel ffmpeg transcodes *within* one convert job. |
+| `MAX_CONCURRENT_ANALYSES` | _(CPU count)_ | Parallel librosa analyses *within* one Analyze job. |
+| `CONVERT_STAT_WORKERS` | _(min(32, 4×transcodes))_ | Parallel workers for a convert job's resumable skip-check (network-latency-bound). |
+| `AAC_BITRATE` | `256k` | Conversion bitrate. |
+| `COVER_CACHE_DIR` | `<dirname(DB_PATH)>/cover_cache` | Local disk cache for Files-browser cover thumbnails. Keep on fast local storage. |
+| `PLAYLIST_DIR_LIBRARY` | `<MUSIC_DIR>/Playlists` | Smart-playlist `.m3u` output pointing at the source library. |
+| `PLAYLIST_DIR_IPOD` | `<IPOD_DIR>/Playlists` | iPod-target `.m3u` output (mirror paths). |
+| `PROMOTE_GENRE_LOOKUP` | `1` (on) | Let a finished download resolve an unknown artist's genre from MusicBrainz. Set `0` for fully-offline promotion. |
+| `GENRES_FILE` | _(bundled)_ | Override path for the genre vocabulary/maps (`genres.json`); live-reloaded on edit. |
+| `ARTIST_GENRES_FILE` | _(bundled)_ | Override path for the curated artist→genre map; live-reloaded on edit. |
+| `ANTHROPIC_API_KEY` | _(unset)_ | Enables the AI playlist engine + optional Claude genre lookups. **Runtime env only — never commit.** |
+| `ANTHROPIC_MODEL` | `claude-haiku-4-5` | Model for AI curation (cheap by design). |
 
-## YouTube Music library integration
+## YouTube Music integration
 
-The **Library** tab (default) lets you browse and download from your YouTube Music account.
+Connect your account under **Setup → YouTube Music**, then browse/download from **Add music**. Catalog **Search** works even without connecting (it uses an unauthenticated client) — a connection is only needed for your **Liked Songs** and playlist import.
 
 ### Connecting via OAuth (recommended)
 
 OAuth is permanent — the refresh token never expires unless you revoke it in your Google account.
 
 **One-time Google Cloud setup:**
-1. Go to [console.cloud.google.com](https://console.cloud.google.com) → APIs & Services → Library → enable **YouTube Data API v3**
-2. Go to Credentials → Create Credentials → OAuth client ID → type: **TV and Limited Input devices**
+1. [console.cloud.google.com](https://console.cloud.google.com) → APIs & Services → Library → enable **YouTube Data API v3**
+2. Credentials → Create Credentials → OAuth client ID → type: **TV and Limited Input devices**
 3. Copy the Client ID and Client Secret
 
-**In the app:**
-1. Open the Library tab → enter your Client ID and Client Secret → click **Get Authorization Code**
-2. Visit the URL shown, sign in to your Google account, and enter the displayed code
+**In the app (Setup → YouTube Music):**
+1. Enter your Client ID and Client Secret → **Get Authorization Code**
+2. Visit the URL shown, sign in, and enter the displayed code
 3. Click **I've Authorized — Connect**
 
-Credentials are saved to the `ytm_data` volume and survive container restarts and re-deploys.
+Credentials are saved to the `ytm_data` volume and survive restarts and re-deploys.
 
 ### Connecting via browser headers (fallback)
 
-If you prefer not to set up a Google Cloud project, you can connect with browser request headers instead. These expire periodically when Google invalidates your browser session.
+If you'd rather not create a Google Cloud project, paste browser request headers instead (these expire when Google invalidates your session). In Chrome on YouTube Music: DevTools (F12) → Network → click any `music.youtube.com` request → **Copy → Copy request headers** → paste into the app.
 
-1. Open YouTube Music in Chrome while logged in
-2. Open DevTools (F12) → Network tab → click any request to `music.youtube.com`
-3. Right-click → **Copy → Copy request headers**, then paste into the app
+## Library prep
 
-### What you get
+Split across two pages by verb — **Audit** (inspect & fix tags) and **Optimize** (run the jobs that change your library/mirror). All tag writes are recorded and one-click reversible from **Activity**.
 
-- **Liked Songs** — expandable list of all your liked tracks with per-track download buttons
-- **Playlists** — browse all your playlists, expand to see tracks, download individual tracks or the full playlist
-- **Auto-sync** — enable to automatically download new liked songs; configurable interval (15 min / 1 hr / 6 hrs / 24 hrs)
+**Audit** (read-only, incremental) scans the library and reports genre distribution, how many tracks need a genre fix or are missing an album-artist, per-format sizes, and *unmapped genres* — raw genre strings that don't map to the controlled vocabulary yet. It's a guided stepper: **Complete genres** (propose one genre per artist), **Map unmapped genres** (teach the vocabulary), **Album genre outliers**, **Genre cross-check** (against MusicBrainz), and **Mislabeled album artists**.
 
-## Library prep (Prep tab)
+**Clean tags** normalizes genres to a 25-value controlled vocabulary (splitting compounds, dropping junk like `Music`/decade tags) and fills missing album-artists (`Various Artists` for compilation folders). Writes tags **in place** (mount the library read-write). New downloads are normalized automatically via a post-download hook.
 
-The **Prep** tab has three tools over your music library (`MUSIC_DIR`):
+**Analyze BPM & Energy** runs a resumable librosa pass storing each track's tempo and a 0–100 energy score, so smart playlists can add `BPM`/`Energy` rules. It parallelizes internally and skips already-analyzed files.
 
-**Audit** (read-only) scans the library and reports the genre distribution, how many tracks need a genre fix or are missing an album artist, a per-format size breakdown, and any *unmapped genres* — raw genre strings that don't map to the controlled vocabulary yet, so you know what to add to `app/data/genres.json`.
+**Convert** mirrors the FLAC library into an iPod-ready AAC copy (see below). **Mirror maintenance** finds DRM `.m4p` files and prunes orphaned mirror files (whose source is gone).
 
-**Clean Tags** normalizes genres to a 25-value controlled vocabulary (splitting compound tags, dropping junk like `Music` or decade tags) and fills missing album artists (`Various Artists` for compilation folders). It writes tags **in place**, so mount the library **read-write** for this. Every change is recorded, and each completed clean job has a one-click **Rollback** that restores the original tags exactly. New downloads are normalized automatically via a post-download hook.
-
-**Analyze BPM & Energy** runs a one-time (resumable) librosa pass over your library, storing each track's tempo (BPM) and a 0–100 energy score — so smart playlists can add `BPM` and `Energy` rules (e.g. "BPM between 120 and 140"). It's slow (~1–2s/track, more over a network mount), skips already-analyzed files, and is safe to run overnight. Smart playlists auto-regenerate nightly and after library-changing operations.
-
-**Genre Completion & Unify** proposes one consistent genre per artist — from a curated artist→genre map, the majority of each artist's existing tags, and (optionally) a MusicBrainz lookup for unknown artists. You get an editable review table (adjust or fill in any proposal), and applying it unifies every artist's tracks to the approved genre. A track tagged only `Holiday` is always preserved, and the whole apply is reversible via **Rollback**.
-
-> The maps in `app/data/genres.json` (vocabulary/aliases) and `app/data/artist_genres.json` (artist→genre) are editable — tune them to your library without touching code.
+> The maps in `app/data/genres.json` (vocabulary/aliases) and `app/data/artist_genres.json` (artist→genre) are editable — tune them to your library without touching code (mount via `GENRES_FILE`/`ARTIST_GENRES_FILE` to edit on a live deployment).
 
 ### iPod AAC mirror
 
-The **iPod AAC Mirror** section mirrors a FLAC music library into an iPod/iTunes-ready AAC copy.
-
-## Smart playlists (Playlists tab)
-
-The **Playlists** tab builds rule-based playlists over your library index (populated by Audit). Combine rules on **genre, artist, album artist, album, year, or decade** with match-all or match-any, preview the matches, then save. Music Monster writes an `.m3u` (with `#EXTINF` and paths relative to the playlist folder) so your player picks it up. Hit **Regenerate** after adding music to refresh a playlist against the current library.
-
-**Targets** — each playlist can write to the **Library** target (`PLAYLIST_DIR_LIBRARY`, default `MUSIC_DIR/Playlists`), the **iPod** target (`PLAYLIST_DIR_IPOD`, default `IPOD_DIR/Playlists`, using the AAC mirror's `.m4a` paths), or both. The iPod playlist only lists tracks that already exist in the mirror, so run **Convert** first.
-
-**Import from YouTube Music** — pick one of your YTM playlists and Music Monster builds a local `.m3u` from the tracks you already have, and queues the rest for download. Re-import or Regenerate later to pick up the newly downloaded tracks.
-
-**AI Playlist** *(optional)* — describe a vibe (e.g. "upbeat 80s new wave for a road trip") and Claude builds it from your library: it picks a filter grounded in your actual genres/artists, honors any era you imply as a hard year filter, then curates and orders the best matches. Enable it by setting `ANTHROPIC_API_KEY` in the container environment (`ANTHROPIC_MODEL` defaults to the low-cost `claude-haiku-4-5`). Without a key, the feature is hidden and the rest of the app is unaffected. Two refresh buttons on an AI playlist: **↻ Regenerate** cheaply replays the same track selection against the current library (no API call), while **✨ Re-curate** asks Claude for a brand-new selection from the saved prompt (keeps the name + targets).
-
-- Set `MUSIC_DIR` (source, mounted **read-only**) and `IPOD_DIR` (output mirror). Both can also be typed into the form per-run.
-- `.flac` (and other lossless) are transcoded to **AAC 256k `.m4a`**, preserving cover art and tags.
-- `.mp3` and existing AAC `.m4a` files are **copied byte-for-byte**.
-- `.m4p` (DRM) files are **skipped** and reported.
+- Set `MUSIC_DIR` (source) and `IPOD_DIR` (output mirror).
+- `.flac` (and other lossless) → **AAC 256k `.m4a`**, preserving cover art and tags.
+- `.mp3` and existing AAC `.m4a` → **copied byte-for-byte**.
+- `.m4p` (DRM) → **skipped** and reported.
 - Optional **downsample hi-res** (>16-bit / >48 kHz → 44.1 kHz) for older iPods.
-- **Resumable**: a re-run skips destinations that already exist and aren't older than the source. The source library is never modified.
+- **Resumable**: a re-run skips destinations that already exist and aren't older than the source. The source is never modified.
 
-The app produces the mirror + (later) M3U playlists; import into Music/iTunes on a Mac and sync to the iPod from there.
+Music Monster produces the mirror + `.m3u` playlists and a copy-paste **AppleScript** (Optimize page) to add/refresh/prune them in Apple Music; sync to the iPod from Music on the Mac.
+
+## Playlists
+
+The Playlists page has one creator with a source picker: **AI · Rules · YouTube Music · Manual**. Every source stages the matched tracks in an editable review list (add/remove/reorder, set targets) before saving.
+
+- **Rules** — combine rules on **genre, artist, album-artist, album, year, decade, BPM, or energy** (match-all/any), with sort options (diverse/album/artist/year/random). Reads the index that **Audit** populates.
+- **YouTube Music import** — pick one of your playlists; owned tracks go into the `.m3u`, missing ones queue to download.
+- **AI** *(optional)* — describe a vibe ("upbeat 80s new wave for a road trip") and Claude builds it from your library, grounded in your actual genres/artists and any era you imply. A **Complete set** toggle switches to completionist mode ("every James Bond theme") that enumerates the set and matches it against your library regardless of genre tag. Requires `ANTHROPIC_API_KEY`; hidden without it.
+- **Manual** — build a fixed hand-curated list by searching your library.
+
+**Targets** — each playlist writes to the **Library** target (`PLAYLIST_DIR_LIBRARY`), the **iPod** target (`PLAYLIST_DIR_IPOD`, using the mirror's `.m4a` paths — run Convert first), or both. **Edit** re-opens any playlist's tracks to rename/reorder/add/remove/re-target; **Re-curate** (AI only) asks Claude for a fresh selection. Auto-refresh playlists are rewritten after any library/mirror-changing job and nightly.
 
 ## Cookies (age-restricted videos)
 
-If you see _"Sign in to confirm your age"_ errors, export your YouTube cookies and mount them into the container.
-
-**Using yt-dlp (easiest):**
+If you see _"Sign in to confirm your age"_ errors, export your YouTube cookies and mount them.
 
 ```bash
 yt-dlp --cookies-from-browser chrome --cookies cookies.txt --skip-download "https://music.youtube.com"
 ```
 
-Then copy `cookies.txt` to a stable path on the host and mount it (see the Compose examples above). Mount **without `:ro`** — yt-dlp writes back to the file to refresh token expiry.
-
-**Using a browser extension:**
-
-1. Install [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) (Chrome) or equivalent for Firefox.
-2. Log in to YouTube Music, then export cookies for `youtube.com` in Netscape format.
+Copy `cookies.txt` to a stable host path and mount it (see the Compose examples). Mount **without `:ro`** — yt-dlp writes back to refresh token expiry. A browser extension like [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) works too (export `youtube.com` cookies in Netscape format).
 
 ## Local development
 
