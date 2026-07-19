@@ -265,10 +265,10 @@
      every box that uses it needs a placeholder. Input keeps room on the right. */
   .srch { position: relative; display: block; }
   .srch > input { width: 100%; }
-  .srch-x { position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
-    width: 18px; height: 18px; border: 0; background: transparent; color: var(--muted);
+  .srch-x { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    width: 24px; height: 24px; z-index: 2; border: 0; background: transparent; color: var(--muted);
     cursor: pointer; display: none; align-items: center; justify-content: center;
-    border-radius: 999px; font-size: 11px; line-height: 1; padding: 0; }
+    border-radius: 999px; font-size: 12px; line-height: 1; padding: 0; }
   .srch-x:hover { color: var(--text); background: var(--surface2); }
   .srch > input:not(:placeholder-shown) ~ .srch-x { display: flex; }
   select:focus { border-color: var(--accent); }
@@ -790,7 +790,7 @@
             <input id="ytSearchQ" placeholder="Song or album…" autocomplete="off"
               onkeydown="if (event.key === 'Enter') runYtSearch()"
               style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 30px 10px 12px;font-size:13px;outline:none">
-            <button type="button" class="srch-x" tabindex="-1" aria-label="Clear search" onclick="clearYtSearch()">✕</button>
+            <button type="button" class="srch-x" tabindex="-1" aria-label="Clear search" onmousedown="event.preventDefault();clearYtSearch()">✕</button>
           </span>
           <!-- Narrows to the performer, which is what cuts the tribute/karaoke
                noise. On its own it means "everything by them". Hidden for
@@ -799,7 +799,7 @@
             <input id="ytSearchArtist" placeholder="Artist (optional)" autocomplete="off"
               onkeydown="if (event.key === 'Enter') runYtSearch()"
               style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 30px 10px 12px;font-size:13px;outline:none">
-            <button type="button" class="srch-x" tabindex="-1" aria-label="Clear artist" onclick="clearYtArtist()">✕</button>
+            <button type="button" class="srch-x" tabindex="-1" aria-label="Clear artist" onmousedown="event.preventDefault();clearYtArtist()">✕</button>
           </span>
           <span class="act-seg" id="ytSearchTypeSeg">
             <button class="on" data-t="songs" onclick="setYtSearchType('songs')">Songs</button>
@@ -1228,7 +1228,7 @@
       <span class="srch" style="flex:1;min-width:180px">
         <input id="fileSearch" placeholder="Filter by artist, album, or file…" oninput="onFileSearch()"
           style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 30px 8px 12px;font-size:13px;outline:none">
-        <button type="button" class="srch-x" tabindex="-1" aria-label="Clear filters" onclick="clearFileFilters()">✕</button>
+        <button type="button" class="srch-x" tabindex="-1" aria-label="Clear filters" onmousedown="event.preventDefault();clearFileFilters()">✕</button>
       </span>
       <select id="fileFormat" onchange="renderFiles()">
         <option value="">All formats</option>
@@ -4575,7 +4575,7 @@ function renderStaging() {
       ${missingBox}
       <div class="stage-head">
         <input id="stageName" class="stage-input" style="flex:1;min-width:170px" value="${escHtml(s.name)}" placeholder="Playlist name">
-        <span class="srch" style="flex:1;min-width:170px"><input id="stageSearch" class="stage-input" style="padding-right:30px" placeholder="Add a track — search your library…" oninput="stageSearch()" autocomplete="off"><button type="button" class="srch-x" tabindex="-1" aria-label="Clear search" onclick="clearStageSearch()">✕</button></span>
+        <span class="srch" style="flex:1;min-width:170px"><input id="stageSearch" class="stage-input" style="padding-right:30px" placeholder="Add a track — search your library…" oninput="stageSearch()" autocomplete="off"><button type="button" class="srch-x" tabindex="-1" aria-label="Clear search" onmousedown="event.preventDefault();clearStageSearch()">✕</button></span>
       </div>
       <div id="stageResults" style="margin-bottom:8px"></div>
       <div class="stage-sorts">Sort:
