@@ -260,6 +260,17 @@
   .lib-track-artist { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .lib-track-dur { color: var(--muted); font-size: 12px; white-space: nowrap; }
   select { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font-size: 13px; outline: none; cursor: pointer; }
+  /* Search box with an inline clear ✕ (the YouTube-Music pattern). The ✕ shows
+     only when the field has text — pure CSS via :not(:placeholder-shown), so
+     every box that uses it needs a placeholder. Input keeps room on the right. */
+  .srch { position: relative; display: block; }
+  .srch > input { width: 100%; }
+  .srch-x { position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    width: 18px; height: 18px; border: 0; background: transparent; color: var(--muted);
+    cursor: pointer; display: none; align-items: center; justify-content: center;
+    border-radius: 999px; font-size: 11px; line-height: 1; padding: 0; }
+  .srch-x:hover { color: var(--text); background: var(--surface2); }
+  .srch > input:not(:placeholder-shown) ~ .srch-x { display: flex; }
   select:focus { border-color: var(--accent); }
 
   /* Equalizer brand mark (echoes logo.svg) */
@@ -775,15 +786,21 @@
       <!-- Search -->
       <div class="add-src" id="addSrc-search">
         <div class="yt-search-row">
-          <input id="ytSearchQ" placeholder="Song or album…" autocomplete="off"
-            onkeydown="if (event.key === 'Enter') runYtSearch()"
-            style="flex:2;min-width:170px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none">
+          <span class="srch" style="flex:2;min-width:170px">
+            <input id="ytSearchQ" placeholder="Song or album…" autocomplete="off"
+              onkeydown="if (event.key === 'Enter') runYtSearch()"
+              style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 30px 10px 12px;font-size:13px;outline:none">
+            <button type="button" class="srch-x" tabindex="-1" aria-label="Clear search" onclick="clearYtSearch()">✕</button>
+          </span>
           <!-- Narrows to the performer, which is what cuts the tribute/karaoke
                noise. On its own it means "everything by them". Hidden for
                playlists, which have an author rather than artists. -->
-          <input id="ytSearchArtist" placeholder="Artist (optional)" autocomplete="off"
-            onkeydown="if (event.key === 'Enter') runYtSearch()"
-            style="flex:1;min-width:130px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-size:13px;outline:none">
+          <span class="srch" style="flex:1;min-width:130px">
+            <input id="ytSearchArtist" placeholder="Artist (optional)" autocomplete="off"
+              onkeydown="if (event.key === 'Enter') runYtSearch()"
+              style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 30px 10px 12px;font-size:13px;outline:none">
+            <button type="button" class="srch-x" tabindex="-1" aria-label="Clear artist" onclick="clearYtArtist()">✕</button>
+          </span>
           <span class="act-seg" id="ytSearchTypeSeg">
             <button class="on" data-t="songs" onclick="setYtSearchType('songs')">Songs</button>
             <button data-t="albums" onclick="setYtSearchType('albums')">Albums</button>
@@ -815,7 +832,8 @@
         <div id="libConnected" style="display:none">
           <div class="liked-head">
             <span class="cfg-note">What you've liked on YouTube Music<span id="likedCount"></span></span>
-            <button class="btn-ghost btn-sm" id="syncNowBtn" style="margin-left:auto" onclick="syncNow()">⟳ Sync New Songs</button>
+            <button class="btn-ghost btn-sm" style="margin-left:auto" onclick="runBusy(this, refreshLiked)" title="Re-check YouTube Music for newly-liked songs">↻ Refresh</button>
+            <button class="btn-ghost btn-sm" id="syncNowBtn" onclick="syncNow()">⟳ Sync New Songs</button>
             <span id="syncStatus" class="cfg-note"></span>
           </div>
           <div id="liked-tracks"></div>
@@ -1207,8 +1225,11 @@
   <div class="panel" id="panel-files">
     <div class="files-sticky">
     <div class="files-toolbar">
-      <input id="fileSearch" placeholder="Filter by artist, album, or file…" oninput="onFileSearch()"
-        style="flex:1;min-width:180px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;outline:none">
+      <span class="srch" style="flex:1;min-width:180px">
+        <input id="fileSearch" placeholder="Filter by artist, album, or file…" oninput="onFileSearch()"
+          style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 30px 8px 12px;font-size:13px;outline:none">
+        <button type="button" class="srch-x" tabindex="-1" aria-label="Clear filters" onclick="clearFileFilters()">✕</button>
+      </span>
       <select id="fileFormat" onchange="renderFiles()">
         <option value="">All formats</option>
         <option value=".flac">FLAC</option>
@@ -1217,7 +1238,6 @@
         <option value=".wav">WAV</option>
         <option value=".opus">Opus</option>
       </select>
-      <button class="btn-ghost btn-sm" id="fileClearBtn" style="display:none" onclick="clearFileFilters()">Clear results</button>
       <button class="btn-ghost btn-sm" onclick="runBusy(this, () => loadFiles(true))">↻ Refresh</button>
     </div>
     <div id="fileAlpha" class="file-alpha"></div>
@@ -1942,9 +1962,6 @@ function renderFiles() {
   const empty = document.getElementById('filesEmpty');
   const fmtSel = document.getElementById('fileFormat');
   fileFormat = fmtSel ? fmtSel.value : '';
-  // Clear-results only appears when a filter is actually narrowing the list.
-  const clearBtn = document.getElementById('fileClearBtn');
-  if (clearBtn) clearBtn.style.display = (fileSearch || fileFormat || fileGenre) ? '' : 'none';
 
   // Apply format + text filters, then group by directory (Artist/Album).
   const albums = {};
@@ -2456,9 +2473,7 @@ function _ytRenderResults(rows) {
       : '<div style="color:var(--muted);font-size:13px;padding:12px 4px">No matches.</div>';
     return;
   }
-  const _head = `<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;color:var(--muted);font-size:12px">
-    <span>${rows.length} result${rows.length !== 1 ? 's' : ''}</span>
-    <button class="btn-ghost btn-sm" onclick="clearYtSearch()">Clear results</button></div>`;
+  const _head = `<div style="margin-top:12px;color:var(--muted);font-size:12px">${rows.length} result${rows.length !== 1 ? 's' : ''}</div>`;
   box.innerHTML = _head + '<div style="margin-top:6px">' + rows.map((r, i) => {
     const sub = r.kind === 'song'
       ? [r.artist, r.album, r.duration].filter(Boolean).join(' · ')
@@ -2862,6 +2877,13 @@ async function loadLikedTracks() {
     likedTracksCache = [];
   }
   el.innerHTML = renderLikedTracks(likedTracksCache);
+}
+
+// Re-fetch the liked list from YouTube Music to pick up songs liked since the
+// list was cached (the list is cached per session, so it doesn't refetch on its own).
+async function refreshLiked() {
+  likedTracksCache = null;
+  await loadLikedTracks();
 }
 
 async function downloadTrack(videoId) {
@@ -4530,7 +4552,7 @@ function renderStaging() {
       ${missingBox}
       <div class="stage-head">
         <input id="stageName" class="stage-input" style="flex:1;min-width:170px" value="${escHtml(s.name)}" placeholder="Playlist name">
-        <input id="stageSearch" class="stage-input" style="flex:1;min-width:170px" placeholder="Add a track — search your library…" oninput="stageSearch()" autocomplete="off">
+        <span class="srch" style="flex:1;min-width:170px"><input id="stageSearch" class="stage-input" style="padding-right:30px" placeholder="Add a track — search your library…" oninput="stageSearch()" autocomplete="off"><button type="button" class="srch-x" tabindex="-1" aria-label="Clear search" onclick="clearStageSearch()">✕</button></span>
       </div>
       <div id="stageResults" style="margin-bottom:8px"></div>
       <div class="stage-sorts">Sort:
@@ -4639,6 +4661,11 @@ function stageRemove(i) {
   renderStageList();
 }
 
+function clearStageSearch() {
+  const s = document.getElementById('stageSearch'); if (s) s.value = '';
+  const box = document.getElementById('stageResults'); if (box) box.innerHTML = '';
+  _stageResults = [];
+}
 function stageSearch() {
   clearTimeout(_stageSearchTimer);
   _stageSearchTimer = setTimeout(async () => {
