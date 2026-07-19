@@ -2198,6 +2198,14 @@ function handleWS(msg) {
 
   if (type === 'added') {
     downloads[id] = { id, url: msg.url, title: null, status: msg.status, progress: 0, created_at: msg.created_at };
+    // Bind this download to a visible Liked-song row (matched by videoId) so the
+    // row shows live progress — covers both the per-track ↓ and Sync New Songs,
+    // whose enqueues we never see the ids of otherwise.
+    const _vm = (msg.url || '').match(/[?&]v=([A-Za-z0-9_-]+)/);
+    if (_vm && (msg.url || '').includes('music.youtube.com')) {
+      const _lb = document.getElementById('likeddl-' + _vm[1]);
+      if (_lb && !_lb.dataset.dlid) _lb.dataset.dlid = id;
+    }
   } else if (type === 'status') {
     if (downloads[id]) {
       downloads[id].status = msg.status;
@@ -2790,14 +2798,17 @@ function _likedRow(t, downloaded) {
     </div>`;
 }
 function renderLikedTracks(tracks) {
+  const syncBtn = document.getElementById('syncNowBtn');
   if (!tracks) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">Loading…</div>';
-  if (!tracks.length) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">No tracks.</div>';
   // "Already downloaded" = in the shared library (or synced by this instance).
   // Hidden by default so the list is what's left to grab (a download from any
   // computer drops off) — but the note toggles them into view with a ✓.
   const have = t => t.in_library || t.synced;
   const todo = tracks.filter(t => !have(t));
   const done = tracks.filter(have);
+  // Sync New Songs only makes sense when something's left to sync.
+  if (syncBtn) syncBtn.style.display = todo.length ? '' : 'none';
+  if (!tracks.length) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">No tracks.</div>';
   let html = '';
   if (done.length) {
     html += `<div style="color:var(--muted);font-size:12px;padding:8px 14px">${done.length} of ${tracks.length} already in your library · <a href="#" onclick="toggleLikedHave();return false" style="color:var(--accent)">${_likedShowHave ? 'hide' : 'show'}</a></div>`;
