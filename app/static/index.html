@@ -2774,17 +2774,28 @@ async function fetchLibraryData() {
 function renderLikedTracks(tracks) {
   if (!tracks) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">Loading…</div>';
   if (!tracks.length) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">No tracks.</div>';
-  return tracks.map(t => `
+  // "Already downloaded" = in the shared library (or synced by this instance) —
+  // hide those so the list is just what's left to grab, and a download from any
+  // computer drops off automatically.
+  const have = t => t.in_library || t.synced;
+  const todo = tracks.filter(t => !have(t));
+  const hidden = tracks.length - todo.length;
+  if (!todo.length) {
+    return `<div style="color:var(--muted);font-size:13px;padding:12px 14px">All ${tracks.length} liked song${tracks.length !== 1 ? 's' : ''} are already in your library ✓</div>`;
+  }
+  const note = hidden
+    ? `<div style="color:var(--muted);font-size:12px;padding:8px 14px">${hidden} of ${tracks.length} already in your library — hidden.</div>`
+    : '';
+  const rows = todo.map(t => `
     <div class="lib-track-row">
       <div class="lib-track-info">
         <div class="lib-track-title">${escHtml(t.title)}</div>
         ${t.artist ? `<div class="lib-track-artist">${escHtml(t.artist)}</div>` : ''}
       </div>
       <div class="lib-track-dur">${escHtml(t.duration || '')}</div>
-      ${t.synced ? `<span style="color:var(--success);font-size:11px;font-weight:700;padding:0 4px" title="Already synced">✓</span>` : ''}
-      <button class="btn-ghost btn-sm" onclick="downloadTrack('${t.videoId}')" title="Download now">↓</button>
-      ${t.synced ? `<button class="btn-ghost btn-sm" onclick="resetTrackSync('${t.videoId}')" title="Reset sync — will re-download on next sync">↺</button>` : ''}
+      <button class="btn-ghost btn-sm" id="likeddl-${escHtml(t.videoId)}" onclick="downloadTrack('${t.videoId}')" title="Download now">↓</button>
     </div>`).join('');
+  return note + rows;
 }
 
 async function resetTrackSync(videoId) {
@@ -2819,13 +2830,25 @@ async function loadLikedTracks() {
 }
 
 async function downloadTrack(videoId) {
-  const url = `https://music.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
-  await fetch('/api/downloads', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({urls: [url]}),
-  });
-  switchTab('activity');
+  const btn = document.getElementById('likeddl-' + videoId);
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+  try {
+    const url = `https://music.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+    const res = await fetch('/api/downloads', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({urls: [url]}),
+    });
+    const data = await res.json().catch(() => ({}));
+    const dl = (data.downloads || [])[0];
+    // Track it live in place (Queued → Downloading N% → Downloaded ✓) via the
+    // same WS-driven button updater the search results use — no tab switch. When
+    // it finishes, the WS 'done' handler re-renders the list and the row drops off
+    // (now in the library).
+    if (btn && dl && dl.id) { btn.dataset.dlid = dl.id; _updateYtDlBtn(dl.id); }
+    else if (btn) btn.textContent = 'Queued';
+  } catch {
+    if (btn) { btn.disabled = false; btn.textContent = '↓'; }
+  }
 }
 
 async function oauthInit() {

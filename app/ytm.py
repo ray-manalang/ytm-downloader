@@ -876,6 +876,21 @@ async def get_liked_tracks():
         for t in tracks:
             t["synced"] = t.get("videoId") in synced_ids
 
+    # Flag tracks already present in the LIBRARY (not just this instance's
+    # downloaded_at) — the library is shared, so a download on another computer
+    # counts here too. Matched by title+artist against library_tracks, reusing the
+    # YTM-import matcher (lazy import — playlists.py doesn't import ytm.py).
+    try:
+        from . import playlists
+        library = await playlists._all_tracks()
+        if library:
+            _, missing = playlists._match_ytm_tracks(tracks, library)
+            missing_ids = {m.get("videoId") for m in missing}
+            for t in tracks:
+                t["in_library"] = t.get("videoId") not in missing_ids
+    except Exception:
+        pass
+
     return {"tracks": tracks}
 
 
