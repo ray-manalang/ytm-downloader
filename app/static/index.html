@@ -2623,10 +2623,7 @@ async function ytDownload(i) {
 // Live status for a search-result download button, driven by the same WS events
 // the Activity monitor uses. Matched by data-dlid (the queue id); a no-op if the
 // button was cleared or the results re-rendered.
-function _updateYtDlBtn(id) {
-  const btn = document.querySelector(`[data-dlid="${id}"]`);
-  if (!btn) return;
-  const dl = downloads[id];
+function _ytDlLabel(dl) {
   let text = 'Queued', color = 'var(--muted)';
   if (dl) {
     const p = Math.round(dl.progress || 0);
@@ -2635,9 +2632,26 @@ function _updateYtDlBtn(id) {
     else if (dl.status === 'cancelled') { text = 'Cancelled'; color = 'var(--muted)'; }
     else if (dl.status === 'downloading' || p > 0) { text = `Downloading ${p}%`; color = 'var(--info)'; }
   }
-  btn.textContent = text;
-  btn.style.color = color;
-  btn.disabled = true;
+  return { text, color };
+}
+function _updateYtDlBtn(id) {
+  const btn = document.querySelector(`[data-dlid="${id}"]`);
+  if (!btn) return;
+  const { text, color } = _ytDlLabel(downloads[id]);
+  btn.textContent = text; btn.style.color = color; btn.disabled = true;
+}
+// videoId → its in-flight queue download. Lets renderLikedTracks re-bind rows to
+// downloads still running — without this, a 'done' re-render rebuilds the other
+// rows' buttons WITHOUT data-dlid, so their progress freezes (only the first
+// MAX_CONCURRENT_DOWNLOADS that finished before a re-render ever showed status).
+function _dlByVideoId() {
+  const m = {};
+  for (const id in downloads) {
+    const url = downloads[id].url || '';
+    const vm = url.match(/[?&]v=([A-Za-z0-9_-]+)/);
+    if (vm && url.includes('music.youtube.com')) m[vm[1]] = downloads[id];
+  }
+  return m;
 }
 
 async function loadLibrary() {
@@ -2812,16 +2826,24 @@ function toggleLikedHave() {
   const el = document.getElementById('liked-tracks');
   if (el) el.innerHTML = renderLikedTracks(likedTracksCache);
 }
-function _likedRow(t, downloaded) {
+function _likedRow(t, downloaded, active) {
+  let ctrl;
+  if (downloaded) {
+    ctrl = '<span style="color:var(--success);font-size:11px;font-weight:700;padding:0 6px" title="In your library">✓</span>';
+  } else if (active) {
+    // Re-bind to an in-flight download so it keeps updating across re-renders.
+    const { text, color } = _ytDlLabel(active);
+    ctrl = `<button class="btn-ghost btn-sm" id="likeddl-${escHtml(t.videoId)}" data-dlid="${escHtml(active.id)}" disabled style="color:${color}">${text}</button>`;
+  } else {
+    ctrl = `<button class="btn-ghost btn-sm" id="likeddl-${escHtml(t.videoId)}" onclick="downloadTrack('${t.videoId}')" title="Download now">↓</button>`;
+  }
   return `<div class="lib-track-row"${downloaded ? ' style="opacity:.6"' : ''}>
       <div class="lib-track-info">
         <div class="lib-track-title">${escHtml(t.title)}</div>
         ${t.artist ? `<div class="lib-track-artist">${escHtml(t.artist)}</div>` : ''}
       </div>
       <div class="lib-track-dur">${escHtml(t.duration || '')}</div>
-      ${downloaded
-        ? '<span style="color:var(--success);font-size:11px;font-weight:700;padding:0 6px" title="In your library">✓</span>'
-        : `<button class="btn-ghost btn-sm" id="likeddl-${escHtml(t.videoId)}" onclick="downloadTrack('${t.videoId}')" title="Download now">↓</button>`}
+      ${ctrl}
     </div>`;
 }
 function renderLikedTracks(tracks) {
@@ -2840,7 +2862,8 @@ function renderLikedTracks(tracks) {
   if (done.length) {
     html += `<div style="color:var(--muted);font-size:12px;padding:8px 14px">${done.length} of ${tracks.length} already in your library · <a href="#" onclick="toggleLikedHave();return false" style="color:var(--accent)">${_likedShowHave ? 'hide' : 'show'}</a></div>`;
   }
-  html += todo.map(t => _likedRow(t, false)).join('');
+  const active = _dlByVideoId();
+  html += todo.map(t => _likedRow(t, false, active[t.videoId])).join('');
   if (_likedShowHave) html += done.map(t => _likedRow(t, true)).join('');
   if (!todo.length && !(_likedShowHave && done.length)) {
     return html || '<div style="color:var(--muted);font-size:13px;padding:12px 14px">No tracks.</div>';
