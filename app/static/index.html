@@ -2771,31 +2771,43 @@ async function fetchLibraryData() {
   }
 }
 
-function renderLikedTracks(tracks) {
-  if (!tracks) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">Loading…</div>';
-  if (!tracks.length) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">No tracks.</div>';
-  // "Already downloaded" = in the shared library (or synced by this instance) —
-  // hide those so the list is just what's left to grab, and a download from any
-  // computer drops off automatically.
-  const have = t => t.in_library || t.synced;
-  const todo = tracks.filter(t => !have(t));
-  const hidden = tracks.length - todo.length;
-  if (!todo.length) {
-    return `<div style="color:var(--muted);font-size:13px;padding:12px 14px">All ${tracks.length} liked song${tracks.length !== 1 ? 's' : ''} are already in your library ✓</div>`;
-  }
-  const note = hidden
-    ? `<div style="color:var(--muted);font-size:12px;padding:8px 14px">${hidden} of ${tracks.length} already in your library — hidden.</div>`
-    : '';
-  const rows = todo.map(t => `
-    <div class="lib-track-row">
+let _likedShowHave = false;   // reveal the already-in-library liked songs
+function toggleLikedHave() {
+  _likedShowHave = !_likedShowHave;
+  const el = document.getElementById('liked-tracks');
+  if (el) el.innerHTML = renderLikedTracks(likedTracksCache);
+}
+function _likedRow(t, downloaded) {
+  return `<div class="lib-track-row"${downloaded ? ' style="opacity:.6"' : ''}>
       <div class="lib-track-info">
         <div class="lib-track-title">${escHtml(t.title)}</div>
         ${t.artist ? `<div class="lib-track-artist">${escHtml(t.artist)}</div>` : ''}
       </div>
       <div class="lib-track-dur">${escHtml(t.duration || '')}</div>
-      <button class="btn-ghost btn-sm" id="likeddl-${escHtml(t.videoId)}" onclick="downloadTrack('${t.videoId}')" title="Download now">↓</button>
-    </div>`).join('');
-  return note + rows;
+      ${downloaded
+        ? '<span style="color:var(--success);font-size:11px;font-weight:700;padding:0 6px" title="In your library">✓</span>'
+        : `<button class="btn-ghost btn-sm" id="likeddl-${escHtml(t.videoId)}" onclick="downloadTrack('${t.videoId}')" title="Download now">↓</button>`}
+    </div>`;
+}
+function renderLikedTracks(tracks) {
+  if (!tracks) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">Loading…</div>';
+  if (!tracks.length) return '<div style="color:var(--muted);font-size:13px;padding:12px 14px">No tracks.</div>';
+  // "Already downloaded" = in the shared library (or synced by this instance).
+  // Hidden by default so the list is what's left to grab (a download from any
+  // computer drops off) — but the note toggles them into view with a ✓.
+  const have = t => t.in_library || t.synced;
+  const todo = tracks.filter(t => !have(t));
+  const done = tracks.filter(have);
+  let html = '';
+  if (done.length) {
+    html += `<div style="color:var(--muted);font-size:12px;padding:8px 14px">${done.length} of ${tracks.length} already in your library · <a href="#" onclick="toggleLikedHave();return false" style="color:var(--accent)">${_likedShowHave ? 'hide' : 'show'}</a></div>`;
+  }
+  html += todo.map(t => _likedRow(t, false)).join('');
+  if (_likedShowHave) html += done.map(t => _likedRow(t, true)).join('');
+  if (!todo.length && !(_likedShowHave && done.length)) {
+    return html || '<div style="color:var(--muted);font-size:13px;padding:12px 14px">No tracks.</div>';
+  }
+  return html;
 }
 
 async function resetTrackSync(videoId) {
